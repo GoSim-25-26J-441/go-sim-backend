@@ -1,0 +1,42 @@
+version: 1
+system: CycleOnly
+metadata:
+  owner: test
+  description: "Minimal graph with only cyclic dependencies"
+
+services:
+  - name: alpha
+    lang: go
+    team: t1
+    responsibilities: []
+  - name: beta
+    lang: go
+    team: t2
+    responsibilities: []
+  - name: gamma
+    lang: go
+    team: t3
+    responsibilities: []
+
+datastores: []
+
+calls:
+  - from: alpha
+    to: beta
+    sync: true
+    endpoint: /a2b
+  - from: beta
+    to: gamma
+    sync: true
+    endpoint: /b2g
+  - from: gamma
+    to: alpha
+    sync: true
+    endpoint: /g2a
+
+non_functional_hints:
+  timeouts_ms: {}
+  frequencies_per_minute: {}
+
+expect_issues:
+  - cycle(alpha, beta, gamma)

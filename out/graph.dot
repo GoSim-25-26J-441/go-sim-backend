@@ -1,0 +1,10 @@
+digraph G {
+  rankdir=LR;
+  node [style=rounded];
+  "alpha" [shape=box];
+  "beta" [shape=box];
+  "gamma" [shape=box];
+  "alpha" -> "beta" [label="/a2b", style=solid];
+  "beta" -> "gamma" [label="/b2g", style=solid];
+  "gamma" -> "alpha" [label="/g2a", style=solid];
+}
