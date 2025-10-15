@@ -14,10 +14,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-/**********  SPEC TYPES (match your YAML)  **********/
+// SPEC TYPES
 type DatabaseAccess struct {
 	Name   string `yaml:"name"`
-	Access string `yaml:"access"` // readwrite | readonly
+	Access string `yaml:"access"`
 }
 
 type Service struct {
@@ -40,13 +40,13 @@ type Call struct {
 	To       string `yaml:"to"`
 	Sync     bool   `yaml:"sync"`
 	Endpoint string `yaml:"endpoint"`
-	Mode     string `yaml:"mode"`  // optional: "per-item" etc
-	Topic    string `yaml:"topic"` // optional for async
+	Mode     string `yaml:"mode"`  
+	Topic    string `yaml:"topic"` 
 }
 
 type NonFunctionalHints struct {
-	TimeoutsMs          map[string]int `yaml:"timeouts_ms"`           // "a->b": 200
-	FrequenciesPerMinute map[string]int `yaml:"frequencies_per_minute"` // "a->b": 600
+	TimeoutsMs          map[string]int `yaml:"timeouts_ms"`          
+	FrequenciesPerMinute map[string]int `yaml:"frequencies_per_minute"` 
 }
 
 type Spec struct {
@@ -72,7 +72,8 @@ func parseSpec(path string) (*Spec, error) {
 	return &s, nil
 }
 
-/**********  IN-MEM GRAPH  **********/
+//IN-MEM GRAPH 
+
 type CallEdge struct {
 	From, To           string
 	Sync               bool
@@ -85,7 +86,7 @@ type CallEdge struct {
 type DBEdge struct {
 	Service string
 	DB      string
-	Access  string // readwrite | readonly
+	Access  string 
 }
 
 type Graph struct {
@@ -101,7 +102,7 @@ func buildGraph(s *Spec) *Graph {
 		Datastores: make(map[string]struct{}),
 	}
 
-	// collect datastore names
+	
 	for _, d := range s.Datastores {
 		g.Datastores[d.Name] = struct{}{}
 	}
@@ -110,7 +111,7 @@ func buildGraph(s *Spec) *Graph {
 	for _, svc := range s.Services {
 		g.Services[svc.Name] = struct{}{}
 		for _, db := range svc.Databases {
-			// even if datastore isn't declared, keep the edge; we'll warn separately
+			
 			g.Datastores[db.Name] = struct{}{}
 			g.Accesses = append(g.Accesses, DBEdge{
 				Service: svc.Name, DB: db.Name, Access: db.Access,
@@ -118,7 +119,7 @@ func buildGraph(s *Spec) *Graph {
 		}
 	}
 
-	// build quick lookup for hints
+	
 	tout := map[string]int{}
 	for k, v := range s.NonFunctionalHints.TimeoutsMs {
 		tout[normalizeKey(k)] = v
@@ -128,7 +129,7 @@ func buildGraph(s *Spec) *Graph {
 		freq[normalizeKey(k)] = v
 	}
 
-	// calls
+	
 	for _, c := range s.Calls {
 		key := normalizeKey(fmt.Sprintf("%s->%s", c.From, c.To))
 		g.Calls = append(g.Calls, CallEdge{
@@ -137,7 +138,7 @@ func buildGraph(s *Spec) *Graph {
 			TimeoutMs:  tout[key],
 			FreqPerMin: freq[key],
 		})
-		// make sure both endpoints exist as services
+		
 		g.Services[c.From] = struct{}{}
 		g.Services[c.To] = struct{}{}
 	}
@@ -151,13 +152,13 @@ func normalizeKey(s string) string {
 
 func (g *Graph) validate(s *Spec) []string {
 	var warns []string
-	// self calls
+	
 	for _, e := range g.Calls {
 		if e.From == e.To {
 			warns = append(warns, "self-call at service "+e.From)
 		}
 	}
-	// db references not defined under datastores (rare but useful)
+	
 	declared := map[string]struct{}{}
 	for _, d := range s.Datastores {
 		declared[d.Name] = struct{}{}
@@ -175,7 +176,7 @@ func (g *Graph) toDOT() string {
 	b.WriteString("digraph G {\n  rankdir=LR;\n")
 	b.WriteString("  node [style=rounded];\n")
 
-	// services as boxes
+	
 	var svcNames []string
 	for n := range g.Services {
 		svcNames = append(svcNames, n)
@@ -185,7 +186,7 @@ func (g *Graph) toDOT() string {
 		b.WriteString(fmt.Sprintf("  \"%s\" [shape=box];\n", n))
 	}
 
-	// datastores as cylinders
+	
 	var dbNames []string
 	for n := range g.Datastores {
 		dbNames = append(dbNames, n)
@@ -195,7 +196,7 @@ func (g *Graph) toDOT() string {
 		b.WriteString(fmt.Sprintf("  \"%s\" [shape=cylinder];\n", n))
 	}
 
-	// CALLS edges
+	
 	for _, e := range g.Calls {
 		lbl := ""
 		if e.Endpoint != "" {
@@ -233,7 +234,7 @@ func (g *Graph) toDOT() string {
 		}
 	}
 
-	// ACCESSES edges (dotted)
+	
 	for _, a := range g.Accesses {
 		lbl := "R"
 		if strings.EqualFold(a.Access, "readwrite") {
@@ -246,19 +247,21 @@ func (g *Graph) toDOT() string {
 	return b.String()
 }
 
-/**********  NEO4J LOADER  **********/
+// NEO4J LOADER
 
-// -------- Anti-pattern detection --------
+// Anti-pattern detection
+
 type Issue struct {
 	Type      string
 	Severity  string
 	Details   string
 	Services  []string
 	Datastore string
-	Edge      *CallEdge // optional: points to a specific call
+	Edge      *CallEdge 
 }
 
 // cycles via Tarjan SCC
+
 func detectCycles(g *Graph) []Issue {
 	n := 0
 	index := map[string]int{}
@@ -267,7 +270,7 @@ func detectCycles(g *Graph) []Issue {
 	var stack []string
 	var issues []Issue
 
-	// build adjacency
+
 	adj := map[string][]string{}
 	for s := range g.Services { adj[s] = nil }
 	for _, c := range g.Calls { adj[c.From] = append(adj[c.From], c.To) }
@@ -289,7 +292,7 @@ func detectCycles(g *Graph) []Issue {
 		}
 
 		if low[v] == index[v] {
-			// pop stack to form SCC
+			
 			var scc []string
 			for {
 				w := stack[len(stack)-1]
@@ -434,7 +437,7 @@ func detectRedundantResponsibilities(sp *Spec) []Issue {
 func detectAll(sp *Spec, g *Graph) []Issue {
 	var all []Issue
 	all = append(all, detectCycles(g)...)
-	all = append(all, detectGodServices(g, 5)...)         // tweak threshold as needed
+	all = append(all, detectGodServices(g, 5)...)
 	all = append(all, detectSharedDbWrites(g)...)
 	all = append(all, detectCrossDbReads(g)...)
 	all = append(all, detectChattyCalls(g, 300)...)
@@ -443,10 +446,10 @@ func detectAll(sp *Spec, g *Graph) []Issue {
 }
 
 
-// add this helper just above loadToNeo4j
+
 func ensureSchema(ctx context.Context, sess neo4j.SessionWithContext) error {
 	_, err := sess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		// schema-only tx
+		
 		if _, err := tx.Run(ctx,
 			"CREATE CONSTRAINT IF NOT EXISTS FOR (s:Service) REQUIRE s.name IS UNIQUE", nil); err != nil {
 			return nil, fmt.Errorf("constraint service: %w", err)
@@ -468,14 +471,14 @@ func loadToNeo4j(ctx context.Context, drv neo4j.DriverWithContext, g *Graph) err
 	sess := drv.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer sess.Close(ctx)
 
-	// 1) schema-only transaction
+
 	if err := ensureSchema(ctx, sess); err != nil {
 		return fmt.Errorf("schema: %w", err)
 	}
 
-	// 2) data-only transaction
+
 	_, err := sess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		// services
+		
 		svcs := make([]string, 0, len(g.Services))
 		for name := range g.Services {
 			svcs = append(svcs, name)
@@ -487,7 +490,7 @@ func loadToNeo4j(ctx context.Context, drv neo4j.DriverWithContext, g *Graph) err
 			return nil, fmt.Errorf("services: %w", err)
 		}
 
-		// datastores
+	
 		dbs := make([]string, 0, len(g.Datastores))
 		for name := range g.Datastores {
 			dbs = append(dbs, name)
@@ -499,7 +502,7 @@ func loadToNeo4j(ctx context.Context, drv neo4j.DriverWithContext, g *Graph) err
 			return nil, fmt.Errorf("datastores: %w", err)
 		}
 
-		// CALLS — use []map[string]any (structs are not supported)
+	
 		calls := make([]map[string]any, 0, len(g.Calls))
 		for _, e := range g.Calls {
 			calls = append(calls, map[string]any{
@@ -527,7 +530,7 @@ SET r.sync = e.Sync,
 			return nil, fmt.Errorf("CALLS: %w", err)
 		}
 
-		// ACCESSES — also []map[string]any
+
 		acc := make([]map[string]any, 0, len(g.Accesses))
 		for _, a := range g.Accesses {
 			acc = append(acc, map[string]any{
@@ -554,7 +557,7 @@ func loadIssuesToNeo4j(ctx context.Context, drv neo4j.DriverWithContext, issues 
 	sess := drv.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer sess.Close(ctx)
 
-	// Build params as []map[string]any
+
 	rows := make([]map[string]any, 0, len(issues))
 	for _, is := range issues {
 		key := is.Type + "|" + strings.Join(is.Services, ",") + "|" + is.Datastore
@@ -584,7 +587,7 @@ func loadIssuesToNeo4j(ctx context.Context, drv neo4j.DriverWithContext, issues 
 	}
 
 	_, err := sess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		// Issue nodes
+	
 		if _, err := tx.Run(ctx, `
 UNWIND $rows AS r
 MERGE (i:Issue {key: r.key})
@@ -597,7 +600,7 @@ SET i.type = r.type,
 			return nil, fmt.Errorf("issue nodes: %w", err)
 		}
 
-		// Link services
+	
 		if _, err := tx.Run(ctx, `
 UNWIND $rows AS r
 UNWIND r.services AS sname
@@ -607,7 +610,7 @@ MERGE (s)-[:HAS_ISSUE]->(i)
 			return nil, fmt.Errorf("issue svc links: %w", err)
 		}
 
-		// Link datastore (optional)
+		
 		if _, err := tx.Run(ctx, `
 UNWIND $rows AS r
 WITH r WHERE r.datastore IS NOT NULL AND r.datastore <> ""
@@ -617,7 +620,7 @@ MERGE (i)-[:INVOLVES]->(d)
 			return nil, fmt.Errorf("issue db links: %w", err)
 		}
 
-		// Link to the two endpoint services (Neo4j can't link to relationships)
+	
 if _, err := tx.Run(ctx, `
 UNWIND $rows AS r
 WITH r WHERE r.edgeFrom IS NOT NULL AND r.edgeTo IS NOT NULL
@@ -637,7 +640,8 @@ MERGE (i)-[:RELATES_TO]->(b)
 
 
 
-/**********  MAIN  **********/
+// MAIN
+
 func fatalf(msg string, a ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+msg+"\n", a...)
 	os.Exit(1)
