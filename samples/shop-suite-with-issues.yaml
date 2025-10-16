@@ -1,186 +1,30 @@
-version: 1
-system: ShopSuite
-metadata:
-  owner: team-arch
-  description: "Intentionally flawed microservice architecture for detector tests"
-
 services:
-  - name: api-gateway
-    lang: go
-    team: core
-    responsibilities: [
-        "routing",
-        "orchestration",
-        "auth",
-        "payments",
-        "inventory",
-      ] # ANTI-PATTERN: God service / orchestrator
-    replicas: 2
-
-  - name: auth-service
-    lang: go
-    team: platform
-    responsibilities: ["token-issue", "validate", "roles"]
-    databases:
-      - name: users-db
-        access: readwrite
-
-  - name: user-service
-    lang: go
-    team: platform
-    responsibilities: ["profile", "addresses", "billing-links"]
-    databases:
-      - name: users-db
-        access: readwrite
-      - name: orders-db # ANTI-PATTERN: cross-service direct DB access
-        access: readonly
-
-  - name: order-service
-    lang: go
-    team: core
-    responsibilities: ["create-order", "update-status", "aggregate-totals"]
-    databases:
-      - name: orders-db
-        access: readwrite
-    emits_topics: ["orders-events"]
-
-  - name: payment-service
-    lang: go
-    team: core
-    responsibilities: ["charge", "refund"]
-    databases:
-      - name: payments-db
-        access: readwrite
-
-  - name: catalog-service
-    lang: go
-    team: merch
-    responsibilities: ["list", "details"]
-    databases:
-      - name: shared-catalog-db # ANTI-PATTERN: shared DB with Search (both write)
-        access: readwrite
-
-  - name: search-service
-    lang: go
-    team: merch
-    responsibilities: ["index", "search"]
-    databases:
-      - name: shared-catalog-db # ANTI-PATTERN: shared DB with Catalog (both write)
-        access: readwrite
-
-  - name: email-service
-    lang: go
-    team: comms
-    responsibilities: ["send-email"]
-    emits_topics: []
-
-  - name: notification-service
-    lang: go
-    team: comms
-    responsibilities: ["send-email", "push", "sms"] # ANTI-PATTERN: overlap with email-service (redundant responsibility)
-
-  - name: billing-service
-    lang: go
-    team: finance
-    responsibilities: ["invoices", "tax"]
-    databases:
-      - name: payments-db
-        access: readonly
-
-datastores:
-  - name: users-db
-    engine: postgres
-  - name: orders-db
-    engine: postgres
-  - name: payments-db
-    engine: postgres
-  - name: shared-catalog-db
-    engine: postgres
-
-# Edges (service → service). 'sync' = true => request/response; false => async (event/queue)
-calls:
-  # Gateway as a "god" orchestrator
-  - from: api-gateway
-    to: auth-service
-    sync: true
-    endpoint: "/validate"
-
-  - from: api-gateway
-    to: catalog-service
-    sync: true
-    endpoint: "/list"
-
-  - from: api-gateway
-    to: search-service
-    sync: true
-    endpoint: "/search"
-
-  - from: api-gateway
-    to: user-service
-    sync: true
-    endpoint: "/me"
-
-  - from: api-gateway
-    to: order-service
-    sync: true
-    endpoint: "/order"
-
-  - from: api-gateway
-    to: payment-service
-    sync: true
-    endpoint: "/charge"
-
-  # N+1 chatter: order-service calls product per item (mode: per-item)
-  - from: order-service
-    to: catalog-service
-    sync: true
-    endpoint: "/items/batch"
-    mode: per-item
-
-  # Cycle: auth -> user -> billing -> auth
-  - from: auth-service
-    to: user-service
-    sync: true
-    endpoint: "/users/{id}"
-
-  - from: user-service
-    to: billing-service
-    sync: true
-    endpoint: "/invoices/{id}"
-
-  - from: billing-service
-    to: auth-service
-    sync: true
-    endpoint: "/roles/{id}"
-
-  # Tight coupling & async fan-out
-  - from: order-service
-    to: payment-service
-    sync: true
-    endpoint: "/charge"
-
-  - from: payment-service
-    to: email-service
-    sync: false
-    topic: "payments.receipts"
-
-  - from: order-service
-    to: notification-service
-    sync: false
-    topic: "order.events"
-
-# Extra evidence for detectors
-non_functional_hints:
-  timeouts_ms:
-    api-gateway->payment-service: 200
-    order-service->catalog-service: 100
-  frequencies_per_minute:
-    order-service->catalog-service: 600 # suggests chatty
-
-expect_issues:
-  - cycle(auth-service, user-service, billing-service)
-  - shared-db(catalog-service, search-service, shared-catalog-db)
-  - god-service(api-gateway)
-  - chatty(order-service -> catalog-service)
-  - cross-db-read(user-service -> orders-db)
-  - redundant(email-service vs notification-service)
+  api-gateway:
+    calls:
+      [
+        auth-service,
+        user-service,
+        order-service,
+        catalog-service,
+        search-service,
+        payment-service,
+      ]
+  auth-service:
+    calls: [user-service]
+    writes: [users-db]
+  user-service:
+    calls: [billing-service] # part of cycle
+    writes: [users-db] # shared_db_writes (future rule)
+  billing-service:
+    calls: [auth-service] # cycle: auth -> user -> billing -> auth
+    reads: [payments-db]
+  payment-service:
+    writes: [payments-db]
+  order-service:
+    calls: [catalog-service]
+    chatty_calls:
+      catalog-service: 600
+  catalog-service:
+    calls: [order-service] # tight-coupling (mutual) (future rule)
+  search-service:
+    calls: [catalog-service]
