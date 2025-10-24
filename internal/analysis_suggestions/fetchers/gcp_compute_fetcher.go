@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/csv"
 	"fmt"
 	"log"
 	"math"
@@ -29,7 +28,7 @@ type GcpComputePrice struct {
 	Region       string                 `json:"region"`
 	Description  string                 `json:"description"`
 	Unit         string                 `json:"unit,omitempty"`
-	PricePerUnit *float64               `json:"price_per_unit"`
+	PricePerUnit *float64               `json:"price_per_hour"`
 	Currency     string                 `json:"currency,omitempty"`
 	VCPU         *int                   `json:"vcpu,omitempty"`
 	MemoryGB     *float64               `json:"memory_gb,omitempty"`
@@ -42,7 +41,6 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 var (
 	reVCPUDesc      = regexp.MustCompile(`(?i)(\b[0-9]{1,4})\s*(v?cpu|vcpu|v-cpu|cores?)\b`)
 	reMemDesc       = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|gib|gb)\b`)
-	reMachineToken  = regexp.MustCompile(`([a-z0-9]+-[a-z0-9\-]+-[0-9]+)`)
 	reMachineSimple = regexp.MustCompile(`([a-z0-9]+-[a-z0-9]+-[0-9]+)`)
 )
 
@@ -51,10 +49,9 @@ func main() {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		log.Fatalf("mkdir out: %v", err)
 	}
-	outFile := filepath.Join(outDir, "gcp_compute_prices.jsonl")
+	outFile := filepath.Join(outDir, "gcp_compute_prices.csv")
 
 	limiter := rate.NewLimiter(rate.Limit(4), 8)
-
 	ctx := context.Background()
 
 	creds, _ := google.FindDefaultCredentials(ctx, cloudbilling.CloudPlatformScope)
@@ -84,11 +81,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("create out file: %v", err)
 	}
-	w := bufio.NewWriter(f)
-	defer func() {
-		w.Flush()
-		f.Close()
-	}()
+	defer f.Close()
+
+	writer := csv.NewWriter(f)
+	defer writer.Flush()
+
+	header := []string{
+		"id", "provider", "sku_id", "region", "description", "unit",
+		"price_per_hour", "currency", "vcpu", "memory_gb", "fetched_at",
+	}
+	if err := writer.Write(header); err != nil {
+		log.Fatalf("write header failed: %v", err)
+	}
 
 	total := 0
 	for _, svc := range computeServices {
@@ -108,6 +112,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("Services.Skus.List(%s) failed: %v", svcName, err)
 			}
+
 			for _, sku := range resp.Skus {
 				if sku.Category != nil && !strings.EqualFold(sku.Category.ResourceFamily, "Compute") {
 					continue
@@ -125,7 +130,6 @@ func main() {
 					}
 
 					vcpu, mem := parseVcpuMemFromSKU(sku)
-
 					out := GcpComputePrice{
 						ID:           fmt.Sprintf("gcp|%s|%s", sanitizeName(sku.Name), region),
 						Provider:     "gcp",
@@ -139,21 +143,27 @@ func main() {
 						MemoryGB:     mem,
 						FetchedAt:    time.Now().UTC(),
 					}
-					out.Metadata = map[string]interface{}{
-						"skuCategory": sku.Category,
-					}
-					b, _ := json.Marshal(out)
-					if _, err := w.Write(b); err != nil {
-						log.Fatalf("write failed: %v", err)
-					}
-					if _, err := w.WriteString("\n"); err != nil {
-						log.Fatalf("write newline failed: %v", err)
-					}
 					total++
+
+					record := []string{
+						out.ID,
+						out.Provider,
+						out.SKUID,
+						out.Region,
+						strings.ReplaceAll(out.Description, "\n", " "),
+						out.Unit,
+						fmt.Sprintf("%f", *out.PricePerUnit),
+						out.Currency,
+						intPtrToStr(out.VCPU),
+						floatPtrToStr(out.MemoryGB),
+						out.FetchedAt.Format(time.RFC3339),
+					}
+					if err := writer.Write(record); err != nil {
+						log.Fatalf("write record failed: %v", err)
+					}
+
 					if total%200 == 0 {
-						if err := w.Flush(); err != nil {
-							log.Fatalf("flush failed: %v", err)
-						}
+						writer.Flush()
 					}
 				}
 			}
@@ -165,46 +175,46 @@ func main() {
 		}
 	}
 
-	if err := w.Flush(); err != nil {
-		log.Fatalf("final flush failed: %v", err)
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		log.Fatalf("flush failed: %v", err)
 	}
-	log.Printf("Done. Wrote %d records to %s", total, outFile)
+	log.Printf("✅ Done. Wrote %d records to %s", total, outFile)
 }
 
 func parseVcpuMemFromSKU(sku *cloudbilling.Sku) (*int, *float64) {
 	if sku.Description != "" {
 		desc := sku.Description
+
+		var vcpu *int
 		if m := reVCPUDesc.FindStringSubmatch(desc); len(m) >= 2 {
 			if n, err := strconvAtoiSafe(m[1]); err == nil {
-				return &n, parseMemFromText(desc)
+				vcpu = &n
 			}
 		}
-		if mem := parseMemFromText(desc); mem != nil {
-			if m := reVCPUDesc.FindStringSubmatch(desc); len(m) >= 2 {
-				if n, err := strconvAtoiSafe(m[1]); err == nil {
-					return &n, mem
-				}
-			}
+
+		mem := parseMemFromText(desc)
+
+		if vcpu != nil || mem != nil {
+			return vcpu, mem
 		}
 	}
 
-	src := sku.Name
-	if sku.Description != "" {
-		src = sku.Description + " " + src
-	}
+	src := sku.Name + " " + sku.Description
 	if m := reMachineSimple.FindStringSubmatch(strings.ToLower(src)); len(m) >= 2 {
 		token := m[1]
 		parts := strings.Split(token, "-")
-		last := parts[len(parts)-1]
-		if n, err := strconvAtoiSafe(last); err == nil {
-			vcpu := n
-			return &vcpu, nil
+		if len(parts) >= 3 {
+			last := parts[len(parts)-1]
+			if n, err := strconvAtoiSafe(last); err == nil {
+				vcpu := n
+				return &vcpu, nil
+			}
 		}
 	}
 
 	return nil, nil
 }
-
 func parseMemFromText(s string) *float64 {
 	if m := reMemDesc.FindStringSubmatch(s); len(m) >= 2 {
 		if f, err := strconvParseFloatSafe(m[1]); err == nil {
@@ -215,13 +225,11 @@ func parseMemFromText(s string) *float64 {
 }
 
 func strconvAtoiSafe(s string) (int, error) {
-	s = strings.TrimSpace(s)
-	return strconv.Atoi(s)
+	return strconv.Atoi(strings.TrimSpace(s))
 }
 
 func strconvParseFloatSafe(s string) (float64, error) {
-	s = strings.TrimSpace(s)
-	return strconv.ParseFloat(s, 64)
+	return strconv.ParseFloat(strings.TrimSpace(s), 64)
 }
 
 func listServices(ctx context.Context, svc *cloudbilling.APIService) ([]*cloudbilling.Service, error) {
@@ -287,4 +295,18 @@ func extractPriceFromSKU(sku *cloudbilling.Sku) (*float64, string, string) {
 
 func sanitizeName(s string) string {
 	return strings.ReplaceAll(s, "/", "|")
+}
+
+func intPtrToStr(p *int) string {
+	if p == nil {
+		return ""
+	}
+	return strconv.Itoa(*p)
+}
+
+func floatPtrToStr(p *float64) string {
+	if p == nil {
+		return ""
+	}
+	return fmt.Sprintf("%.2f", *p)
 }

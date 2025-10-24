@@ -45,3 +45,5 @@ Thumbs.db
 # Built binaries
 /bin/
 /dist/
+
+/out/

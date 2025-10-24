@@ -18,7 +18,6 @@ func NewFetchHandler() *FetchHandler {
 }
 
 func (h *FetchHandler) RegisterRoutes(router *gin.RouterGroup) {
-	router.POST("/fetch-prices", h.FetchAllPrices)
 	router.GET("/fetch-prices", h.FetchAllPrices)
 }
 
