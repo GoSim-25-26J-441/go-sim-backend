@@ -5,6 +5,6 @@ import (
 	"time"
 )
 
-func (h *Handler) client() *http.Client {
-	return &http.Client{Timeout: 90 * time.Second}
+func httpClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
 }
