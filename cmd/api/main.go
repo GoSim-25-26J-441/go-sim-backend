@@ -5,6 +5,7 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
+	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,6 +27,15 @@ func main() {
 
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
 	healthHandler.RegisterRoutes(router)
+
+	api := router.Group("/api/v1")
+
+	// Initialize Design Input Processing HTTP handler
+	dip := api.Group("/design-input")
+	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL)
+	dipHandler.Register(dip)
+
+	router.Run(":" + cfg.Server.Port)
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
