@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,25 +34,20 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		Stream  bool   `json:"stream"`
 	}
 
-	// --- parse body (robust) ---
+	// 1) Parse JSON (robust)
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(400, gin.H{"ok": false, "error": "read body: " + err.Error()})
 		return
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
-
 	var req chatReq
 	if err := json.Unmarshal(raw, &req); err != nil || req.Message == "" {
-		c.JSON(400, gin.H{
-			"ok":    false,
-			"error": "invalid body",
-			"raw":   string(raw),
-		})
+		c.JSON(400, gin.H{"ok": false, "error": "invalid body", "raw": string(raw)})
 		return
 	}
 
-	// --- domain guard ---
+	// 2) Domain guard
 	if !isArchitectureQuestion(req.Message) {
 		c.JSON(200, gin.H{"ok": true, "answer": "This assistant focuses on software architecture topics."})
 		return
@@ -59,12 +56,19 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	jobID := c.Param("id")
 	appendChat(jobID, chatTurn{Role: "user", Text: req.Message, Ts: time.Now().Unix()})
 
-	// --- fetch compact context ---
+	// 3) RAG-first: try to answer from local snippets
+	if ans := ragAnswer(req.Message); ans != "" {
+		appendChat(jobID, chatTurn{Role: "assistant", Text: ans, Ts: time.Now().Unix()})
+		c.JSON(200, gin.H{"ok": true, "answer": ans})
+		return
+	}
+
+	// 4) Fetch compact context for LLM (only if RAG didn't answer)
 	ig, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/intermediate", upstreamURL, jobID), 10*time.Second)
-	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second) // ok if missing
+	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second)
 	features := compactContext(ig, spec, req.Message)
 
-	// --- call local Ollama (non-streaming) ---
+	// 5) Call local Ollama (non-streaming)
 	body := map[string]any{
 		"model":   "llama3:instruct",
 		"format":  "json",
@@ -73,14 +77,13 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		"prompt":  fmt.Sprintf("Context:\n%s\n\nQuestion:\n%s\n\nReturn only the JSON.", features, req.Message),
 		"options": map[string]any{"temperature": 0.2, "num_ctx": 1024, "num_predict": 512},
 	}
-
 	respBytes, err := postJSON(ollamaURL+"/api/generate", body, 60*time.Second)
 	if err != nil {
 		c.JSON(502, gin.H{"ok": false, "error": "ollama: " + err.Error()})
 		return
 	}
 
-	// ollama returns {"response":"<json string>", ...}
+	// 6) Decode Ollama response
 	var gen struct {
 		Response string `json:"response"`
 	}
@@ -99,8 +102,8 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		answerText = gen.Response
 	}
 
+	// 7) Log assistant turn and respond
 	appendChat(jobID, chatTurn{Role: "assistant", Text: answerText, Ts: time.Now().Unix()})
-
 	c.JSON(200, gin.H{"ok": true, "answer": answerText})
 }
 
@@ -228,4 +231,28 @@ func appendChat(jobID string, turn chatTurn) {
 
 	b, _ := json.Marshal(turn)
 	_, _ = f.Write(append(b, '\n'))
+}
+
+// returns non-empty answer if RAG can directly answer
+func ragAnswer(msg string) string {
+	results := diprag.Search(msg)
+	if len(results) == 0 {
+		return ""
+	}
+	// Simple heuristic: if user asks “how many cpu / 200 rps / capacity”
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "cpu") || strings.Contains(lower, "rps") || strings.Contains(lower, "capacity") {
+		// stitch top snippets together (very short)
+		var b strings.Builder
+		for i, r := range results {
+			if i > 1 {
+				break
+			} // top 2 only
+			b.WriteString(r.Snippet)
+			b.WriteString("\n")
+		}
+		return b.String()
+	}
+	// Otherwise return the first snippet
+	return results[0].Snippet
 }

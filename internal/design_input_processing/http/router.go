@@ -12,4 +12,5 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	jobs.GET("/export", h.export)
 	jobs.GET("/report", h.report)
 	jobs.POST("/chat", h.chat)
+	rg.GET("/rag/search", h.ragSearch)
 }
