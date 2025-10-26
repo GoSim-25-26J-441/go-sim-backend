@@ -1,0 +1,12 @@
+﻿{
+    "kind":  "cycles",
+    "severity":  "HIGH",
+    "title":  "Cyclic dependency",
+    "summary":  "Services mutually depend on each other",
+    "nodes":  [
+                  "SERVICE:service-b",
+                  "SERVICE:service-a",
+                  "SERVICE:service-c"
+              ],
+    "edges":  null
+}
