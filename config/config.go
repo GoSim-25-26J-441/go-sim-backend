@@ -29,11 +29,16 @@ type UpstreamsConfig struct {
 	LLMSvcURL string
 }
 
+type LLMConfig struct {
+	OllamaURL string
+}
+
 type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
 	App       AppConfig
 	Upstreams UpstreamsConfig
+	LLM       LLMConfig
 }
 
 func Load() (*Config, error) {
@@ -56,6 +61,9 @@ func Load() (*Config, error) {
 		},
 		Upstreams: UpstreamsConfig{
 			LLMSvcURL: getEnv("LLM_SVC_URL", "http://localhost:8081"),
+		},
+		LLM: LLMConfig{
+			OllamaURL: getEnv("OLLAMA_URL", "http://localhost:11434"),
 		},
 	}
 

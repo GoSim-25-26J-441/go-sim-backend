@@ -32,7 +32,7 @@ func main() {
 
 	// Initialize Design Input Processing HTTP handler
 	dip := api.Group("/design-input")
-	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL)
+	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
 	dipHandler.Register(dip)
 
 	router.Run(":" + cfg.Server.Port)
