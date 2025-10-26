@@ -1,37 +1,39 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
+	"net/http"
+	"os"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/config"
-	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
-	"github.com/gin-gonic/gin"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattaren_detection/service"
+	"github.com/gorilla/mux"
 )
 
-const serviceName = "go-sim-backend"
-
 func main() {
-	// Load configuration
-	cfg, err := config.Load()
+	r := mux.NewRouter()
+	r.HandleFunc("/api/v1/amg-apd/analyze", analyzeHandler).Methods("POST")
+	port := os.Getenv("PORT")
+	if port == "" { port = "8080" }
+	log.Printf("listening on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, r))
+}
+
+type reqBody struct {
+	Path   string `json:"path"`    // path to YAML file on disk
+	OutDir string `json:"out_dir"` // e.g., "out"
+	Title  string `json:"title"`
+}
+
+func analyzeHandler(w http.ResponseWriter, r *http.Request) {
+	var req reqBody
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400); return
+	}
+	res, err := service.AnalyzeYAML(req.Path, req.OutDir, req.Title, os.Getenv("DOT_BIN"))
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		http.Error(w, err.Error(), 500); return
 	}
-
-	// Set Gin mode based on environment
-	if cfg.App.Environment == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
-	router := gin.Default()
-
-	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
-	healthHandler.RegisterRoutes(router)
-
-	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
-	log.Printf("Server starting on port %s", cfg.Server.Port)
-	log.Printf("Health endpoint available at: http://localhost:%s/health", cfg.Server.Port)
-
-	if err := router.Run(":" + cfg.Server.Port); err != nil {
-		log.Fatal("Server failed to start:", err)
-	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }

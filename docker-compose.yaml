@@ -1,0 +1,19 @@
+services:
+  neo4j:
+    image: neo4j:5.25
+    container_name: neo4j
+    environment:
+      - NEO4J_AUTH=neo4j/neo4jpass
+    ports: ["7474:7474", "7687:7687"]
+    volumes:
+      - neo4j_data:/data
+
+  backend:
+    build: .
+    container_name: amg-apd
+    env_file: .env
+    ports: ["8080:8080"]
+    depends_on: [neo4j]
+
+volumes:
+  neo4j_data:
