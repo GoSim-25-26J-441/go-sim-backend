@@ -1,0 +1,384 @@
+{
+  "request": {
+    "design": {
+      "preferred_vcpu": 5,
+      "preferred_memory_gb": 8,
+      "workload": {
+        "concurrent_users": 1200
+      }
+    },
+    "candidates": [
+      {
+        "id": "c1",
+        "spec": {
+          "vcpu": 8,
+          "memory_gb": 16,
+          "label": "a"
+        },
+        "metrics": {
+          "cpu_util_pct": 72,
+          "mem_util_pct": 61
+        },
+        "sim_workload": {
+          "concurrent_users": 1400
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "c2",
+        "spec": {
+          "vcpu": 6,
+          "memory_gb": 8,
+          "label": "b"
+        },
+        "metrics": {
+          "cpu_util_pct": 65,
+          "mem_util_pct": 55
+        },
+        "sim_workload": {
+          "concurrent_users": 1300
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "c3",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 8,
+          "label": "c"
+        },
+        "metrics": {
+          "cpu_util_pct": 80,
+          "mem_util_pct": 75
+        },
+        "sim_workload": {
+          "concurrent_users": 1800
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "c4",
+        "spec": {
+          "vcpu": 10,
+          "memory_gb": 32,
+          "label": "d"
+        },
+        "metrics": {
+          "cpu_util_pct": 40,
+          "mem_util_pct": 50
+        },
+        "sim_workload": {
+          "concurrent_users": 1500
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "c5",
+        "spec": {
+          "vcpu": 8,
+          "memory_gb": 16,
+          "label": "e"
+        },
+        "metrics": {
+          "cpu_util_pct": 72,
+          "mem_util_pct": 61
+        },
+        "sim_workload": {
+          "concurrent_users": 1400
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "m1",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 16,
+          "label": "m1"
+        },
+        "metrics": {
+          "cpu_util_pct": 78,
+          "mem_util_pct": 70
+        },
+        "sim_workload": {
+          "concurrent_users": 1150
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "m2",
+        "spec": {
+          "vcpu": 6,
+          "memory_gb": 8,
+          "label": "m2"
+        },
+        "metrics": {
+          "cpu_util_pct": 85,
+          "mem_util_pct": 80
+        },
+        "sim_workload": {
+          "concurrent_users": 1400
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "m3",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 8,
+          "label": "m3"
+        },
+        "metrics": {
+          "cpu_util_pct": 65,
+          "mem_util_pct": 60
+        },
+        "sim_workload": {
+          "concurrent_users": 1200
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      {
+        "id": "m4",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 8,
+          "label": "m4"
+        },
+        "metrics": {
+          "cpu_util_pct": 60,
+          "mem_util_pct": 50
+        },
+        "sim_workload": {
+          "concurrent_users": 1000
+        },
+        "source": "sim-run-2025-10-27"
+      }
+    ]
+  },
+  "response": [
+    {
+      "candidate": {
+        "id": "m3",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 8,
+          "label": "m3"
+        },
+        "metrics": {
+          "cpu_util_pct": 65,
+          "mem_util_pct": 60
+        },
+        "sim_workload": {
+          "concurrent_users": 1200
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 0,
+      "suggestions": [
+        "Decrease vCPU from 5 to 4",
+        "Keep memory at 8 GB",
+        "Simulated concurrent users match the target."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "m1",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 16,
+          "label": "m1"
+        },
+        "metrics": {
+          "cpu_util_pct": 78,
+          "mem_util_pct": 70
+        },
+        "sim_workload": {
+          "concurrent_users": 1150
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 50,
+      "suggestions": [
+        "Decrease vCPU from 5 to 4",
+        "Increase memory from 8 GB to 16 GB",
+        "Simulated capacity supports ~1150 concurrent users vs target 1200; consider increasing vCPU or memory, or optimizing code paths to reach the target."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "c2",
+        "spec": {
+          "vcpu": 6,
+          "memory_gb": 8,
+          "label": "b"
+        },
+        "metrics": {
+          "cpu_util_pct": 65,
+          "mem_util_pct": 55
+        },
+        "sim_workload": {
+          "concurrent_users": 1300
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 100,
+      "suggestions": [
+        "Increase vCPU from 5 to 6",
+        "Keep memory at 8 GB",
+        "Simulated capacity exceeds target (supports ~1300 users vs 1200). You may reduce resources to save cost if utilization stays within limits."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "c1",
+        "spec": {
+          "vcpu": 8,
+          "memory_gb": 16,
+          "label": "a"
+        },
+        "metrics": {
+          "cpu_util_pct": 72,
+          "mem_util_pct": 61
+        },
+        "sim_workload": {
+          "concurrent_users": 1400
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 200,
+      "suggestions": [
+        "Increase vCPU from 5 to 8",
+        "Increase memory from 8 GB to 16 GB",
+        "Simulated capacity exceeds target (supports ~1400 users vs 1200). You may reduce resources to save cost if utilization stays within limits."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "c5",
+        "spec": {
+          "vcpu": 8,
+          "memory_gb": 16,
+          "label": "e"
+        },
+        "metrics": {
+          "cpu_util_pct": 72,
+          "mem_util_pct": 61
+        },
+        "sim_workload": {
+          "concurrent_users": 1400
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 200,
+      "suggestions": [
+        "Increase vCPU from 5 to 8",
+        "Increase memory from 8 GB to 16 GB",
+        "Simulated capacity exceeds target (supports ~1400 users vs 1200). You may reduce resources to save cost if utilization stays within limits."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "m2",
+        "spec": {
+          "vcpu": 6,
+          "memory_gb": 8,
+          "label": "m2"
+        },
+        "metrics": {
+          "cpu_util_pct": 85,
+          "mem_util_pct": 80
+        },
+        "sim_workload": {
+          "concurrent_users": 1400
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 200,
+      "suggestions": [
+        "Increase vCPU from 5 to 6",
+        "Keep memory at 8 GB",
+        "Simulated capacity exceeds target (supports ~1400 users vs 1200). You may reduce resources to save cost if utilization stays within limits."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "m4",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 8,
+          "label": "m4"
+        },
+        "metrics": {
+          "cpu_util_pct": 60,
+          "mem_util_pct": 50
+        },
+        "sim_workload": {
+          "concurrent_users": 1000
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 200,
+      "suggestions": [
+        "Decrease vCPU from 5 to 4",
+        "Keep memory at 8 GB",
+        "Simulated capacity supports ~1000 concurrent users vs target 1200; consider increasing vCPU or memory, or optimizing code paths to reach the target."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "c4",
+        "spec": {
+          "vcpu": 10,
+          "memory_gb": 32,
+          "label": "d"
+        },
+        "metrics": {
+          "cpu_util_pct": 40,
+          "mem_util_pct": 50
+        },
+        "sim_workload": {
+          "concurrent_users": 1500
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 300,
+      "suggestions": [
+        "Increase vCPU from 5 to 10",
+        "Increase memory from 8 GB to 32 GB",
+        "Simulated capacity exceeds target (supports ~1500 users vs 1200). You may reduce resources to save cost if utilization stays within limits."
+      ]
+    },
+    {
+      "candidate": {
+        "id": "c3",
+        "spec": {
+          "vcpu": 4,
+          "memory_gb": 8,
+          "label": "c"
+        },
+        "metrics": {
+          "cpu_util_pct": 80,
+          "mem_util_pct": 75
+        },
+        "sim_workload": {
+          "concurrent_users": 1800
+        },
+        "source": "sim-run-2025-10-27"
+      },
+      "passed_all_required": false,
+      "workload_distance": 600,
+      "suggestions": [
+        "Decrease vCPU from 5 to 4",
+        "Keep memory at 8 GB",
+        "Simulated capacity exceeds target (supports ~1800 users vs 1200). You may reduce resources to save cost if utilization stays within limits."
+      ]
+    }
+  ]
+}

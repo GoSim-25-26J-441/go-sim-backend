@@ -36,6 +36,10 @@ func main() {
 
 		importHandler := importer.NewImportHandler()
 		importHandler.RegisterRoutes(api)
+
+		suggestHandler := analysispapi.NewSuggestHandler("internal/analysis_suggestions/rules/rules.json")
+		suggestHandler.RegisterRoutes(api)
+
 	}
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
@@ -43,6 +47,7 @@ func main() {
 	log.Printf("Health endpoint available at: http://localhost:%s/health", cfg.Server.Port)
 	log.Printf("Fetch endpoint available at: http://localhost:%s/api/fetch-prices", cfg.Server.Port)
 	log.Printf("Import endpoint available at: http://localhost:%s/api/import-prices", cfg.Server.Port)
+	log.Printf("Suggest endpoint available at: http://localhost:%s/api/suggest", cfg.Server.Port)
 
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
 		log.Fatal("Server failed to start:", err)
