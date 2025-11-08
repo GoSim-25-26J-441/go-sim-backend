@@ -1,12 +1,18 @@
 package rules
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Rule struct {
@@ -60,6 +66,7 @@ type Engine struct {
 }
 
 type RequestResponse struct {
+	ID      string `json:"id"`
 	Request struct {
 		Design     DesignInput `json:"design"`
 		Candidates []Candidate `json:"candidates"`
@@ -98,35 +105,91 @@ func (e *Engine) EvaluateCandidates(design DesignInput, candidates []Candidate) 
 		return out[i].PassedAllReq && !out[j].PassedAllReq
 	})
 
-	requestResponse := RequestResponse{
-		Response: out,
-	}
-
-	requestResponse.Request.Design = design
-	requestResponse.Request.Candidates = candidates
-
-	err := saveRequestResponseToFile(requestResponse, "request_response.json")
-	if err != nil {
-		return nil, err
-	}
-
 	return out, nil
 }
 
-func saveRequestResponseToFile(requestResponse RequestResponse, fileName string) error {
-	file, err := os.Create(fileName)
+func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design DesignInput, candidates []Candidate) ([]CandidateScore, string, error) {
+	out, err := e.EvaluateCandidates(design, candidates)
 	if err != nil {
-		return fmt.Errorf("could not create file: %v", err)
+		return nil, "", err
 	}
-	defer file.Close()
+	if len(out) == 0 {
+		return out, "", fmt.Errorf("no candidates evaluated")
+	}
+	best := out[0]
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(requestResponse); err != nil {
-		return fmt.Errorf("could not encode request-response to file: %v", err)
+	dbURL := os.Getenv("DATABASE_URL")
+	id := ""
+
+	if dbURL != "" {
+		pool, err := pgxpool.New(ctx, dbURL)
+		if err == nil {
+			defer pool.Close()
+			id, err = saveRequestResponseToDB(ctx, pool, userID, design, candidates, out, best)
+			if err == nil {
+				return out, id, nil
+			}
+		}
+	}
+	u := uuid.New().String()
+	rr := RequestResponse{
+		ID: u,
+	}
+	rr.Request.Design = design
+	rr.Request.Candidates = candidates
+	rr.Response = out
+
+	dir := filepath.Join("out", "asm", "req")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return out, "", fmt.Errorf("failed to create fallback dir: %v", err)
+	}
+	path := filepath.Join(dir, fmt.Sprintf("request_response_%s.json", u))
+	f, err := os.Create(path)
+	if err != nil {
+		return out, "", fmt.Errorf("failed to create fallback file: %v", err)
+	}
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rr); err != nil {
+		f.Close()
+		return out, "", fmt.Errorf("failed to write fallback file: %v", err)
+	}
+	f.Close()
+	return out, path, nil
+}
+
+func saveRequestResponseToDB(ctx context.Context, pool *pgxpool.Pool, userID string, design DesignInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
+	reqObj := struct {
+		Design     DesignInput `json:"design"`
+		Candidates []Candidate `json:"candidates"`
+	}{
+		Design:     design,
+		Candidates: candidates,
+	}
+	reqJSON, err := json.Marshal(reqObj)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request JSON: %v", err)
+	}
+	respJSON, err := json.Marshal(response)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response JSON: %v", err)
+	}
+	bestJSON, err := json.Marshal(best)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal best JSON: %v", err)
 	}
 
-	return nil
+	sql := `
+INSERT INTO request_responses (user_id, request, response, best_candidate, created_at)
+VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, now())
+RETURNING id;
+`
+	var id string
+	err = pool.QueryRow(ctx, sql, userID, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("db insert failed: %v", err)
+	}
+	return id, nil
 }
 
 func (e *Engine) evalCandidate(design DesignInput, c Candidate) (CandidateScore, error) {

@@ -9,15 +9,16 @@ import (
 )
 
 type SuggestRequest struct {
+	UserID     string            `json:"user_id,omitempty"`
 	Design     rules.DesignInput `json:"design"`
 	Candidates []rules.Candidate `json:"candidates"`
 	RuleFile   string            `json:"rule_file,omitempty"`
 }
 
 type SuggestResponse struct {
-	Best       rules.CandidateScore   `json:"best"`
-	AllScores  []rules.CandidateScore `json:"all_scores"`
-	RuleSource string                 `json:"rule_source"`
+	Best      rules.CandidateScore   `json:"best"`
+	AllScores []rules.CandidateScore `json:"all_scores"`
+	StorageID string                 `json:"storage_id"`
 }
 
 type SuggestHandler struct {
@@ -48,19 +49,24 @@ func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load rules: " + err.Error()})
 		return
 	}
-	scores, err := engine.EvaluateCandidates(req.Design, req.Candidates)
+
+	ctx := c.Request.Context()
+	results, storageID, err := engine.EvaluateAndStore(ctx, req.UserID, req.Design, req.Candidates)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "evaluation failed: " + err.Error()})
+		log.Printf("evaluation/store error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "evaluation/store failed: " + err.Error()})
 		return
 	}
-	if len(scores) == 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "no candidates provided"})
+
+	if len(results) == 0 {
+		c.JSON(http.StatusOK, gin.H{"message": "no candidates provided", "storage_id": storageID})
 		return
 	}
-	res := SuggestResponse{
-		Best:       scores[0],
-		AllScores:  scores,
-		RuleSource: ruleFile,
+
+	resp := SuggestResponse{
+		Best:      results[0],
+		AllScores: results,
+		StorageID: storageID,
 	}
-	c.JSON(http.StatusOK, res)
+	c.JSON(http.StatusOK, resp)
 }
