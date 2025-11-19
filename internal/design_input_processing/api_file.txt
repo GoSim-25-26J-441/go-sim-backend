@@ -1,0 +1,47 @@
+# ====== 0) Upstream (uigp-service :8081) quick checks ======
+curl.exe "http://localhost:8081/health"
+curl.exe "http://localhost:8081/llm/ping"
+
+# ====== 1) Main API health (go-sim-backend :8080) ======
+curl.exe "http://localhost:8080/health"
+curl.exe "http://localhost:8080/api/v1/design-input/health"
+
+# ====== 2) Ingest a sample (via MAIN API) ======
+$ing = curl.exe --form "files=@D:\Research\uigp-service\sample.puml" --form-string "chat=~200 RPS; internal gRPC" `
+  "http://localhost:8080/api/v1/design-input/ingest"
+$JOB = ( $ing | ConvertFrom-Json ).jobId
+"JOB = $JOB"
+
+# ====== 3) Intermediate / Fuse / Export / Report (MAIN API) ======
+curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/intermediate"
+curl.exe -X POST "http://localhost:8080/api/v1/design-input/jobs/$JOB/fuse"
+curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=json"
+curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/report"
+
+# ====== 4) RAG utilities (search + reload) ======
+# (Encode spaces in q; using --get --data-urlencode is easiest)
+curl.exe --get --data-urlencode "q=grpc 200 rps" "http://localhost:8080/api/v1/design-input/rag/search"
+curl.exe -X POST "http://localhost:8080/api/v1/design-input/rag/reload"
+# Optional: point to a different snippets dir
+# curl.exe -X POST "http://localhost:8080/api/v1/design-input/rag/reload?dir=internal/design_input_processing/rag/snippets"
+
+# ====== 5) Chat (non-streaming, RAG-first then LLM) ======
+# PowerShell version (avoids quoting issues)
+$body = '{"mode":"assistant","message":"How many CPU cores for ~200 RPS at 150ms p95?"}'
+(Invoke-WebRequest -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat" `
+  -Method POST -ContentType "application/json" -Body $body).Content
+
+
+# History (view / clear)
+(Invoke-WebRequest -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/history?n=20").Content
+Invoke-WebRequest -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/history" -Method DELETE
+
+# ====== 6) Chat streaming (SSE) ======
+# You’ll see many "event: delta" lines then a final "event: done".
+curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/stream?message=Suggest%20gRPC%20timeouts%20and%20retries%20for%20200%20RPS"
+
+# ====== 7) Exports (force download names; optional) ======
+# JSON
+curl.exe -OJ "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=json&download=true"
+# YAML
+curl.exe -OJ "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=yaml&download=true"
