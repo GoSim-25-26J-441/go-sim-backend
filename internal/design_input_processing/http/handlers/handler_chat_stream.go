@@ -11,26 +11,40 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Assumes you already have these helpers/types in the same package:
+// - isArchitectureQuestion(string) bool
+// - appendChat(jobID string, turn chatTurn)
+// - fetchJSON(url string, timeout time.Duration) ([]byte, error)
+// - compactContext(igJSON, specJSON []byte, query string) string
+// - type chatTurn struct { Role, Text, Source string; Ts int64; Refs []string }
+
 func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 	msg := c.Query("message")
 	if msg == "" {
-		c.JSON(400, gin.H{"ok": false, "error": "missing message"})
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing message"})
 		return
 	}
 
-	// Basic domain guard (reuse your existing helpers if you want)
+	// Domain guard (simple)
 	if !isArchitectureQuestion(msg) {
+		// SSE early return
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")          // nginx: disable buffering
+		c.Header("Access-Control-Allow-Origin", "*") // dev; restrict in prod
+
 		fmt.Fprintf(c.Writer, "event: done\ndata: %s\n\n", `{"ok":true,"answer":"Architecture topics only."}`)
-		c.Writer.Flush()
+		if f, ok := c.Writer.(http.Flusher); ok {
+			f.Flush()
+		}
 		return
 	}
 
 	jobID := c.Param("id")
 	appendChat(jobID, chatTurn{Role: "user", Text: msg, Ts: time.Now().Unix()})
 
-	// Build compact context (same as your non-streaming path)
+	// Build compact context (same logic as non-streaming)
 	ig, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/intermediate", upstreamURL, jobID), 10*time.Second)
 	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second)
 	features := compactContext(ig, spec, msg)
@@ -39,22 +53,21 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 	payload := map[string]any{
 		"model":  "llama3:instruct",
 		"format": "json",
-		"stream": true, // IMPORTANT
+		"stream": true,
 		"system": `You are a software architecture assistant. Return JSON: {"answer": string}. Keep it concise.`,
 		"prompt": fmt.Sprintf("Context:\n%s\n\nQuestion:\n%s\n\nReturn only the JSON.", features, msg),
 		"options": map[string]any{
 			"temperature": 0.2, "num_ctx": 1024, "num_predict": 512,
 		},
 	}
-
 	reqBody, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", ollamaURL+"/api/generate", bufio.NewReaderSize(bytes.NewReader(reqBody), 32*1024))
-	req.Header.Set("Content-Type", "application/json")
 
+	req, _ := http.NewRequest("POST", ollamaURL+"/api/generate", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 0} // let stream run
 	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": "ollama: " + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": "ollama: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
@@ -63,26 +76,54 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")          // nginx: disable buffering
+	c.Header("Access-Control-Allow-Origin", "*") // dev; restrict in prod
+
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		c.JSON(500, gin.H{"ok": false, "error": "streaming unsupported"})
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "streaming unsupported"})
 		return
 	}
+
+	// Client disconnect handling + keep-alive pings
+	ctx := c.Request.Context()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				fmt.Fprint(c.Writer, ": keep-alive\n\n")
+				flusher.Flush()
+			}
+		}
+	}()
 
 	// Stream tokens as they arrive
 	type chunk struct {
 		Response string `json:"response"`
 		Done     bool   `json:"done"`
 	}
+
 	var full string
 	sc := bufio.NewScanner(resp.Body)
+	// Increase buffer in case Ollama sends long lines
+	sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
 	for sc.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		var ch chunk
 		if json.Unmarshal(sc.Bytes(), &ch) == nil {
 			if ch.Response != "" {
 				full += ch.Response
-				// send partial to client UI
-				fmt.Fprintf(c.Writer, "event: delta\ndata: %s\n\n", jsonEscape(ch.Response))
+				// Send partial to client UI (JSON string)
+				fmt.Fprintf(c.Writer, "event: delta\ndata: %s\n\n", jsonString(ch.Response))
 				flusher.Flush()
 			}
 			if ch.Done {
@@ -90,7 +131,7 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 			}
 		}
 	}
-	// finalize: try to extract {"answer": "..."} else send raw text
+	// finalize: try to extract {"answer": "..."} else use raw text
 	answer := full
 	var out struct {
 		Answer string `json:"answer"`
@@ -105,13 +146,13 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 		Ts:     time.Now().Unix(),
 		Source: "llm",
 	})
+
 	fmt.Fprintf(c.Writer, "event: done\ndata: %s\n\n", `{"ok":true}`)
 	flusher.Flush()
 }
 
-// tiny helper
-func jsonEscape(s string) string {
+// Helper: encode as JSON string
+func jsonString(s string) string {
 	b, _ := json.Marshal(s)
-	// b is quoted string, return as raw JSON string (no extra quotes)
 	return string(b)
 }
