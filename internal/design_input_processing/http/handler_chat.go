@@ -8,3 +8,7 @@ import (
 func (h *Handler) chat(c *gin.Context) {
 	handlers.Chat(c, h.UpstreamURL, h.OllamaURL)
 }
+
+func (h *Handler) chatStream(c *gin.Context) {
+	handlers.ChatStream(c, h.UpstreamURL, h.OllamaURL)
+}

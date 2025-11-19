@@ -12,4 +12,12 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	jobs.GET("/export", h.export)
 	jobs.GET("/report", h.report)
 	jobs.POST("/chat", h.chat)
+
+	rg.GET("/jobs/:id/chat/history", h.chatHistory)
+	rg.DELETE("/jobs/:id/chat/history", h.chatClear)
+	rg.GET("/jobs/:id/chat/stream", h.chatStream)
+
+	rg.GET("/rag/search", h.ragSearch)
+	rg.POST("/rag/reload", h.ragReload)
+
 }

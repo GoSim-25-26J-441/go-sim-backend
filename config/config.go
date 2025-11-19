@@ -33,12 +33,17 @@ type LLMConfig struct {
 	OllamaURL string
 }
 
+type RAGConfig struct {
+	SnippetsDir string
+}
+
 type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
 	App       AppConfig
 	Upstreams UpstreamsConfig
 	LLM       LLMConfig
+	RAG       RAGConfig
 }
 
 func Load() (*Config, error) {
@@ -64,6 +69,9 @@ func Load() (*Config, error) {
 		},
 		LLM: LLMConfig{
 			OllamaURL: getEnv("OLLAMA_URL", "http://localhost:11434"),
+		},
+		RAG: RAGConfig{
+			SnippetsDir: getEnv("RAG_SNIPPETS_DIR", "internal/design_input_processing/rag/snippets"),
 		},
 	}
 
