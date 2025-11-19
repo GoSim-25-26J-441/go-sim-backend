@@ -5,15 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
-
-	"github.com/joho/godotenv"
 )
-
-type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	App      AppConfig
-}
 
 type ServerConfig struct {
 	Port string
@@ -33,11 +25,23 @@ type AppConfig struct {
 	Version     string
 }
 
+type UpstreamsConfig struct {
+	LLMSvcURL string
+}
+
+type LLMConfig struct {
+	OllamaURL string
+}
+
+type Config struct {
+	Server    ServerConfig
+	Database  DatabaseConfig
+	App       AppConfig
+	Upstreams UpstreamsConfig
+	LLM       LLMConfig
+}
+
 func Load() (*Config, error) {
-	// Load .env file if it exists (ignore error in production)
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
-	}
 
 	cfg := &Config{
 		Server: ServerConfig{
@@ -55,10 +59,12 @@ func Load() (*Config, error) {
 			LogLevel:    getEnv("LOG_LEVEL", "info"),
 			Version:     getEnv("APP_VERSION", "1.0.0"),
 		},
-	}
-
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+		Upstreams: UpstreamsConfig{
+			LLMSvcURL: getEnv("LLM_SVC_URL", "http://localhost:8081"),
+		},
+		LLM: LLMConfig{
+			OllamaURL: getEnv("OLLAMA_URL", "http://localhost:11434"),
+		},
 	}
 
 	return cfg, nil
