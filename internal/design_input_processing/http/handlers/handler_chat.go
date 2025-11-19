@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,16 +16,38 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type missing struct {
+	Key string `json:"key"`
+	Q   string `json:"question"`
+}
+
 type chatReq struct {
-	Mode    string `json:"mode"`    // "rag" | "assistant"
-	Message string `json:"message"` // user text
+	Mode    string `json:"mode"`
+	Message string `json:"message"`
 	Stream  bool   `json:"stream"`
 }
 
 type chatTurn struct {
-	Role string `json:"role"` // "user" or "assistant"
-	Text string `json:"text"`
-	Ts   int64  `json:"ts"`
+	Role   string   `json:"role"`
+	Text   string   `json:"text"`
+	Ts     int64    `json:"ts"`
+	Source string   `json:"source,omitempty"`
+	Refs   []string `json:"refs,omitempty"`
+}
+
+var rxRPS = regexp.MustCompile(`(?i)\b(\d+)\s*rps\b`)
+var rxP95ms = regexp.MustCompile(`(?i)\bp95\b.*?(\d+)\s*ms`)
+var rxCPU = regexp.MustCompile(`(?i)\b(\d+)\s*(v?cpu|cores?)\b`)
+var rxPayload = regexp.MustCompile(`(?i)(\d+)\s*(kb|mb)\b`)
+var rxBurst = regexp.MustCompile(`(?i)\b(\d+)[x×]\b`)
+
+var allowKeywords = []string{
+	"microservice", "service", "api", "grpc", "rest", "gateway",
+	"throughput", "rps", "latency", "p95", "p99",
+	"queue", "kafka", "topic", "db", "replica", "cache",
+	"cpu", "memory", "autoscale", "deployment", "container",
+	"circuit", "retry", "timeout", "load balancer", "rate limit",
+	"uml", "plantuml", "draw.io", "diagram",
 }
 
 func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
@@ -47,19 +70,76 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
+	jobID := c.Param("id")
+	strict := strings.EqualFold(req.Mode, "design-guardrails")
+
+	if strict && !onTopic(req.Message) {
+		guardMsg := "Let’s keep it on software architecture (microservices, APIs, sizing, latency, etc.)."
+		appendChat(jobID, chatTurn{
+			Role:   "assistant",
+			Text:   guardMsg,
+			Ts:     time.Now().Unix(),
+			Source: "guardrails",
+		})
+		c.JSON(200, gin.H{
+			"ok":     true,
+			"answer": guardMsg,
+			"source": "guardrails",
+		})
+		return
+	}
+
 	// 2) Domain guard
 	if !isArchitectureQuestion(req.Message) {
 		c.JSON(200, gin.H{"ok": true, "answer": "This assistant focuses on software architecture topics."})
 		return
 	}
 
-	jobID := c.Param("id")
 	appendChat(jobID, chatTurn{Role: "user", Text: req.Message, Ts: time.Now().Unix()})
 
-	// 3) RAG-first: try to answer from local snippets
-	if ans := ragAnswer(req.Message); ans != "" {
-		appendChat(jobID, chatTurn{Role: "assistant", Text: ans, Ts: time.Now().Unix()})
-		c.JSON(200, gin.H{"ok": true, "answer": ans})
+	if ans, refs := ragAnswer(req.Message); ans != "" {
+		if miss := findMissingSignals(req.Message); len(miss) > 0 {
+			var b strings.Builder
+			b.WriteString("To size this accurately, I need:\n")
+			for i, it := range miss {
+				if i >= 3 {
+					break
+				} // keep it short (top 3)
+				b.WriteString("- ")
+				b.WriteString(it.Q)
+				b.WriteString("\n")
+			}
+			ask := strings.TrimSpace(b.String())
+			appendChat(jobID, chatTurn{
+				Role:   "assistant",
+				Text:   ask,
+				Ts:     time.Now().Unix(),
+				Source: "rag",
+				Refs:   refs,
+			})
+			c.JSON(200, gin.H{
+				"ok":      true,
+				"answer":  ask,
+				"source":  "rag",
+				"refs":    refs,
+				"missing": miss,
+			})
+			return
+		}
+
+		appendChat(jobID, chatTurn{
+			Role:   "assistant",
+			Text:   ans,
+			Ts:     time.Now().Unix(),
+			Source: "rag",
+			Refs:   refs,
+		})
+		c.JSON(200, gin.H{
+			"ok":     true,
+			"answer": ans,
+			"source": "rag",
+			"refs":   refs,
+		})
 		return
 	}
 
@@ -102,13 +182,21 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		answerText = gen.Response
 	}
 
-	// 7) Log assistant turn and respond
-	appendChat(jobID, chatTurn{Role: "assistant", Text: answerText, Ts: time.Now().Unix()})
-	c.JSON(200, gin.H{"ok": true, "answer": answerText})
+	appendChat(jobID, chatTurn{
+		Role:   "assistant",
+		Text:   answerText,
+		Ts:     time.Now().Unix(),
+		Source: "llm",
+	})
+	c.JSON(200, gin.H{
+		"ok":     true,
+		"answer": answerText,
+		"source": "llm",
+	})
+
 }
 
 func isArchitectureQuestion(s string) bool {
-	// ultra-simple gate; refine later
 	keys := []string{"service", "api", "grpc", "rest", "queue", "topic", "database", "latency", "rps", "throughput", "cache", "retry", "circuit"}
 	for _, k := range keys {
 		if containsCI(s, k) {
@@ -183,36 +271,6 @@ func tryEdges(m map[string]any) [][3]string {
 	return out
 }
 
-// minimal getenv to avoid extra imports (or read via your config)
-func getenv(k, def string) string {
-	if v := http.CanonicalHeaderKey(k); v == "" { /* noop */
-	}
-	if v := time.Now(); v.IsZero() { /* noop */
-	}
-	if v := []byte{}; v == nil { /* noop */
-	}
-	if v := ""; v != "" {
-		return v
-	}
-	if v := ""; v != "" {
-		return v
-	}
-	if val := func() string { return "" }(); val != "" {
-		return val
-	}
-	if val := ""; val != "" {
-		return val
-	}
-	if v := ""; v != "" {
-		return v
-	}
-	// simple fallback for now:
-	if v := ""; v != "" {
-		return v
-	}
-	return def
-}
-
 func appendChat(jobID string, turn chatTurn) {
 
 	dir := os.Getenv("CHAT_LOG_DIR")
@@ -233,26 +291,75 @@ func appendChat(jobID string, turn chatTurn) {
 	_, _ = f.Write(append(b, '\n'))
 }
 
-// returns non-empty answer if RAG can directly answer
-func ragAnswer(msg string) string {
+func ragAnswer(msg string) (string, []string) {
 	results := diprag.Search(msg)
 	if len(results) == 0 {
-		return ""
+		return "", nil
 	}
-	// Simple heuristic: if user asks “how many cpu / 200 rps / capacity”
-	lower := strings.ToLower(msg)
-	if strings.Contains(lower, "cpu") || strings.Contains(lower, "rps") || strings.Contains(lower, "capacity") {
-		// stitch top snippets together (very short)
-		var b strings.Builder
-		for i, r := range results {
-			if i > 1 {
-				break
-			} // top 2 only
-			b.WriteString(r.Snippet)
+
+	var b strings.Builder
+	refs := make([]string, 0, 2)
+	for i, r := range results {
+		if i > 1 {
+			break
+		}
+		b.WriteString(r.Snippet)
+		if !strings.HasSuffix(r.Snippet, "\n") {
 			b.WriteString("\n")
 		}
-		return b.String()
+		base := r.ID
+		if slash := strings.LastIndexAny(base, `/\`); slash >= 0 {
+			base = base[slash+1:]
+		}
+		refs = append(refs, base)
 	}
-	// Otherwise return the first snippet
-	return results[0].Snippet
+	return strings.TrimSpace(b.String()), refs
+}
+
+func ragRefs(msg string) []string {
+	results := diprag.Search(msg)
+	refs := make([]string, 0, len(results))
+	for i, r := range results {
+		if i > 1 {
+			break
+		}
+		base := r.ID
+		if slash := strings.LastIndexAny(base, `/\`); slash >= 0 {
+			base = base[slash+1:]
+		}
+		refs = append(refs, base)
+	}
+	return refs
+}
+
+func findMissingSignals(msg string) []missing {
+	l := strings.ToLower(msg)
+	m := []missing{}
+	if rxRPS.FindStringSubmatch(l) == nil {
+		m = append(m, missing{Key: "rps_peak", Q: "What is peak vs average RPS (traffic pattern)?"})
+	}
+	if rxP95ms.FindStringSubmatch(l) == nil {
+		m = append(m, missing{Key: "latency_p95", Q: "What p95 latency target are you aiming for (ms)?"})
+	}
+	if rxPayload.FindStringSubmatch(l) == nil {
+		m = append(m, missing{Key: "payload", Q: "Typical payload size (KB) and read/write split?"})
+	}
+	if rxBurst.FindStringSubmatch(l) == nil {
+		m = append(m, missing{Key: "burst", Q: "Expected burst (e.g., 2x average) and duration?"})
+	}
+	if rxCPU.FindStringSubmatch(l) == nil {
+		m = append(m, missing{Key: "current_cpu", Q: "Current/target CPU/RAM footprint per instance?"})
+	}
+	return m
+}
+
+func onTopic(msg string) bool {
+	m := strings.ToLower(msg)
+	hits := 0
+	for _, kw := range allowKeywords {
+		if strings.Contains(m, kw) {
+			hits++
+		}
+	}
+	return hits >= 1
 }
