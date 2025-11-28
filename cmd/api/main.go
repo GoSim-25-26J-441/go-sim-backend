@@ -4,11 +4,11 @@ import (
 	"log"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
+	cronjob "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/cron"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
 	analysispapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/analysis_suggestions"
-	importer "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/analysis_suggestions"
-
 	costcal "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/analysis_suggestions"
+	importer "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/analysis_suggestions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,6 +30,10 @@ func main() {
 
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
 	healthHandler.RegisterRoutes(router)
+
+	// Start cron scheduler
+	scheduler := cronjob.NewScheduler()
+	scheduler.Start()
 
 	api := router.Group("/api")
 	{
