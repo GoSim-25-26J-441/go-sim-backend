@@ -7,7 +7,6 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,21 +21,21 @@ import (
 )
 
 type GcpComputePrice struct {
-	ID           string                 `json:"id"`
-	Provider     string                 `json:"provider"`
-	SKUID        string                 `json:"sku_id"`
-	Region       string                 `json:"region"`
-	Description  string                 `json:"description"`
-	Unit         string                 `json:"unit,omitempty"`
-	PricePerUnit *float64               `json:"price_per_hour"`
-	Currency     string                 `json:"currency,omitempty"`
-	VCPU         *int                   `json:"vcpu,omitempty"`
-	MemoryGB     *float64               `json:"memory_gb,omitempty"`
-	FetchedAt    time.Time              `json:"fetched_at"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID             string    `json:"id"`
+	Provider       string    `json:"provider"`
+	SKUID          string    `json:"sku_id"`
+	Region         string    `json:"region"`
+	InstanceType   string    `json:"instance_type"`
+	ResourceFamily string    `json:"resource_family"`
+	VCPU           *int      `json:"vcpu,omitempty"`
+	MemoryGB       *float64  `json:"memory_gb,omitempty"`
+	PricePerHour   *float64  `json:"price_per_hour"`
+	Currency       string    `json:"currency,omitempty"`
+	Unit           string    `json:"unit,omitempty"`
+	PurchaseOption string    `json:"purchase_option"`
+	UsageType      string    `json:"usage_type"`
+	FetchedAt      time.Time `json:"fetched_at"`
 }
-
-var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 var (
 	reVCPUDesc      = regexp.MustCompile(`(?i)(\b[0-9]{1,4})\s*(v?cpu|vcpu|v-cpu|cores?)\b`)
@@ -87,8 +86,9 @@ func main() {
 	defer writer.Flush()
 
 	header := []string{
-		"id", "provider", "sku_id", "region", "description", "unit",
-		"price_per_hour", "currency", "vcpu", "memory_gb", "fetched_at",
+		"id", "provider", "sku_id", "region", "instance_type", "resource_family",
+		"vcpu", "memory_gb", "price_per_hour", "currency", "unit",
+		"purchase_option", "usage_type", "fetched_at",
 	}
 	if err := writer.Write(header); err != nil {
 		log.Fatalf("write header failed: %v", err)
@@ -130,18 +130,39 @@ func main() {
 					}
 
 					vcpu, mem := parseVcpuMemFromSKU(sku)
+					instanceType := extractInstanceType(sku)
+					resourceFamily := ""
+					usageType := ""
+					purchaseOption := "OnDemand"
+
+					if sku.Category != nil {
+						resourceFamily = sku.Category.ResourceFamily
+						usageType = sku.Category.UsageType
+					}
+
+					// Determine purchase option
+					if strings.Contains(strings.ToLower(sku.Description), "preemptible") {
+						purchaseOption = "Preemptible"
+					} else if strings.Contains(strings.ToLower(sku.Description), "commitment") ||
+						strings.Contains(strings.ToLower(sku.Description), "reserved") {
+						purchaseOption = "Reserved"
+					}
+
 					out := GcpComputePrice{
-						ID:           fmt.Sprintf("gcp|%s|%s", sanitizeName(sku.Name), region),
-						Provider:     "gcp",
-						SKUID:        sku.Name,
-						Region:       region,
-						Description:  sku.Description,
-						Unit:         unit,
-						PricePerUnit: price,
-						Currency:     currency,
-						VCPU:         vcpu,
-						MemoryGB:     mem,
-						FetchedAt:    time.Now().UTC(),
+						ID:             fmt.Sprintf("gcp|%s|%s", sanitizeName(sku.Name), region),
+						Provider:       "gcp",
+						SKUID:          sku.Name,
+						Region:         region,
+						InstanceType:   instanceType,
+						ResourceFamily: resourceFamily,
+						VCPU:           vcpu,
+						MemoryGB:       mem,
+						PricePerHour:   price,
+						Currency:       currency,
+						Unit:           unit,
+						PurchaseOption: purchaseOption,
+						UsageType:      usageType,
+						FetchedAt:      time.Now().UTC(),
 					}
 					total++
 
@@ -150,12 +171,15 @@ func main() {
 						out.Provider,
 						out.SKUID,
 						out.Region,
-						strings.ReplaceAll(out.Description, "\n", " "),
-						out.Unit,
-						fmt.Sprintf("%f", *out.PricePerUnit),
-						out.Currency,
+						out.InstanceType,
+						out.ResourceFamily,
 						intPtrToStr(out.VCPU),
 						floatPtrToStr(out.MemoryGB),
+						fmt.Sprintf("%f", *out.PricePerHour),
+						out.Currency,
+						out.Unit,
+						out.PurchaseOption,
+						out.UsageType,
 						out.FetchedAt.Format(time.RFC3339),
 					}
 					if err := writer.Write(record); err != nil {
@@ -164,6 +188,7 @@ func main() {
 
 					if total%200 == 0 {
 						writer.Flush()
+						log.Printf("Processed %d records...", total)
 					}
 				}
 			}
@@ -182,13 +207,60 @@ func main() {
 	log.Printf("✅ Done. Wrote %d records to %s", total, outFile)
 }
 
+func extractInstanceType(sku *cloudbilling.Sku) string {
+	// Try to extract instance type from description
+	desc := strings.ToLower(sku.Description)
+
+	// Look for common GCP instance type patterns
+	patterns := []string{
+		"n1-standard", "n1-highmem", "n1-highcpu",
+		"n2-standard", "n2-highmem", "n2-highcpu", "n2d-standard", "n2d-highmem", "n2d-highcpu",
+		"e2-standard", "e2-highmem", "e2-highcpu", "e2-small", "e2-micro",
+		"c2-standard", "c2d-standard",
+		"m1-", "m2-", "m3-",
+		"a2-",
+	}
+
+	for _, pattern := range patterns {
+		if strings.Contains(desc, pattern) {
+			// Extract the full instance type (e.g., "n1-standard-4")
+			start := strings.Index(desc, pattern)
+			if start != -1 {
+				remaining := desc[start:]
+				// Find the end of the instance type (space, comma, or end of string)
+				end := len(remaining)
+				for i, char := range remaining {
+					if char == ' ' || char == ',' || char == '.' {
+						end = i
+						break
+					}
+				}
+				return remaining[:end]
+			}
+		}
+	}
+
+	// Fallback: extract from SKU name
+	if strings.Contains(sku.Name, "services/6F81-5844-456A") { // Compute Engine service
+		parts := strings.Split(sku.Name, "/")
+		if len(parts) > 0 {
+			lastPart := parts[len(parts)-1]
+			if len(lastPart) > 0 {
+				return lastPart
+			}
+		}
+	}
+
+	return ""
+}
+
 func parseVcpuMemFromSKU(sku *cloudbilling.Sku) (*int, *float64) {
 	if sku.Description != "" {
 		desc := sku.Description
 
 		var vcpu *int
 		if m := reVCPUDesc.FindStringSubmatch(desc); len(m) >= 2 {
-			if n, err := strconvAtoiSafe(m[1]); err == nil {
+			if n, err := strconv.Atoi(strings.TrimSpace(m[1])); err == nil {
 				vcpu = &n
 			}
 		}
@@ -206,7 +278,7 @@ func parseVcpuMemFromSKU(sku *cloudbilling.Sku) (*int, *float64) {
 		parts := strings.Split(token, "-")
 		if len(parts) >= 3 {
 			last := parts[len(parts)-1]
-			if n, err := strconvAtoiSafe(last); err == nil {
+			if n, err := strconv.Atoi(strings.TrimSpace(last)); err == nil {
 				vcpu := n
 				return &vcpu, nil
 			}
@@ -215,21 +287,14 @@ func parseVcpuMemFromSKU(sku *cloudbilling.Sku) (*int, *float64) {
 
 	return nil, nil
 }
+
 func parseMemFromText(s string) *float64 {
 	if m := reMemDesc.FindStringSubmatch(s); len(m) >= 2 {
-		if f, err := strconvParseFloatSafe(m[1]); err == nil {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(m[1]), 64); err == nil {
 			return &f
 		}
 	}
 	return nil
-}
-
-func strconvAtoiSafe(s string) (int, error) {
-	return strconv.Atoi(strings.TrimSpace(s))
-}
-
-func strconvParseFloatSafe(s string) (float64, error) {
-	return strconv.ParseFloat(strings.TrimSpace(s), 64)
 }
 
 func listServices(ctx context.Context, svc *cloudbilling.APIService) ([]*cloudbilling.Service, error) {
@@ -284,6 +349,9 @@ func extractPriceFromSKU(sku *cloudbilling.Sku) (*float64, string, string) {
 		nanos := float64(tr.UnitPrice.Nanos) / 1e9
 		price := units + nanos
 		currency := "USD"
+		if tr.UnitPrice.CurrencyCode != "" {
+			currency = tr.UnitPrice.CurrencyCode
+		}
 		unit := strings.TrimSpace(pe.UsageUnit)
 		if math.IsNaN(price) || price == 0 {
 			return nil, unit, currency

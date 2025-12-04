@@ -22,18 +22,21 @@ import (
 )
 
 type CloudComputePrice struct {
-	ID           string                 `json:"id"`
-	Provider     string                 `json:"provider"`
-	SKUID        string                 `json:"sku_id"`
-	Region       string                 `json:"region"`
-	InstanceType string                 `json:"instance_type,omitempty"`
-	VCPU         *int                   `json:"vcpu,omitempty"`
-	MemoryGB     *float64               `json:"memory_gb,omitempty"`
-	PricePerHour *float64               `json:"price_per_hour,omitempty"`
-	Currency     string                 `json:"currency,omitempty"`
-	Unit         string                 `json:"unit,omitempty"`
-	FetchedAt    time.Time              `json:"fetched_at"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID                  string                 `json:"id"`
+	Provider            string                 `json:"provider"`
+	SKUID               string                 `json:"sku_id"`
+	Region              string                 `json:"region"`
+	InstanceType        string                 `json:"instance_type,omitempty"`
+	VCPU                *int                   `json:"vcpu,omitempty"`
+	MemoryGB            *float64               `json:"memory_gb,omitempty"`
+	PricePerHour        *float64               `json:"price_per_hour,omitempty"`
+	Currency            string                 `json:"currency,omitempty"`
+	Unit                string                 `json:"unit,omitempty"`
+	ServiceFamily       string                 `json:"service_family,omitempty"`
+	PurchaseOption      string                 `json:"purchase_option,omitempty"`
+	LeaseContractLength string                 `json:"lease_contract_length,omitempty"`
+	FetchedAt           time.Time              `json:"fetched_at"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 }
 
 var httpClient = &http.Client{
@@ -281,7 +284,13 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 	}
 	defer csvF.Close()
 	csvW := csv.NewWriter(csvF)
-	header := []string{"id", "provider", "sku_id", "region", "instance_type", "vcpu", "memory_gb", "price_per_hour", "currency", "unit", "fetched_at"}
+
+	// Updated header with new fields
+	header := []string{
+		"id", "provider", "sku_id", "region", "instance_type",
+		"vcpu", "memory_gb", "price_per_hour", "currency", "unit",
+		"service_family", "purchase_option", "lease_contract_length", "fetched_at",
+	}
 	if err := csvW.Write(header); err != nil {
 		return fmt.Errorf("csv header write: %w", err)
 	}
@@ -292,8 +301,12 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 	}
 	defer txtF.Close()
 	tw := tabwriter.NewWriter(bufio.NewWriter(txtF), 0, 4, 2, ' ', 0)
-	fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-		"id", "provider", "sku_id", "region", "instance_type", "vcpu", "memory_gb", "price_per_hour", "currency", "unit", "fetched_at")
+
+	// Updated text header with new fields
+	fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		"id", "provider", "sku_id", "region", "instance_type",
+		"vcpu", "memory_gb", "price_per_hour", "currency", "unit",
+		"service_family", "purchase_option", "lease_contract_length", "fetched_at")
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("flush header: %w", err)
 	}
@@ -334,61 +347,42 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 			cp.ID = fmt.Sprintf("%s|%s|%s", cp.Provider, cp.SKUID, cp.Region)
 			cp.FetchedAt = time.Now().UTC()
 
+			// Build CSV row
 			csvRow := make([]string, len(header))
 			csvRow[0] = cp.ID
 			csvRow[1] = cp.Provider
 			csvRow[2] = cp.SKUID
 			csvRow[3] = cp.Region
 			csvRow[4] = cp.InstanceType
-			if cp.VCPU != nil {
-				csvRow[5] = strconv.Itoa(*cp.VCPU)
-			} else {
-				csvRow[5] = ""
-			}
-			if cp.MemoryGB != nil {
-				csvRow[6] = fmt.Sprintf("%.2f", *cp.MemoryGB)
-			} else {
-				csvRow[6] = ""
-			}
-			if cp.PricePerHour != nil {
-				csvRow[7] = fmt.Sprintf("%.6f", *cp.PricePerHour)
-			} else {
-				csvRow[7] = ""
-			}
+			csvRow[5] = formatOptionalInt(cp.VCPU)
+			csvRow[6] = formatOptionalFloat(cp.MemoryGB, "%.2f")
+			csvRow[7] = formatOptionalFloat(cp.PricePerHour, "%.6f")
 			csvRow[8] = cp.Currency
 			csvRow[9] = cp.Unit
-			csvRow[10] = cp.FetchedAt.Format(time.RFC3339Nano)
+			csvRow[10] = cp.ServiceFamily
+			csvRow[11] = cp.PurchaseOption
+			csvRow[12] = cp.LeaseContractLength
+			csvRow[13] = cp.FetchedAt.Format(time.RFC3339Nano)
 
 			if err := csvW.Write(csvRow); err != nil {
 				return fmt.Errorf("csv write error: %w", err)
 			}
 
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			// Write to text file
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				cp.ID,
 				cp.Provider,
 				cp.SKUID,
 				cp.Region,
 				cp.InstanceType,
-				func() string {
-					if cp.VCPU == nil {
-						return ""
-					}
-					return strconv.Itoa(*cp.VCPU)
-				}(),
-				func() string {
-					if cp.MemoryGB == nil {
-						return ""
-					}
-					return fmt.Sprintf("%.2f", *cp.MemoryGB)
-				}(),
-				func() string {
-					if cp.PricePerHour == nil {
-						return ""
-					}
-					return fmt.Sprintf("%.6f", *cp.PricePerHour)
-				}(),
+				formatOptionalInt(cp.VCPU),
+				formatOptionalFloat(cp.MemoryGB, "%.2f"),
+				formatOptionalFloat(cp.PricePerHour, "%.6f"),
 				cp.Currency,
 				cp.Unit,
+				cp.ServiceFamily,
+				cp.PurchaseOption,
+				cp.LeaseContractLength,
 				cp.FetchedAt.Format(time.RFC3339Nano),
 			)
 
@@ -424,9 +418,32 @@ func normalizeAzureComputeItem(item map[string]interface{}) CloudComputePrice {
 		Unit:     "",
 	}
 
+	// Extract basic fields
 	if v, ok := item["skuId"].(string); ok {
 		cp.SKUID = v
 	}
+
+	// Extract Service Family
+	if v, ok := item["serviceFamily"].(string); ok {
+		cp.ServiceFamily = v
+	}
+
+	// Extract Purchase Option (reservation terms)
+	cp.PurchaseOption = "OnDemand" // default
+	if v, ok := item["type"].(string); ok {
+		if strings.EqualFold(v, "Consumption") {
+			cp.PurchaseOption = "OnDemand"
+		} else if strings.EqualFold(v, "Reservation") {
+			cp.PurchaseOption = "Reserved"
+		}
+	}
+
+	// Extract Lease Contract Length
+	if v, ok := item["reservationTerm"].(string); ok {
+		cp.LeaseContractLength = normalizeLeaseContract(v)
+	}
+
+	// Extract instance type and specs
 	var armSku string
 	if v, ok := item["armSkuName"].(string); ok {
 		armSku = v
@@ -448,12 +465,14 @@ func normalizeAzureComputeItem(item map[string]interface{}) CloudComputePrice {
 		}
 	}
 
+	// Extract region
 	if v, ok := item["armRegionName"].(string); ok {
 		cp.Region = canonicalizeRegion(v)
 	} else if v, ok := item["location"].(string); ok {
 		cp.Region = canonicalizeRegion(v)
 	}
 
+	// Extract meter information for additional parsing
 	if v, ok := item["meterName"].(string); ok {
 		tryParseFromStringFields(&cp, v)
 		if cp.InstanceType == "" {
@@ -470,10 +489,12 @@ func normalizeAzureComputeItem(item map[string]interface{}) CloudComputePrice {
 		}
 	}
 
+	// Extract unit
 	if v, ok := item["unitOfMeasure"].(string); ok {
 		cp.Unit = v
 	}
 
+	// Extract price
 	if rp, ok := item["retailPrice"].(float64); ok {
 		if strings.EqualFold(cp.Unit, "") {
 			cp.Unit = "Hour"
@@ -487,10 +508,12 @@ func normalizeAzureComputeItem(item map[string]interface{}) CloudComputePrice {
 		}
 	}
 
+	// Extract currency
 	if cur, ok := item["currencyCode"].(string); ok {
 		cp.Currency = cur
 	}
 
+	// Fallback parsing for CPU and Memory
 	if (cp.VCPU == nil || cp.MemoryGB == nil) && cp.InstanceType != "" {
 		tryParseFromStringFields(&cp, cp.InstanceType)
 	}
@@ -501,6 +524,55 @@ func normalizeAzureComputeItem(item map[string]interface{}) CloudComputePrice {
 	}
 
 	return cp
+}
+
+func normalizeLeaseContract(term string) string {
+	term = strings.ToLower(strings.TrimSpace(term))
+
+	switch {
+	case strings.Contains(term, "1 year") || strings.Contains(term, "12 month"):
+		return "1 Year"
+	case strings.Contains(term, "3 year") || strings.Contains(term, "36 month"):
+		return "3 Year"
+	case strings.Contains(term, "5 year") || strings.Contains(term, "60 month"):
+		return "5 Year"
+	case term == "":
+		return "" // For OnDemand
+	default:
+		// Try to extract any numeric pattern
+		if re := regexp.MustCompile(`(\d+)\s*(year|month)`).FindStringSubmatch(term); len(re) >= 3 {
+			value := re[1]
+			unit := re[2]
+			if unit == "month" {
+				months, _ := strconv.Atoi(value)
+				if months == 12 {
+					return "1 Year"
+				} else if months == 36 {
+					return "3 Year"
+				} else if months == 60 {
+					return "5 Year"
+				}
+				return fmt.Sprintf("%d Months", months)
+			}
+			return fmt.Sprintf("%s Years", value)
+		}
+		return term
+	}
+}
+
+// Helper functions for formatting optional values
+func formatOptionalInt(val *int) string {
+	if val == nil {
+		return ""
+	}
+	return strconv.Itoa(*val)
+}
+
+func formatOptionalFloat(val *float64, format string) string {
+	if val == nil {
+		return ""
+	}
+	return fmt.Sprintf(format, *val)
 }
 
 func tryParseFromStringFields(cp *CloudComputePrice, s string) {

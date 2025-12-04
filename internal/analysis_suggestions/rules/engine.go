@@ -244,19 +244,50 @@ func workloadDistance(target, sim Workload) float64 {
 
 func generateWorkloadSuggestions(target Workload, sim Workload, m Metrics) []string {
 	s := []string{}
-	if target.ConcurrentUsers > 0 && sim.ConcurrentUsers > 0 {
-		if sim.ConcurrentUsers < target.ConcurrentUsers {
-			s = append(s, fmt.Sprintf(
-				"Simulated capacity supports ~%d concurrent users vs target %d; consider increasing vCPU or memory, or optimizing code paths to reach the target.",
-				sim.ConcurrentUsers, target.ConcurrentUsers))
-		} else if sim.ConcurrentUsers > target.ConcurrentUsers {
-			s = append(s, fmt.Sprintf(
-				"Simulated capacity exceeds target (supports ~%d users vs %d). You may reduce resources to save cost if utilization stays within limits.",
-				sim.ConcurrentUsers, target.ConcurrentUsers))
-		} else {
-			s = append(s, "Simulated concurrent users match the target.")
-		}
+	if target.ConcurrentUsers == 0 || sim.ConcurrentUsers == 0 {
+		return s
 	}
+
+	gap := target.ConcurrentUsers - sim.ConcurrentUsers
+
+	if gap <= 0 {
+		surplus := -gap
+		surplusPercent := (float64(surplus) / float64(target.ConcurrentUsers)) * 100
+		s = append(s, fmt.Sprintf(
+			"Capacity exceeds target by %d users (%.0f%%). You may reduce resources to save cost.",
+			surplus, surplusPercent))
+		return s
+	}
+
+	shortfallPercent := (float64(gap) / float64(target.ConcurrentUsers)) * 100
+
+	cpuBottleneck := m.CPUUtilPct > 75
+	memBottleneck := m.MemUtilPct > 75
+	bothBottlenecks := cpuBottleneck && memBottleneck
+	lowUtilization := m.CPUUtilPct < 50 && m.MemUtilPct < 50
+
+	if bothBottlenecks {
+		s = append(s, fmt.Sprintf(
+			"Shortfall of %d users (%.0f%%). Both CPU (%.1f%%) and memory (%.1f%%) are bottlenecked. Increase both vCPU and memory proportionally.",
+			gap, shortfallPercent, m.CPUUtilPct, m.MemUtilPct))
+	} else if cpuBottleneck {
+		s = append(s, fmt.Sprintf(
+			"Shortfall of %d users (%.0f%%). CPU is the limiting factor at %.1f%% utilization. Increase vCPU to improve throughput.",
+			gap, shortfallPercent, m.CPUUtilPct))
+	} else if memBottleneck {
+		s = append(s, fmt.Sprintf(
+			"Shortfall of %d users (%.0f%%). Memory is the limiting factor at %.1f%% utilization. Increase memory to improve capacity.",
+			gap, shortfallPercent, m.MemUtilPct))
+	} else if lowUtilization {
+		s = append(s, fmt.Sprintf(
+			"Shortfall of %d users (%.0f%%). Utilization is very low (CPU %.1f%%, memory %.1f%%), indicating an application-level bottleneck, not insufficient resources.",
+			gap, shortfallPercent, m.CPUUtilPct, m.MemUtilPct))
+	} else if m.CPUUtilPct > 60 || m.MemUtilPct > 60 {
+		s = append(s, fmt.Sprintf(
+			"Shortfall of %d users (%.0f%%). Moderate utilization (CPU %.1f%%, memory %.1f%%). Likely a mix of resource constraints and application limits. Try: Increase resources, Consider horizontal scaling.",
+			gap, shortfallPercent, m.CPUUtilPct, m.MemUtilPct))
+	}
+
 	return s
 }
 
@@ -265,34 +296,43 @@ func GenerateSpecSuggestions(design DesignInput, c Candidate) []string {
 
 	cpuDesign := design.PreferredVCPU
 	cpuCand := c.Spec.VCPU
+	memDesign := design.PreferredMemoryGB
+	memCand := c.Spec.MemoryGB
+
+	cpuStressed := c.Metrics.CPUUtilPct > 75
+	memStressed := c.Metrics.MemUtilPct > 75
+
 	if cpuCand > cpuDesign {
 		s = append(s, fmt.Sprintf("Increase vCPU from %d to %d", cpuDesign, cpuCand))
-	} else if cpuCand < cpuDesign {
+	} else if cpuCand < cpuDesign && !cpuStressed {
 		s = append(s, fmt.Sprintf("Decrease vCPU from %d to %d", cpuDesign, cpuCand))
+	} else if cpuCand < cpuDesign && cpuStressed {
+		s = append(s, fmt.Sprintf("Keep vCPU at %d ", cpuCand))
 	} else {
 		s = append(s, fmt.Sprintf("Keep vCPU at %d", cpuDesign))
 	}
 
-	memDesign := design.PreferredMemoryGB
-	memCand := c.Spec.MemoryGB
 	memDesignStr := formatMemory(memDesign)
 	memCandStr := formatMemory(memCand)
 	if memCand > memDesign {
 		s = append(s, fmt.Sprintf("Increase memory from %s to %s", memDesignStr, memCandStr))
-	} else if memCand < memDesign {
+	} else if memCand < memDesign && !memStressed {
 		s = append(s, fmt.Sprintf("Decrease memory from %s to %s", memDesignStr, memCandStr))
+	} else if memCand < memDesign && memStressed {
+		s = append(s, fmt.Sprintf("Keep memory at %s (insufficient for target workload)", memCandStr))
 	} else {
 		s = append(s, fmt.Sprintf("Keep memory at %s", memDesignStr))
 	}
 
 	if c.Metrics.CPUUtilPct > 90 {
-		s = append(s, fmt.Sprintf("High CPU utilization (%.1f%%) — consider increasing vCPU further", c.Metrics.CPUUtilPct))
-	} else if c.Metrics.CPUUtilPct < 30 {
-		s = append(s, fmt.Sprintf("Low CPU utilization (%.1f%%) — candidate is overprovisioned", c.Metrics.CPUUtilPct))
+		s = append(s, fmt.Sprintf("Critical: CPU utilization at %.1f%% — immediate scaling needed", c.Metrics.CPUUtilPct))
+	} else if c.Metrics.CPUUtilPct < 20 {
+		s = append(s, fmt.Sprintf("Low CPU utilization (%.1f%%) — candidate is significantly overprovisioned", c.Metrics.CPUUtilPct))
 	}
+
 	if c.Metrics.MemUtilPct > 90 {
-		s = append(s, fmt.Sprintf("High memory utilization (%.1f%%) — consider increasing memory", c.Metrics.MemUtilPct))
-	} else if c.Metrics.MemUtilPct < 30 {
+		s = append(s, fmt.Sprintf("Critical: Memory utilization at %.1f%% — immediate scaling needed", c.Metrics.MemUtilPct))
+	} else if c.Metrics.MemUtilPct < 20 {
 		s = append(s, fmt.Sprintf("Low memory utilization (%.1f%%) — candidate may have excess memory", c.Metrics.MemUtilPct))
 	}
 
