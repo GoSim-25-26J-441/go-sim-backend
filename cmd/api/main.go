@@ -6,6 +6,7 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
 	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
+	middleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	"github.com/gin-gonic/gin"
 )
@@ -35,6 +36,8 @@ func main() {
 	api := router.Group("/api/v1")
 
 	dip := api.Group("/design-input")
+	dip.Use(middleware.APIKeyMiddleware())
+	dip.Use(middleware.RequestIDMiddleware())
 	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
 	dipHandler.Register(dip)
 

@@ -54,7 +54,7 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
 
-	var req chatReq // use the top-level type
+	var req chatReq
 	if err := json.Unmarshal(raw, &req); err != nil || strings.TrimSpace(req.Message) == "" {
 		c.JSON(400, gin.H{"ok": false, "error": "invalid body", "raw": string(raw)})
 		return
@@ -67,7 +67,7 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	if userID == "" {
 		userID = c.GetHeader("X-User-Id")
 	}
-	if userID == "" {
+	if strings.TrimSpace(userID) == "" {
 		userID = "demo-user"
 	}
 
@@ -89,21 +89,16 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// (Optional) domain guard – currently disabled so every Q goes through RAG/LLM
-	// if !isArchitectureQuestion(req.Message) {
-	// 	c.JSON(200, gin.H{"ok": true, "answer": "This assistant focuses on software architecture topics."})
-	// 	return
-	// }
-
-	// 🔹 Log the user message with userID
+	// Log the user message
 	appendChat(jobID, chatTurn{
 		Role:   "user",
 		Text:   req.Message,
 		Ts:     time.Now().Unix(),
+		Source: "user",
 		UserID: userID,
 	})
 
-	// 3) Try RAG first, but only if the snippet looks like a real answer (not just a title/heading)
+	// 3) Try RAG first
 	if ans, refs := ragAnswer(req.Message); ans != "" && !looksLikeTitle(ans) {
 		appendChat(jobID, chatTurn{
 			Role:   "assistant",
@@ -122,13 +117,13 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// 4) Fetch compact context for LLM (only if RAG didn't answer usefully)
+	// 4) Fetch compact context
 	ig, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/intermediate", upstreamURL, jobID), 10*time.Second)
 	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second)
 	features := compactContext(ig, spec, req.Message)
 	log.Printf("[chat] job=%s features:\n%s", jobID, features)
 
-	// 5) Call local Ollama (non-streaming)
+	// 5) Call local Ollama
 	body := map[string]any{
 		"model":  "llama3:instruct",
 		"format": "json",
@@ -183,7 +178,7 @@ Return JSON: {"answer": string}.`,
 		answerText = gen.Response
 	}
 
-	// Post-fix the answer to obey protocols from spec/IG
+	// Fix protocol wording if needed
 	answerText = enforceProtocol(answerText, ig, spec)
 
 	appendChat(jobID, chatTurn{
@@ -193,6 +188,7 @@ Return JSON: {"answer": string}.`,
 		Source: "llm",
 		UserID: userID,
 	})
+
 	c.JSON(200, gin.H{
 		"ok":     true,
 		"answer": answerText,
@@ -351,27 +347,11 @@ func tryArrayNames(m map[string]any, key, sub string) []string {
 }
 
 func appendChat(jobID string, turn chatTurn) {
-	dir := os.Getenv("CHAT_LOG_DIR")
-	if dir == "" {
-		dir = filepath.FromSlash("D:/Research/go-sim-backend/internal/design_input_processing/data/chat_logs")
-	}
+	baseDir := chatBaseDir(turn.UserID)
 
-	// Put each user's chats in its own subfolder
-	userDir := strings.TrimSpace(turn.UserID)
-	if userDir == "" {
-		userDir = "anonymous" // or "demo-user" – up to you
-	}
+	_ = os.MkdirAll(baseDir, 0o755)
 
-	// VERY simple sanitization so userID is safe as folder name
-	userDir = strings.ReplaceAll(userDir, "..", "_")
-	userDir = strings.ReplaceAll(userDir, "/", "_")
-	userDir = strings.ReplaceAll(userDir, "\\", "_")
-
-	dir = filepath.Join(dir, userDir)
-
-	_ = os.MkdirAll(dir, 0o755)
-
-	fpath := filepath.Join(dir, fmt.Sprintf("chat-%s.jsonl", jobID))
+	fpath := filepath.Join(baseDir, fmt.Sprintf("chat-%s.jsonl", jobID))
 	f, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return
@@ -383,26 +363,10 @@ func appendChat(jobID string, turn chatTurn) {
 }
 
 func ListJobsForUser(userID string) ([]string, error) {
-	dir := os.Getenv("CHAT_LOG_DIR")
-	if dir == "" {
-		dir = filepath.FromSlash("D:/Research/go-sim-backend/internal/design_input_processing/data/chat_logs")
-	}
-
-	if strings.TrimSpace(userID) == "" {
-		userID = "demo-user"
-	}
-
-	userDir := strings.ReplaceAll(userID, "..", "_")
-	userDir = strings.ReplaceAll(userDir, "/", "_")
-	userDir = strings.ReplaceAll(userDir, "\\", "_")
-
-	dir = filepath.Join(dir, userDir)
+	dir := chatBaseDir(userID)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []string{}, nil
-		}
 		return nil, err
 	}
 
@@ -411,7 +375,7 @@ func ListJobsForUser(userID string) ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		name := e.Name()
+		name := e.Name() // chat-<job>.jsonl
 		if !strings.HasPrefix(name, "chat-") || !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
