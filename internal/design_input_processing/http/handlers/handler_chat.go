@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -33,13 +33,8 @@ type chatTurn struct {
 	Ts     int64    `json:"ts"`
 	Source string   `json:"source,omitempty"`
 	Refs   []string `json:"refs,omitempty"`
+	UserID string   `json:"user_id,omitempty"`
 }
-
-var rxRPS = regexp.MustCompile(`(?i)\b(\d+)\s*rps\b`)
-var rxP95ms = regexp.MustCompile(`(?i)\bp95\b.*?(\d+)\s*ms`)
-var rxCPU = regexp.MustCompile(`(?i)\b(\d+)\s*(v?cpu|cores?)\b`)
-var rxPayload = regexp.MustCompile(`(?i)(\d+)\s*(kb|mb)\b`)
-var rxBurst = regexp.MustCompile(`(?i)\b(\d+)[x×]\b`)
 
 var allowKeywords = []string{
 	"microservice", "service", "api", "grpc", "rest", "gateway",
@@ -51,12 +46,6 @@ var allowKeywords = []string{
 }
 
 func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
-	type chatReq struct {
-		Mode    string `json:"mode"`
-		Message string `json:"message"`
-		Stream  bool   `json:"stream"`
-	}
-
 	// 1) Parse JSON (robust)
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -64,8 +53,9 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
-	var req chatReq
-	if err := json.Unmarshal(raw, &req); err != nil || req.Message == "" {
+
+	var req chatReq // use the top-level type
+	if err := json.Unmarshal(raw, &req); err != nil || strings.TrimSpace(req.Message) == "" {
 		c.JSON(400, gin.H{"ok": false, "error": "invalid body", "raw": string(raw)})
 		return
 	}
@@ -73,6 +63,15 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	jobID := c.Param("id")
 	strict := strings.EqualFold(req.Mode, "design-guardrails")
 
+	userID := c.GetString("user_id")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+	}
+	if userID == "" {
+		userID = "demo-user"
+	}
+
+	// 2) Optional strict guardrails
 	if strict && !onTopic(req.Message) {
 		guardMsg := "Let’s keep it on software architecture (microservices, APIs, sizing, latency, etc.)."
 		appendChat(jobID, chatTurn{
@@ -80,6 +79,7 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 			Text:   guardMsg,
 			Ts:     time.Now().Unix(),
 			Source: "guardrails",
+			UserID: userID,
 		})
 		c.JSON(200, gin.H{
 			"ok":     true,
@@ -89,50 +89,29 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// 2) Domain guard
-	if !isArchitectureQuestion(req.Message) {
-		c.JSON(200, gin.H{"ok": true, "answer": "This assistant focuses on software architecture topics."})
-		return
-	}
+	// (Optional) domain guard – currently disabled so every Q goes through RAG/LLM
+	// if !isArchitectureQuestion(req.Message) {
+	// 	c.JSON(200, gin.H{"ok": true, "answer": "This assistant focuses on software architecture topics."})
+	// 	return
+	// }
 
-	appendChat(jobID, chatTurn{Role: "user", Text: req.Message, Ts: time.Now().Unix()})
+	// 🔹 Log the user message with userID
+	appendChat(jobID, chatTurn{
+		Role:   "user",
+		Text:   req.Message,
+		Ts:     time.Now().Unix(),
+		UserID: userID,
+	})
 
-	if ans, refs := ragAnswer(req.Message); ans != "" {
-		if miss := findMissingSignals(req.Message); len(miss) > 0 {
-			var b strings.Builder
-			b.WriteString("To size this accurately, I need:\n")
-			for i, it := range miss {
-				if i >= 3 {
-					break
-				} // keep it short (top 3)
-				b.WriteString("- ")
-				b.WriteString(it.Q)
-				b.WriteString("\n")
-			}
-			ask := strings.TrimSpace(b.String())
-			appendChat(jobID, chatTurn{
-				Role:   "assistant",
-				Text:   ask,
-				Ts:     time.Now().Unix(),
-				Source: "rag",
-				Refs:   refs,
-			})
-			c.JSON(200, gin.H{
-				"ok":      true,
-				"answer":  ask,
-				"source":  "rag",
-				"refs":    refs,
-				"missing": miss,
-			})
-			return
-		}
-
+	// 3) Try RAG first, but only if the snippet looks like a real answer (not just a title/heading)
+	if ans, refs := ragAnswer(req.Message); ans != "" && !looksLikeTitle(ans) {
 		appendChat(jobID, chatTurn{
 			Role:   "assistant",
 			Text:   ans,
 			Ts:     time.Now().Unix(),
 			Source: "rag",
 			Refs:   refs,
+			UserID: userID,
 		})
 		c.JSON(200, gin.H{
 			"ok":     true,
@@ -143,20 +122,42 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// 4) Fetch compact context for LLM (only if RAG didn't answer)
+	// 4) Fetch compact context for LLM (only if RAG didn't answer usefully)
 	ig, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/intermediate", upstreamURL, jobID), 10*time.Second)
 	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second)
 	features := compactContext(ig, spec, req.Message)
+	log.Printf("[chat] job=%s features:\n%s", jobID, features)
 
 	// 5) Call local Ollama (non-streaming)
 	body := map[string]any{
-		"model":   "llama3:instruct",
-		"format":  "json",
-		"stream":  false,
-		"system":  `You are a software architecture assistant. Be concise, stay on topic. Return JSON: {"answer": string}.`,
-		"prompt":  fmt.Sprintf("Context:\n%s\n\nQuestion:\n%s\n\nReturn only the JSON.", features, req.Message),
-		"options": map[string]any{"temperature": 0.2, "num_ctx": 1024, "num_predict": 512},
+		"model":  "llama3:instruct",
+		"format": "json",
+		"stream": false,
+		"system": `You are a software architecture assistant.
+
+You are given:
+- Services and their names.
+- Dependencies in the form "from -> to (protocol)".
+- Gaps such as RPS and protocol certainty.
+
+Rules:
+- Always respect the protocol from the context (if it says gRPC, do NOT call it REST).
+- Do NOT invent extra services or components that are not in the context.
+- If there is only one or two services, describe it as a very small microservice-like setup that is effectively
+  monolithic for now, and explicitly say that it does NOT really benefit from microservice-style decomposition yet.
+- You may suggest how it could be evolved into a better microservice architecture (e.g., more domain-focused services,
+  clearer boundaries, separate datastores).
+- Be concise, stay on topic.
+
+Return JSON: {"answer": string}.`,
+		"prompt": fmt.Sprintf("Context:\n%s\n\nQuestion:\n%s\n\nReturn only the JSON.", features, req.Message),
+		"options": map[string]any{
+			"temperature": 0.0,
+			"num_ctx":     1024,
+			"num_predict": 512,
+		},
 	}
+
 	respBytes, err := postJSON(ollamaURL+"/api/generate", body, 60*time.Second)
 	if err != nil {
 		c.JSON(502, gin.H{"ok": false, "error": "ollama: " + err.Error()})
@@ -182,18 +183,21 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		answerText = gen.Response
 	}
 
+	// Post-fix the answer to obey protocols from spec/IG
+	answerText = enforceProtocol(answerText, ig, spec)
+
 	appendChat(jobID, chatTurn{
 		Role:   "assistant",
 		Text:   answerText,
 		Ts:     time.Now().Unix(),
 		Source: "llm",
+		UserID: userID,
 	})
 	c.JSON(200, gin.H{
 		"ok":     true,
 		"answer": answerText,
 		"source": "llm",
 	})
-
 }
 
 func isArchitectureQuestion(s string) bool {
@@ -235,13 +239,102 @@ func postJSON(url string, body any, to time.Duration) ([]byte, error) {
 }
 
 func compactContext(ig, spec map[string]any, msg string) string {
-	// keep this minimal to be fast
-	services := tryArrayNames(ig, "Nodes", "Label")
+	// 1) Prefer spec.services; fall back to IG nodes
+	services := tryArrayNames(spec, "services", "name")
 	if len(services) == 0 {
-		services = tryArrayNames(spec, "services", "name")
+		services = tryArrayNames(ig, "Nodes", "Label")
 	}
-	edges := tryEdges(ig)
-	return fmt.Sprintf("services=%v; edges=%v;", services, edges)
+
+	// 2) Prefer spec.dependencies; fall back to IG edges
+	edges := tryDeps(spec)
+	if len(edges) == 0 {
+		edges = tryEdges(ig)
+	}
+
+	// 3) Gaps from spec (e.g., RPS, protocol certainty, etc.)
+	gaps := tryGaps(spec)
+
+	var b strings.Builder
+
+	b.WriteString("Services:\n")
+	for _, s := range services {
+		fmt.Fprintf(&b, "- %s\n", s)
+	}
+
+	b.WriteString("\nDependencies:\n")
+	if len(edges) == 0 {
+		b.WriteString("- (none)\n")
+	} else {
+		for _, e := range edges {
+			from, to, proto := e[0], e[1], strings.ToLower(e[2])
+			if proto == "" {
+				proto = "unknown"
+			}
+			fmt.Fprintf(&b, "- %s -> %s (%s)\n", from, to, proto)
+		}
+	}
+
+	b.WriteString("\nGaps:\n")
+	if len(gaps) == 0 {
+		b.WriteString("- (none)\n")
+	} else {
+		for _, g := range gaps {
+			fmt.Fprintf(&b, "- %s = %s\n", g[0], g[1])
+		}
+	}
+
+	b.WriteString("\nUser question:\n")
+	b.WriteString(msg)
+
+	return b.String()
+}
+
+func enforceProtocol(answer string, ig, spec map[string]any) string {
+	if answer == "" {
+		return answer
+	}
+
+	// Collect protocols from spec.dependencies first, then IG edges
+	edges := tryDeps(spec)
+	if len(edges) == 0 {
+		edges = tryEdges(ig)
+	}
+
+	protos := map[string]bool{}
+	for _, e := range edges {
+		p := strings.ToLower(e[2]) // e[2] is protocol
+		if p == "" {
+			continue
+		}
+		protos[p] = true
+	}
+	if len(protos) != 1 {
+		// Multiple or none – don't try to "fix" text
+		return answer
+	}
+
+	var only string
+	for p := range protos {
+		only = p
+	}
+
+	lower := strings.ToLower(answer)
+
+	switch only {
+	case "grpc":
+		if strings.Contains(lower, "rest") && !strings.Contains(lower, "grpc") {
+			answer = strings.ReplaceAll(answer, "REST", "gRPC")
+			answer = strings.ReplaceAll(answer, "Rest", "gRPC")
+			answer = strings.ReplaceAll(answer, "rest", "gRPC")
+		}
+	case "rest":
+		if strings.Contains(lower, "grpc") && !strings.Contains(lower, "rest") {
+			answer = strings.ReplaceAll(answer, "gRPC", "REST")
+			answer = strings.ReplaceAll(answer, "grpc", "REST")
+		}
+	}
+
+	return answer
 }
 
 func tryArrayNames(m map[string]any, key, sub string) []string {
@@ -257,26 +350,24 @@ func tryArrayNames(m map[string]any, key, sub string) []string {
 	return out
 }
 
-func tryEdges(m map[string]any) [][3]string {
-	arr, _ := m["Edges"].([]any)
-	out := make([][3]string, 0, len(arr))
-	for _, v := range arr {
-		if obj, ok := v.(map[string]any); ok {
-			from, _ := obj["From"].(string)
-			to, _ := obj["To"].(string)
-			proto, _ := obj["Protocol"].(string)
-			out = append(out, [3]string{from, to, proto})
-		}
-	}
-	return out
-}
-
 func appendChat(jobID string, turn chatTurn) {
-
 	dir := os.Getenv("CHAT_LOG_DIR")
 	if dir == "" {
 		dir = filepath.FromSlash("D:/Research/go-sim-backend/internal/design_input_processing/data/chat_logs")
 	}
+
+	// Put each user's chats in its own subfolder
+	userDir := strings.TrimSpace(turn.UserID)
+	if userDir == "" {
+		userDir = "anonymous" // or "demo-user" – up to you
+	}
+
+	// VERY simple sanitization so userID is safe as folder name
+	userDir = strings.ReplaceAll(userDir, "..", "_")
+	userDir = strings.ReplaceAll(userDir, "/", "_")
+	userDir = strings.ReplaceAll(userDir, "\\", "_")
+
+	dir = filepath.Join(dir, userDir)
 
 	_ = os.MkdirAll(dir, 0o755)
 
@@ -289,6 +380,59 @@ func appendChat(jobID string, turn chatTurn) {
 
 	b, _ := json.Marshal(turn)
 	_, _ = f.Write(append(b, '\n'))
+}
+
+func ListJobsForUser(userID string) ([]string, error) {
+	dir := os.Getenv("CHAT_LOG_DIR")
+	if dir == "" {
+		dir = filepath.FromSlash("D:/Research/go-sim-backend/internal/design_input_processing/data/chat_logs")
+	}
+
+	if strings.TrimSpace(userID) == "" {
+		userID = "demo-user"
+	}
+
+	userDir := strings.ReplaceAll(userID, "..", "_")
+	userDir = strings.ReplaceAll(userDir, "/", "_")
+	userDir = strings.ReplaceAll(userDir, "\\", "_")
+
+	dir = filepath.Join(dir, userDir)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	var jobIDs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, "chat-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(name, "chat-"), ".jsonl")
+		jobIDs = append(jobIDs, id)
+	}
+	return jobIDs, nil
+}
+
+func intFromMap(m map[string]any, key string) int {
+	if m == nil {
+		return 0
+	}
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 0
+	}
 }
 
 func ragAnswer(msg string) (string, []string) {
@@ -316,43 +460,6 @@ func ragAnswer(msg string) (string, []string) {
 	return strings.TrimSpace(b.String()), refs
 }
 
-func ragRefs(msg string) []string {
-	results := diprag.Search(msg)
-	refs := make([]string, 0, len(results))
-	for i, r := range results {
-		if i > 1 {
-			break
-		}
-		base := r.ID
-		if slash := strings.LastIndexAny(base, `/\`); slash >= 0 {
-			base = base[slash+1:]
-		}
-		refs = append(refs, base)
-	}
-	return refs
-}
-
-func findMissingSignals(msg string) []missing {
-	l := strings.ToLower(msg)
-	m := []missing{}
-	if rxRPS.FindStringSubmatch(l) == nil {
-		m = append(m, missing{Key: "rps_peak", Q: "What is peak vs average RPS (traffic pattern)?"})
-	}
-	if rxP95ms.FindStringSubmatch(l) == nil {
-		m = append(m, missing{Key: "latency_p95", Q: "What p95 latency target are you aiming for (ms)?"})
-	}
-	if rxPayload.FindStringSubmatch(l) == nil {
-		m = append(m, missing{Key: "payload", Q: "Typical payload size (KB) and read/write split?"})
-	}
-	if rxBurst.FindStringSubmatch(l) == nil {
-		m = append(m, missing{Key: "burst", Q: "Expected burst (e.g., 2x average) and duration?"})
-	}
-	if rxCPU.FindStringSubmatch(l) == nil {
-		m = append(m, missing{Key: "current_cpu", Q: "Current/target CPU/RAM footprint per instance?"})
-	}
-	return m
-}
-
 func onTopic(msg string) bool {
 	m := strings.ToLower(msg)
 	hits := 0
@@ -362,4 +469,66 @@ func onTopic(msg string) bool {
 		}
 	}
 	return hits >= 1
+}
+
+func looksLikeTitle(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return true
+	}
+
+	// Consider only the first line
+	lines := strings.SplitN(s, "\n", 2)
+	first := strings.TrimSpace(lines[0])
+
+	// Very short, no sentence punctuation → looks like a heading such as "Sizing prompts..."
+	if len(first) < 25 && !strings.ContainsAny(first, ".!?") {
+		return true
+	}
+
+	return false
+}
+
+func tryGaps(m map[string]any) [][2]string {
+	arr, _ := m["gaps"].([]any)
+	out := make([][2]string, 0, len(arr))
+	for _, v := range arr {
+		if obj, ok := v.(map[string]any); ok {
+			k, _ := obj["key"].(string)
+			val, _ := obj["value"].(string)
+			if k != "" && val != "" {
+				out = append(out, [2]string{k, val})
+			}
+		}
+	}
+	return out
+}
+
+// Each triple is: [from, to, protocol]
+func tryDeps(spec map[string]any) [][3]string {
+	arr, _ := spec["dependencies"].([]any)
+	out := make([][3]string, 0, len(arr))
+	for _, v := range arr {
+		if obj, ok := v.(map[string]any); ok {
+			from, _ := obj["from"].(string)
+			to, _ := obj["to"].(string)
+			kind, _ := obj["kind"].(string) // "grpc", "rest", "pubsub", etc.
+			out = append(out, [3]string{from, to, kind})
+		}
+	}
+	return out
+}
+
+func tryEdges(m map[string]any) [][3]string {
+	arr, _ := m["Edges"].([]any)
+	out := make([][3]string, 0, len(arr))
+	for _, v := range arr {
+		if obj, ok := v.(map[string]any); ok {
+			from, _ := obj["From"].(string)
+			to, _ := obj["To"].(string)
+			proto, _ := obj["Protocol"].(string)
+			out = append(out, [3]string{from, to, proto})
+		}
+	}
+	return out
 }

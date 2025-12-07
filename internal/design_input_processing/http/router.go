@@ -6,18 +6,21 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	rg.GET("/health", h.health)
 	rg.POST("/ingest", h.ingest)
 
-	jobs := rg.Group("/jobs/:id")
-	jobs.GET("/intermediate", h.intermediate)
-	jobs.POST("/fuse", h.fuse)
-	jobs.GET("/export", h.export)
-	jobs.GET("/report", h.report)
-	jobs.POST("/chat", h.chat)
+	jobs := rg.Group("/jobs")
+	jobs.GET("", h.listJobsForUser)
+	jobs.GET("/summary", h.listJobsSummary)
 
-	rg.GET("/jobs/:id/chat/history", h.chatHistory)
-	rg.DELETE("/jobs/:id/chat/history", h.chatClear)
-	rg.GET("/jobs/:id/chat/stream", h.chatStream)
+	jobGroup := rg.Group("/jobs/:id")
+	jobGroup.GET("/intermediate", h.intermediate)
+	jobGroup.POST("/fuse", h.fuse)
+	jobGroup.GET("/export", h.export)
+	jobGroup.GET("/report", h.report)
+	jobGroup.POST("/chat", h.chat)
+
+	jobGroup.GET("/chat/history", h.chatHistory)
+	jobGroup.DELETE("/chat/history", h.chatClear)
+	jobGroup.GET("/chat/stream", h.chatStream)
 
 	rg.GET("/rag/search", h.ragSearch)
 	rg.POST("/rag/reload", h.ragReload)
-
 }

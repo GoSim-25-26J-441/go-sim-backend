@@ -45,3 +45,32 @@ curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/stream?messag
 curl.exe -OJ "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=json&download=true"
 # YAML
 curl.exe -OJ "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=yaml&download=true"
+
+
+Sample follow-up chat: ----------------------------------------------------------------------------
+
+$ing = curl.exe -X POST `
+  "http://localhost:8080/api/v1/design-input/ingest" `
+  -H "X-User-Id: demo-user" `
+  -F "files=@D:\Research\uigp-service\handdrawn1.jpg" `
+  -F "chat=~200 RPS; internal gRPC"
+
+$JOB = ($ing | ConvertFrom-Json).jobId
+$JOB
+
+$JOB = ($ing | ConvertFrom-Json).jobId
+
+# 2) Build intermediate + fuse
+curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/intermediate?refresh=true"
+curl.exe -X POST "http://localhost:8080/api/v1/design-input/jobs/$JOB/fuse"
+
+
+#Chat > # PlantUML
+$body = @{ message = "Now explain my architecture and main bottlenecks." } |
+        ConvertTo-Json -Compress
+
+Invoke-RestMethod `
+  -Method POST `
+  -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat" `
+  -ContentType "application/json" `
+  -Body $body
