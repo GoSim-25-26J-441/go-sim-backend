@@ -4,7 +4,8 @@ curl.exe "http://localhost:8081/llm/ping"
 
 # ====== 1) Main API health (go-sim-backend :8080) ======
 curl.exe "http://localhost:8080/health"
-curl.exe "http://localhost:8080/api/v1/design-input/health"
+curl.exe "http://localhost:8080/api/v1/design-input/health" `
+  -H "X-API-Key: super-secret-key-123"
 
 # ====== 2) Ingest a sample (via MAIN API) ======
 $ing = curl.exe --form "files=@D:\Research\uigp-service\sample.puml" --form-string "chat=~200 RPS; internal gRPC" `
