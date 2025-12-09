@@ -5,27 +5,41 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
+	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
+	middleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
+	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	"github.com/gin-gonic/gin"
 )
 
 const serviceName = "go-sim-backend"
 
 func main() {
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Set Gin mode based on environment
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Load RAG snippets before starting server
+	if err := diprag.Load(cfg.RAG.SnippetsDir); err != nil {
+		log.Printf("RAG load: %v", err)
 	}
 
 	router := gin.Default()
 
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
 	healthHandler.RegisterRoutes(router)
+
+	api := router.Group("/api/v1")
+
+	dip := api.Group("/design-input")
+	dip.Use(middleware.APIKeyMiddleware())
+	dip.Use(middleware.RequestIDMiddleware())
+	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
+	dipHandler.Register(dip)
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
