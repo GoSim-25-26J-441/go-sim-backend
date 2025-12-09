@@ -1,91 +1,268 @@
+# ============================================================
+# GO-SIM backend API smoke tests (PowerShell + curl.exe)
+# Updated for:
+# - API key (X-API-Key)
+# - User-aware chat & jobs (X-User-Id)
+# - RAG + LLM + signals
+# ============================================================
+
+$API_KEY = "super-secret-key-123"
+$USER_ID = "demo-user"
+
+$BASE      = "http://localhost:8080"
+$DESIGN    = "$BASE/api/v1/design-input"
+$UPSTREAM  = "http://localhost:8081"
+
+# For debugging
+"`n=== CONFIG ==="
+"API_KEY = $API_KEY"
+"USER_ID = $USER_ID"
+"DESIGN  = $DESIGN"
+"UPSTREAM = $UPSTREAM"
+"`n"
+
 # ====== 0) Upstream (uigp-service :8081) quick checks ======
-curl.exe "http://localhost:8081/health"
-curl.exe "http://localhost:8081/llm/ping"
+"`n=== 0) Upstream health ==="
+curl.exe "$UPSTREAM/health"
+curl.exe "$UPSTREAM/llm/ping"
 
 # ====== 1) Main API health (go-sim-backend :8080) ======
-curl.exe "http://localhost:8080/health"
-curl.exe "http://localhost:8080/api/v1/design-input/health" `
-  -H "X-API-Key: super-secret-key-123"
+"`n=== 1) go-sim-backend health ==="
+curl.exe "$BASE/health"
+
+"`n=== 1b) design-input health (with API key) ==="
+curl.exe "$DESIGN/health" `
+  -H "X-API-Key: $API_KEY"
 
 # ====== 2) Ingest a sample (via MAIN API) ======
-$ing = curl.exe --form "files=@D:\Research\uigp-service\sample.puml" --form-string "chat=~200 RPS; internal gRPC" `
-  "http://localhost:8080/api/v1/design-input/ingest"
-$JOB = ( $ing | ConvertFrom-Json ).jobId
-"JOB = $JOB"
+# You can change the file path / chat text as needed.
+"`n=== 2) Ingest sample diagram/spec ==="
+$ing = curl.exe -X POST `
+  "$DESIGN/ingest" `
+  -H "X-API-Key: $API_KEY" `
+  -H "X-User-Id: $USER_ID" `
+  --form "files=@D:\Research\uigp-service\sample.puml" `
+  --form-string "chat=~200 RPS; internal gRPC"
+
+"`nIngest raw response:"
+$ing
+
+$JOB = ($ing | ConvertFrom-Json).jobId
+"`nJOB = $JOB"
+
+if (-not $JOB) {
+  Write-Host "❌ No jobId returned, aborting." -ForegroundColor Red
+  return
+}
 
 # ====== 3) Intermediate / Fuse / Export / Report (MAIN API) ======
-curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/intermediate"
-curl.exe -X POST "http://localhost:8080/api/v1/design-input/jobs/$JOB/fuse"
-curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=json"
-curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/report"
+"`n=== 3) Intermediate / Fuse / Export / Report ==="
+
+"`n3a) Intermediate (raw graph from ingest):"
+curl.exe "$DESIGN/jobs/$JOB/intermediate?refresh=true" `
+  -H "X-API-Key: $API_KEY"
+
+"`n3b) Fuse into cleaned spec:"
+curl.exe -X POST "$DESIGN/jobs/$JOB/fuse" `
+  -H "X-API-Key: $API_KEY"
+
+"`n3c) Export fused spec as JSON:"
+curl.exe "$DESIGN/jobs/$JOB/export?format=json" `
+  -H "X-API-Key: $API_KEY"
+
+"`n3d) Human-readable report:"
+curl.exe "$DESIGN/jobs/$JOB/report" `
+  -H "X-API-Key: $API_KEY"
 
 # ====== 4) RAG utilities (search + reload) ======
-# (Encode spaces in q; using --get --data-urlencode is easiest)
-curl.exe --get --data-urlencode "q=grpc 200 rps" "http://localhost:8080/api/v1/design-input/rag/search"
-curl.exe -X POST "http://localhost:8080/api/v1/design-input/rag/reload"
+"`n=== 4) RAG search + reload ==="
+
+"`n4a) RAG search (throughput / RPS):"
+curl.exe --get `
+  --data-urlencode "q=grpc 200 rps" `
+  "$DESIGN/rag/search" `
+  -H "X-API-Key: $API_KEY"
+
+"`n4b) RAG reload snippets (default dir):"
+curl.exe -X POST "$DESIGN/rag/reload" `
+  -H "X-API-Key: $API_KEY"
+
 # Optional: point to a different snippets dir
-# curl.exe -X POST "http://localhost:8080/api/v1/design-input/rag/reload?dir=internal/design_input_processing/rag/snippets"
-
-# ====== 5) Chat (non-streaming, RAG-first then LLM) ======
-# PowerShell version (avoids quoting issues)
-$body = '{"mode":"assistant","message":"How many CPU cores for ~200 RPS at 150ms p95?"}'
-(Invoke-WebRequest -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat" `
-  -Method POST -ContentType "application/json" -Body $body).Content
+# curl.exe -X POST "$DESIGN/rag/reload?dir=internal/design_input_processing/rag/snippets" `
+#   -H "X-API-Key: $API_KEY"
 
 
-# History (view / clear)
-(Invoke-WebRequest -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/history?n=20").Content
-Invoke-WebRequest -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/history" -Method DELETE
+# ====== 5) Jobs list + summary (user-aware) ======
+"`n=== 5) Jobs for user + summaries ==="
 
-# ====== 6) Chat streaming (SSE) ======
-# You’ll see many "event: delta" lines then a final "event: done".
-curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/stream?message=Suggest%20gRPC%20timeouts%20and%20retries%20for%20200%20RPS"
+$jobs = Invoke-RestMethod `
+  -Method GET `
+  -Uri "$DESIGN/jobs" `
+  -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID }
 
-# ====== 7) Exports (force download names; optional) ======
-# JSON
-curl.exe -OJ "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=json&download=true"
-# YAML
-curl.exe -OJ "http://localhost:8080/api/v1/design-input/jobs/$JOB/export?format=yaml&download=true"
+"`nJobs response:"
+$jobs | ConvertTo-Json -Depth 5
+
+if ($jobs.jobs.Count -gt 0) {
+  $JOB = $jobs.jobs[0]
+  "`nUsing JOB from /jobs list: $JOB"
+}
+
+$summary = Invoke-RestMethod `
+  -Method GET `
+  -Uri "$DESIGN/jobs/summary" `
+  -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID }
+
+"`nJob summary:"
+$summary | ConvertTo-Json -Depth 5
 
 
-Sample follow-up chat: ----------------------------------------------------------------------------
+# ====== 6) Chat tests (RAG + sizing + signals) ======
+"`n=== 6) Chat (RAG + sizing prompts + signals) ==="
 
-$ing = curl.exe -X POST `
-  "http://localhost:8080/api/v1/design-input/ingest" `
-  -H "X-User-Id: demo-user" `
+# 6a) RAG-style conceptual question (should typically hit RAG)
+$body = @{ message = "Explain the throughput formula you use" } |
+  ConvertTo-Json -Compress
+
+$resp = Invoke-RestMethod `
+  -Method POST `
+  -Uri "$DESIGN/jobs/$JOB/chat" `
+  -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID } `
+  -ContentType "application/json" `
+  -Body $body
+
+"`n6a) RAG-ish answer:"
+$resp | ConvertTo-Json -Depth 5
+
+# 6b) Sizing question WITHOUT signals → should ask follow-up questions
+$body = @{ message = "How do I size services based on RPS and p95 latency?" } |
+  ConvertTo-Json -Compress
+
+$resp = Invoke-RestMethod `
+  -Method POST `
+  -Uri "$DESIGN/jobs/$JOB/chat" `
+  -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID } `
+  -ContentType "application/json" `
+  -Body $body
+
+"`n6b) Sizing prompts (missing signals):"
+$resp | ConvertTo-Json -Depth 5
+
+# 6c) Provide all signals → should skip RAG and go straight to LLM, with signals echo
+$body = @{ message = "Peak 200 RPS, average 50 RPS, p95 200ms, payload 2KB, burst 2x, using 2 vCPU. Please size my services." } |
+  ConvertTo-Json -Compress
+
+$resp = Invoke-RestMethod `
+  -Method POST `
+  -Uri "$DESIGN/jobs/$JOB/chat" `
+  -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID } `
+  -ContentType "application/json" `
+  -Body $body
+
+"`n6c) Sizing answer + signals:"
+$resp | ConvertTo-Json -Depth 5
+
+# 6d) Follow-up that *doesn't* need new signals but still keeps them in JSON
+$body = @{ message = "Can you re-summarize the sizing in one short paragraph?" } |
+  ConvertTo-Json -Compress
+
+$resp = Invoke-RestMethod `
+  -Method POST `
+  -Uri "$DESIGN/jobs/$JOB/chat" `
+  -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID } `
+  -ContentType "application/json" `
+  -Body $body
+
+"`n6d) Follow-up sizing summary:"
+$resp | ConvertTo-Json -Depth 5
+
+
+# ====== 7) Chat history (view / clear) ======
+"`n=== 7) Chat history (user-aware) ==="
+
+$history = Invoke-RestMethod `
+  -Method GET `
+  -Uri "$DESIGN/jobs/$JOB/chat/history" `
+  -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID }
+
+"`n7a) History (full):"
+$history | ConvertTo-Json -Depth 6
+
+# Uncomment to clear history
+# Invoke-RestMethod `
+#   -Method DELETE `
+#   -Uri "$DESIGN/jobs/$JOB/chat/history" `
+#   -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID }
+
+
+# ====== 8) Chat streaming (SSE) ======
+"`n=== 8) Chat streaming (SSE) ==="
+"`n(You should see event: delta lines followed by event: done)"
+
+curl.exe "$DESIGN/jobs/$JOB/chat/stream?message=Suggest%20gRPC%20timeouts%20and%20retries%20for%20200%20RPS" `
+  -H "X-API-Key: $API_KEY" `
+  -H "X-User-Id: $USER_ID"
+
+
+# ====== 9) Graphviz + exports ======
+"`n=== 9) Graphviz + exports ==="
+
+"`n9a) Ensure fuse is up-to-date:"
+curl.exe -X POST "$DESIGN/jobs/$JOB/fuse" `
+  -H "X-API-Key: $API_KEY"
+
+"`n9b) Graphviz DOT:"
+curl.exe "$DESIGN/jobs/$JOB/graphviz?format=dot" `
+  -H "X-API-Key: $API_KEY"
+
+"`n9c) Graphviz default (dot with label):"
+curl.exe "$DESIGN/jobs/$JOB/graphviz" `
+  -H "X-API-Key: $API_KEY"
+
+"`n9d) Export JSON (download to file):"
+curl.exe -OJ "$DESIGN/jobs/$JOB/export?format=json&download=true" `
+  -H "X-API-Key: $API_KEY"
+
+"`n9e) Export YAML (download to file):"
+curl.exe -OJ "$DESIGN/jobs/$JOB/export?format=yaml&download=true" `
+  -H "X-API-Key: $API_KEY"
+
+
+# ====== 10) Sample follow-up ingest (image) and chat ======
+"`n=== 10) Sample image ingest + chat ==="
+
+$ing2 = curl.exe -X POST `
+  "$DESIGN/ingest" `
+  -H "X-API-Key: $API_KEY" `
+  -H "X-User-Id: $USER_ID" `
   -F "files=@D:\Research\uigp-service\handdrawn1.jpg" `
   -F "chat=~200 RPS; internal gRPC"
 
-$JOB = ($ing | ConvertFrom-Json).jobId
-$JOB
+"`nImage ingest raw response:"
+$ing2
 
-$JOB = ($ing | ConvertFrom-Json).jobId
+$JOB2 = ($ing2 | ConvertFrom-Json).jobId
+"`nJOB2 = $JOB2"
 
-# 2) Build intermediate + fuse
-curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/intermediate?refresh=true"
-curl.exe -X POST "http://localhost:8080/api/v1/design-input/jobs/$JOB/fuse"
+if ($JOB2) {
+  "`n10b) Build intermediate + fuse for JOB2:"
+  curl.exe "$DESIGN/jobs/$JOB2/intermediate?refresh=true" `
+    -H "X-API-Key: $API_KEY"
+  curl.exe -X POST "$DESIGN/jobs/$JOB2/fuse" `
+    -H "X-API-Key: $API_KEY"
 
+  "`n10c) Chat on JOB2:"
+  $body = @{ message = "Now explain my architecture and main bottlenecks." } |
+          ConvertTo-Json -Compress
 
-#Chat > # PlantUML
-$body = @{ message = "Now explain my architecture and main bottlenecks." } |
-        ConvertTo-Json -Compress
+  $resp2 = Invoke-RestMethod `
+    -Method POST `
+    -Uri "$DESIGN/jobs/$JOB2/chat" `
+    -Headers @{ "X-API-Key" = $API_KEY; "X-User-Id" = $USER_ID } `
+    -ContentType "application/json" `
+    -Body $body
 
-Invoke-RestMethod `
-  -Method POST `
-  -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat" `
-  -ContentType "application/json" `
-  -Body $body 
+  $resp2 | ConvertTo-Json -Depth 5
+}
 
-
-
-# For Graphviz export: ---------------------------------------
-
-curl.exe -X POST "http://localhost:8080/api/v1/design-input/jobs/$JOB/fuse"
-curl.exe "http://localhost:8080/api/v1/design-input/jobs/$JOB/graphviz"
-
-# Chat delete ---------------------------------------------
-
-Invoke-RestMethod `
-  -Method DELETE `
-  -Uri "http://localhost:8080/api/v1/design-input/jobs/$JOB/chat/history" `
-  -Headers @{ "X-User-Id" = "demo-user" }
+"`n=== DONE ==="
