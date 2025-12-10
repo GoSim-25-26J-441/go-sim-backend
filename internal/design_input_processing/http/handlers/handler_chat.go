@@ -24,9 +24,9 @@ type missing struct {
 }
 
 type chatReq struct {
-	Mode    string `json:"mode"`
-	Message string `json:"message"`
-	Stream  bool   `json:"stream"`
+	Message  string `json:"message"`
+	Mode     string `json:"mode,omitempty"`
+	ForceLLM bool   `json:"force_llm,omitempty"` // override to bypass RAG
 }
 
 type chatTurn struct {
@@ -53,6 +53,80 @@ var rxP95ms = regexp.MustCompile(`(?i)\bp95\b.*?(\d+)\s*ms`)
 var rxCPU = regexp.MustCompile(`(?i)\b(\d+)\s*(v?cpu|cores?)\b`)
 var rxPayload = regexp.MustCompile(`(?i)(\d+)\s*(kb|mb)\b`)
 var rxBurst = regexp.MustCompile(`(?i)\b(\d+)[x×]\b`)
+
+func looksLikeDefinition(q string) bool {
+	s := strings.ToLower(strings.TrimSpace(q))
+	defPhrases := []string{
+		"what is ", "what's ", "define ", "definition of ",
+		"explain ", "explain about ", "difference between",
+		"pros and cons", "advantages and disadvantages",
+	}
+	for _, p := range defPhrases {
+		if strings.HasPrefix(s, p) || strings.Contains(s, " "+p) {
+			return true
+		}
+	}
+	return false
+}
+
+// Questions clearly about the uploaded diagram / image
+func isDiagramQuestion(q string) bool {
+	s := strings.ToLower(q)
+
+	// direct mentions of diagrams/images
+	if strings.Contains(s, "diagram") ||
+		strings.Contains(s, "picture") ||
+		strings.Contains(s, "image") ||
+		strings.Contains(s, "drawing") {
+		return true
+	}
+
+	// user talking about the uploaded artifact
+	if strings.Contains(s, "what i upload") ||
+		strings.Contains(s, "what i uploaded") ||
+		strings.Contains(s, "in what i upload") ||
+		strings.Contains(s, "in what i uploaded") {
+		return true
+	}
+
+	// common phrasing
+	if strings.Contains(s, "my services") ||
+		strings.Contains(s, "my edges") ||
+		strings.Contains(s, "services and edges") {
+		return true
+	}
+
+	return false
+}
+
+// Questions where RAG snippets (throughput formula / sizing cheat sheet) are useful
+func isRAGCandidate(q string) bool {
+	s := strings.ToLower(q)
+
+	ragKeywords := []string{
+		"throughput", "through put",
+		"concurrency",
+		"throughput formula", "sizing formula",
+		"back-of-the-envelope", "back of the envelope",
+		"capacity planning",
+		"cpu sizing", "cpu core", "cpu cores", "vcpu",
+		"headroom",
+		"autoscale", "auto scale",
+		"rate limit", "rate limiting",
+		"timeouts", "retries",
+		"rps @", // e.g. "200 rps @ 150ms"
+		"p95", "p99",
+		"slo", "sla",
+		"sizing guide",
+	}
+
+	for _, kw := range ragKeywords {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
+}
 
 // --- Main Chat handler ---
 
@@ -83,7 +157,7 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		userID = "demo-user"
 	}
 
-	// --- NEW: aggregate signals from history + this message ---
+	// --- Aggregate signals from history + this message ---
 	historySignals := loadSignalsFromHistory(jobID, userID)
 	thisSignals := extractSignals(req.Message)
 	signals := mergeSignals(historySignals, thisSignals)
@@ -116,11 +190,7 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		UserID: userID,
 	})
 
-	// --- Sizing gate using RPS / latency / CPU / payload / burst signals ---
-
-	// Use aggregated signals (history + this message)
-	missing := findMissingSignals(signals)
-
+	// ---- Intent detection ----
 	lowerMsg := strings.ToLower(req.Message)
 	isSizing := strings.Contains(lowerMsg, "size") ||
 		strings.Contains(lowerMsg, "sizing") ||
@@ -129,7 +199,11 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		strings.Contains(lowerMsg, "rps") ||
 		strings.Contains(lowerMsg, "latency")
 
+	isDef := looksLikeDefinition(req.Message)
+	isDiag := isDiagramQuestion(req.Message)
+
 	// If it's a sizing-style question and we DON'T yet have all signals → ask for them
+	missing := findMissingSignals(signals)
 	if isSizing && len(missing) > 0 {
 		var b strings.Builder
 		b.WriteString("To size this accurately, I need:\n")
@@ -164,8 +238,20 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	// If it's a sizing Q and we ALREADY have all signals → skip RAG, go straight to LLM
 	skipRAG := isSizing && len(missing) == 0
 
-	// 4) Try RAG first (unless we intentionally skip for sizing-with-all-signals)
-	if !skipRAG {
+	// Decide whether to try RAG at all
+	//  - only for explicit RAG topics (isRAGCandidate)
+	//  - never for definition-style questions
+	//  - never for diagram questions (we want spec-based answers)
+	//  - never when sizing-with-all-signals (skipRAG)
+	//  - never if caller forced LLM
+	tryRAG := isRAGCandidate(req.Message) &&
+		!skipRAG &&
+		!req.ForceLLM &&
+		!isDef &&
+		!isDiag
+
+	// 4) Try RAG first (unless disabled)
+	if tryRAG {
 		if ans, refs := ragAnswer(req.Message); ans != "" {
 			appendChat(jobID, chatTurn{
 				Role:   "assistant",
@@ -223,7 +309,7 @@ Return JSON: {"answer": string}.`,
 		"prompt": fmt.Sprintf(
 			"Context:\n%s\n\nSignals (JSON):\n%s\n\nQuestion:\n%s\n\nReturn only the JSON.",
 			features,
-			signalsJSON,
+			string(signalsJSON),
 			req.Message,
 		),
 		"options": map[string]any{
@@ -273,7 +359,7 @@ Return JSON: {"answer": string}.`,
 		"ok":      true,
 		"answer":  answerText,
 		"source":  "llm",
-		"signals": signals, // aggregated across history + this turn
+		"signals": signals,
 	})
 }
 
@@ -652,7 +738,7 @@ func extractSignals(msg string) map[string]int {
 	return out
 }
 
-// NEW: merge history + current signals (current overrides history if non-zero)
+// merge history + current signals (current overrides history if non-zero)
 func mergeSignals(history, current map[string]int) map[string]int {
 	out := map[string]int{}
 	for k, v := range history {
@@ -666,7 +752,7 @@ func mergeSignals(history, current map[string]int) map[string]int {
 	return out
 }
 
-// NEW: load signals from previous user turns for this job
+// load signals from previous user turns for this job
 func loadSignalsFromHistory(jobID, userID string) map[string]int {
 	agg := map[string]int{}
 
