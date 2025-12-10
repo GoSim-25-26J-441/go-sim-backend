@@ -200,6 +200,7 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		strings.Contains(lowerMsg, "latency")
 
 	isDef := looksLikeDefinition(req.Message)
+	isJob := isJobSpecific(req.Message)
 	isDiag := isDiagramQuestion(req.Message)
 
 	// If it's a sizing-style question and we DON'T yet have all signals → ask for them
@@ -239,16 +240,7 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	skipRAG := isSizing && len(missing) == 0
 
 	// Decide whether to try RAG at all
-	//  - only for explicit RAG topics (isRAGCandidate)
-	//  - never for definition-style questions
-	//  - never for diagram questions (we want spec-based answers)
-	//  - never when sizing-with-all-signals (skipRAG)
-	//  - never if caller forced LLM
-	tryRAG := isRAGCandidate(req.Message) &&
-		!skipRAG &&
-		!req.ForceLLM &&
-		!isDef &&
-		!isDiag
+	tryRAG := !skipRAG && !req.ForceLLM && !isDef && !isJob && !isDiag
 
 	// 4) Try RAG first (unless disabled)
 	if tryRAG {
@@ -283,7 +275,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	// 6) Call local Ollama (non-streaming)
 	body := map[string]any{
 		"model":  "llama3:instruct",
-		"format": "json",
 		"stream": false,
 		"system": `You are a software architecture assistant.
 
@@ -295,19 +286,20 @@ You are given:
 Rules:
 - Always respect the protocol from the context (if it says gRPC, do NOT call it REST).
 - Do NOT invent extra services or components that are not in the context.
-- If there is only one or two services, describe it as a very small microservice-like setup that is effectively
-  monolithic for now, and explicitly say that it does NOT really benefit from microservice-style decomposition yet.
-- You may suggest how it could be evolved into a better microservice architecture (e.g., more domain-focused services,
-  clearer boundaries, separate datastores).
+- If there is only one or two services, describe it as a very small microservice-like setup
+  that is effectively monolithic for now, and explicitly say that it does NOT really
+  benefit from microservice-style decomposition yet.
+- You may suggest how it could be evolved into a better microservice architecture
+  (e.g., more domain-focused services, clearer boundaries, separate datastores).
 - Be concise, stay on topic.
 - When you are given numeric sizing signals such as rps_peak, rps_avg, latency_p95_ms,
   payload_kb, burst_factor, cpu_vcpu, you MUST produce a concrete sizing recommendation
   (e.g., instances, vCPU per instance, rough RAM per service) instead of saying that
   you need more information.
 
-Return JSON: {"answer": string}.`,
+Answer in plain English, not JSON.`,
 		"prompt": fmt.Sprintf(
-			"Context:\n%s\n\nSignals (JSON):\n%s\n\nQuestion:\n%s\n\nReturn only the JSON.",
+			"Context:\n%s\n\nSignals:\n%s\n\nQuestion:\n%s\n\nAnswer in plain English.",
 			features,
 			string(signalsJSON),
 			req.Message,
@@ -319,7 +311,8 @@ Return JSON: {"answer": string}.`,
 		},
 	}
 
-	respBytes, err := postJSON(ollamaURL+"/api/generate", body, 60*time.Second)
+	respBytes, err := postJSON(ollamaURL+"/api/generate", body, 3*time.Minute)
+
 	if err != nil {
 		c.JSON(502, gin.H{"ok": false, "error": "ollama: " + err.Error()})
 		return
@@ -334,18 +327,8 @@ Return JSON: {"answer": string}.`,
 		return
 	}
 
-	answerText := ""
-	var out struct {
-		Answer string `json:"answer"`
-	}
-	if err := json.Unmarshal([]byte(gen.Response), &out); err == nil && out.Answer != "" {
-		answerText = out.Answer
-	} else {
-		answerText = gen.Response
-	}
-
 	// Fix protocol wording if needed
-	answerText = enforceProtocol(answerText, ig, spec)
+	answerText := strings.TrimSpace(gen.Response)
 
 	appendChat(jobID, chatTurn{
 		Role:   "assistant",
@@ -625,24 +608,6 @@ func onTopic(msg string) bool {
 	return hits >= 1
 }
 
-func looksLikeTitle(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return true
-	}
-
-	// Consider only the first line
-	lines := strings.SplitN(s, "\n", 2)
-	first := strings.TrimSpace(lines[0])
-
-	// Very short, no sentence punctuation → looks like a heading such as "Sizing prompts..."
-	if len(first) < 25 && !strings.ContainsAny(first, ".!?") {
-		return true
-	}
-
-	return false
-}
-
 func tryGaps(m map[string]any) [][2]string {
 	arr, _ := m["gaps"].([]any)
 	out := make([][2]string, 0, len(arr))
@@ -809,4 +774,23 @@ func findMissingSignals(signals map[string]int) []missing {
 		m = append(m, missing{Key: "cpu_vcpu", Q: "Current/target CPU/RAM footprint per instance?"})
 	}
 	return m
+}
+
+func isJobSpecific(msg string) bool {
+	m := strings.ToLower(msg)
+	patterns := []string{
+		"my architecture",
+		"this architecture",
+		"my diagram",
+		"this diagram",
+		"what i upload",
+		"services and edges",
+		"in what i upload",
+	}
+	for _, p := range patterns {
+		if strings.Contains(m, p) {
+			return true
+		}
+	}
+	return false
 }
