@@ -168,8 +168,6 @@ func importGCPCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchSiz
 	log.Printf("GCP CSV headers: %v", header)
 
 	// Map the actual headers from your GCP CSV file
-	// Based on the simplified GCP fetcher output, the headers should be:
-	// id, provider, sku_id, region, instance_type, resource_family, vcpu, memory_gb, price_per_hour, currency, unit, purchase_option, usage_type, fetched_at
 	idx := mapHeaderIndices(header, []string{
 		"sku_id", "region", "instance_type", "resource_family", "vcpu", "memory_gb",
 		"price_per_hour", "currency", "unit", "purchase_option", "usage_type", "fetched_at",
@@ -192,13 +190,11 @@ func importGCPCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchSiz
 			return fmt.Errorf("csv read error: %w", err)
 		}
 
-		// Build row - using empty string for description since it's not in the CSV
 		row := []interface{}{
-			strings.TrimSpace(rec[idx["sku_id"]]),        // sku_id
-			"gcp",                                        // provider
-			strings.TrimSpace(rec[idx["region"]]),        // region
-			strings.TrimSpace(rec[idx["instance_type"]]), // instance_type
-			"", // description (not in CSV)
+			strings.TrimSpace(rec[idx["sku_id"]]),          // sku_id
+			"gcp",                                          // provider
+			strings.TrimSpace(rec[idx["region"]]),          // region
+			strings.TrimSpace(rec[idx["instance_type"]]),   // instance_type
 			strings.TrimSpace(rec[idx["resource_family"]]), // resource_family
 			parseNullableInt(rec[idx["vcpu"]]),             // vcpu
 			parseNullableFloat(rec[idx["memory_gb"]]),      // memory_gb
@@ -411,16 +407,14 @@ func flushBatch(ctx context.Context, tx pgx.Tx, table string, rows [][]interface
 			"updated_at = now()",
 		}
 	case "gcp_compute_prices":
-		// GCP columns - description is included but will be empty
 		cols = []string{
-			"sku_id", "provider", "region", "instance_type", "description",
+			"sku_id", "provider", "region", "instance_type",
 			"resource_family", "vcpu", "memory_gb", "price_per_hour", "currency",
 			"unit", "purchase_option", "usage_type", "fetched_at", "metadata",
 		}
 		conflictTarget = "(sku_id, region)"
 		updateSets = []string{
 			"instance_type = EXCLUDED.instance_type",
-			"description = EXCLUDED.description",
 			"resource_family = EXCLUDED.resource_family",
 			"vcpu = EXCLUDED.vcpu",
 			"memory_gb = EXCLUDED.memory_gb",

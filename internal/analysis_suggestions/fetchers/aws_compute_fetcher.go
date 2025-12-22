@@ -137,12 +137,35 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 				}
 				writerMutex.Lock()
 
-				line := fmt.Sprintf("%q,%q,%q,%q,%q,%q,%q,%q,%q,%q,%q,%q,%q,%q\n",
-					rec.ID, rec.Provider, rec.SKUID, rec.Region, rec.InstanceType, rec.InstanceFamily,
-					nilToStrInt(rec.VCPU), nilToStrFloat(rec.MemoryGB), nilToStrFloat6(rec.PricePerHour),
-					rec.Currency, rec.Unit, rec.PurchaseOption, rec.LeaseContractLength,
-					rec.FetchedAt.Format(time.RFC3339Nano))
-				if _, err := csvW.WriteString(line); err != nil {
+				csvQuote := func(s string) string {
+					if strings.ContainsAny(s, ",\"\n\r") {
+						return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+					}
+					return s
+				}
+
+				id := csvQuote(rec.ID)
+				provider := csvQuote(rec.Provider)
+				skuID := csvQuote(rec.SKUID)
+				region := csvQuote(rec.Region)
+				instanceType := csvQuote(rec.InstanceType)
+				instanceFamily := csvQuote(rec.InstanceFamily)
+				vcpu := csvQuote(nilToStrInt(rec.VCPU))
+				memoryGB := csvQuote(nilToStrFloat(rec.MemoryGB))
+				price := csvQuote(nilToStrFloat6(rec.PricePerHour))
+				currency := csvQuote(rec.Currency)
+				unit := csvQuote(rec.Unit)
+				purchaseOption := csvQuote(rec.PurchaseOption)
+				leaseContractLength := csvQuote(rec.LeaseContractLength)
+				fetchedAt := csvQuote(rec.FetchedAt.Format(time.RFC3339Nano))
+
+				csvLine := []string{
+					id, provider, skuID, region, instanceType, instanceFamily,
+					vcpu, memoryGB, price, currency, unit,
+					purchaseOption, leaseContractLength, fetchedAt,
+				}
+
+				if _, err := csvW.WriteString(strings.Join(csvLine, ",") + "\n"); err != nil {
 					writerMutex.Unlock()
 					errChan <- err
 					return
