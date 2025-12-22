@@ -312,7 +312,8 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 	}
 
 	base := "https://prices.azure.com/api/retail/prices"
-	filteredBase := base + "?$filter=serviceFamily%20eq%20'Compute'%20and%20(armRegionName%20eq%20'southeastasia')"
+	filteredBase := base + "?$filter=serviceName%20eq%20%27Azure%20Kubernetes%20Service%27%20and%20serviceFamily%20eq%20%27Compute%27"
+
 
 	skip := 0
 	total := 0
