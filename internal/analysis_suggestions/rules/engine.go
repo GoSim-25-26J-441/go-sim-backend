@@ -52,6 +52,11 @@ type DesignInput struct {
 	PreferredVCPU     int      `json:"preferred_vcpu"`
 	PreferredMemoryGB float64  `json:"preferred_memory_gb"`
 	Workload          Workload `json:"workload,omitempty"`
+	Budget            float64  `json:"budget,omitempty"`
+}
+
+type SimulationInput struct {
+	Nodes int `json:"nodes"`
 }
 
 type CandidateScore struct {
@@ -68,8 +73,9 @@ type Engine struct {
 type RequestResponse struct {
 	ID      string `json:"id"`
 	Request struct {
-		Design     DesignInput `json:"design"`
-		Candidates []Candidate `json:"candidates"`
+		Design     DesignInput     `json:"design"`
+		Simulation SimulationInput `json:"simulation"`
+		Candidates []Candidate     `json:"candidates"`
 	} `json:"request"`
 	Response []CandidateScore `json:"response"`
 }
@@ -108,7 +114,8 @@ func (e *Engine) EvaluateCandidates(design DesignInput, candidates []Candidate) 
 	return out, nil
 }
 
-func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design DesignInput, candidates []Candidate) ([]CandidateScore, string, error) {
+func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design DesignInput, simulation SimulationInput,
+	candidates []Candidate) ([]CandidateScore, string, error) {
 	out, err := e.EvaluateCandidates(design, candidates)
 	if err != nil {
 		return nil, "", err
@@ -125,7 +132,7 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 		pool, err := pgxpool.New(ctx, dbURL)
 		if err == nil {
 			defer pool.Close()
-			id, err = saveRequestResponseToDB(ctx, pool, userID, design, candidates, out, best)
+			id, err = saveRequestResponseToDB(ctx, pool, userID, design, simulation, candidates, out, best)
 			if err == nil {
 				return out, id, nil
 			}
@@ -136,6 +143,7 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 		ID: u,
 	}
 	rr.Request.Design = design
+	rr.Request.Simulation = simulation
 	rr.Request.Candidates = candidates
 	rr.Response = out
 
@@ -158,12 +166,14 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 	return out, path, nil
 }
 
-func saveRequestResponseToDB(ctx context.Context, pool *pgxpool.Pool, userID string, design DesignInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
+func saveRequestResponseToDB(ctx context.Context, pool *pgxpool.Pool, userID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
 	reqObj := struct {
-		Design     DesignInput `json:"design"`
-		Candidates []Candidate `json:"candidates"`
+		Design     DesignInput     `json:"design"`
+		Simulation SimulationInput `json:"simulation"`
+		Candidates []Candidate     `json:"candidates"`
 	}{
 		Design:     design,
+		Simulation: simulation,
 		Candidates: candidates,
 	}
 	reqJSON, err := json.Marshal(reqObj)

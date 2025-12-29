@@ -20,7 +20,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	pricing "github.com/aws/aws-sdk-go-v2/service/pricing"
-	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"golang.org/x/time/rate"
 )
 
@@ -66,7 +65,7 @@ func main() {
 	txtPath := filepath.Join(outDir, "aws_compute_prices.txt")
 
 	config := FetchConfig{
-		MaxRecords:     10000,
+		MaxRecords:     800000,
 		RateLimit:      8,
 		BurstSize:      16,
 		BufferSize:     500,
@@ -185,13 +184,6 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 	input := &pricing.GetProductsInput{
 		ServiceCode:   aws.String("AmazonEC2"),
 		FormatVersion: aws.String("aws_v1"),
-		Filters: []pricingtypes.Filter{
-			{
-				Field: aws.String("location"),
-				Type:  pricingtypes.FilterTypeTermMatch,
-				Value: aws.String("US East (N. Virginia)"),
-			},
-		},
 	}
 
 	total := 0

@@ -97,14 +97,7 @@ func importAzureCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchS
 		"currency", "unit", "service_family", "purchase_option", "lease_contract_length", "fetched_at",
 	})
 
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	count := 0
-	batch := make([][]interface{}, 0, batchSize)
+	var records [][]string
 	for {
 		rec, err := r.Read()
 		if err != nil {
@@ -113,6 +106,23 @@ func importAzureCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchS
 			}
 			return fmt.Errorf("csv read error: %w", err)
 		}
+		records = append(records, rec)
+	}
+
+	if len(records) > 0 {
+		records = records[:len(records)-1]
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	count := 0
+	batch := make([][]interface{}, 0, batchSize)
+
+	for _, rec := range records {
 		row := []interface{}{
 			strings.TrimSpace(rec[idx["sku_id"]]),                // sku_id
 			"azure",                                              // provider
@@ -138,14 +148,17 @@ func importAzureCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchS
 			batch = batch[:0]
 		}
 	}
+
 	if len(batch) > 0 {
 		if err := flushBatch(ctx, tx, "azure_compute_prices", batch); err != nil {
 			return err
 		}
 	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+
 	log.Printf("Azure import complete — %d rows processed", count)
 	return nil
 }

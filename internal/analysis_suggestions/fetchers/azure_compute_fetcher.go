@@ -271,13 +271,15 @@ func main() {
 	limiter := rate.NewLimiter(rate.Limit(5), 10)
 
 	log.Printf("Starting Azure compute fetcher -> CSV: %s , TXT: %s\n", csvPath, txtPath)
-	if err := fetchComputeAndWriteTables(ctx, limiter, 200, csvPath, txtPath); err != nil {
+
+	maxRecords := 800000
+	if err := fetchComputeAndWriteTables(ctx, limiter, 200, maxRecords, csvPath, txtPath); err != nil {
 		log.Fatalf("fetch failed: %v", err)
 	}
 	log.Printf("Finished. Files: %s , %s\n", csvPath, txtPath)
 }
 
-func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, pageSize int, csvPath, txtPath string) error {
+func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, pageSize, maxRecords int, csvPath, txtPath string) error {
 	csvF, err := os.Create(csvPath)
 	if err != nil {
 		return fmt.Errorf("create csv: %w", err)
@@ -302,7 +304,7 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 	defer txtF.Close()
 	tw := tabwriter.NewWriter(bufio.NewWriter(txtF), 0, 4, 2, ' ', 0)
 
-	// Updated text header with new fields
+	// Header with fields
 	fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 		"id", "provider", "sku_id", "region", "instance_type",
 		"vcpu", "memory_gb", "price_per_hour", "currency", "unit",
@@ -312,13 +314,12 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 	}
 
 	base := "https://prices.azure.com/api/retail/prices"
-	filteredBase := base + "?$filter=serviceName%20eq%20%27Azure%20Kubernetes%20Service%27%20and%20serviceFamily%20eq%20%27Compute%27"
-
+	filteredBase := base + "?$filter=serviceFamily%20eq%20%27Compute%27"
 
 	skip := 0
 	total := 0
 
-	for {
+	for total < maxRecords {
 		url := fmt.Sprintf("%s&$top=%d&$skip=%d", filteredBase, pageSize, skip)
 
 		if err := limiter.Wait(ctx); err != nil {
@@ -341,6 +342,10 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 		}
 
 		for _, item := range page.Items {
+			if total >= maxRecords {
+				break
+			}
+
 			cp := normalizeAzureComputeItem(item)
 			if cp.PricePerHour == nil || cp.Region == "" {
 				continue
@@ -388,12 +393,22 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 			)
 
 			total++
+
+			if total%1000 == 0 {
+				log.Printf("Processed %d/%d records (%.1f%%)", total, maxRecords, float64(total)/float64(maxRecords)*100)
+			}
+
 			if total%500 == 0 {
 				csvW.Flush()
 				if err := tw.Flush(); err != nil {
 					return fmt.Errorf("txt flush error: %w", err)
 				}
 			}
+		}
+
+		if total >= maxRecords {
+			log.Printf("Reached maximum record limit of %d", maxRecords)
+			break
 		}
 
 		skip += pageSize
@@ -408,7 +423,7 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 		return fmt.Errorf("txt final flush error: %w", err)
 	}
 
-	log.Printf("Wrote %d records to CSV/TXT", total)
+	log.Printf("Wrote %d records to CSV/TXT (max limit: %d)", total, maxRecords)
 	return nil
 }
 
@@ -561,7 +576,6 @@ func normalizeLeaseContract(term string) string {
 	}
 }
 
-// Helper functions for formatting optional values
 func formatOptionalInt(val *int) string {
 	if val == nil {
 		return ""

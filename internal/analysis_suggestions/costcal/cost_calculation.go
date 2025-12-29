@@ -38,10 +38,36 @@ type CostResult struct {
 	MatchedDistance float64          `json:"matched_distance,omitempty"`
 }
 
-// HoursPerMonth returns the number of hours in a 30-day month.
-func HoursPerMonth() float64 { return 24.0 * 30.0 }
+type ClusterCostResult struct {
+	Provider          string `json:"provider"`
+	PurchaseType      string `json:"purchase_type"`
+	LeaseContractType string `json:"lease_contract_length"`
 
-// CalculateCostsForBestCandidate looks up the best match for costs with all purchase options.
+	InstanceType string `json:"instance_type"`
+	Region       string `json:"region"`
+	Nodes        int    `json:"nodes"`
+
+	PricePerNodeHour  float64 `json:"price_per_node_hour"`
+	PricePerNodeMonth float64 `json:"price_per_node_month"`
+
+	ControlPlaneTier  string  `json:"control_plane_tier"`
+	ControlPlaneHour  float64 `json:"control_plane_hour"`
+	ControlPlaneMonth float64 `json:"control_plane_month"`
+
+	TotalHour    float64 `json:"total_hour"`
+	TotalMonth   float64 `json:"total_month"`
+	BudgetMonth  float64 `json:"budget_month"`
+	WithinBudget bool    `json:"within_budget"`
+}
+
+func HoursPerMonth() float64 { return 24 * 30 }
+
+func round(v float64, places int) float64 {
+	p := math.Pow(10, float64(places))
+	return math.Round(v*p) / p
+}
+
+// VM MATCH
 func CalculateCostsForBestCandidate(ctx context.Context, pool *pgxpool.Pool, best rules.CandidateScore) (map[string]CostResult, error) {
 	results := make(map[string]CostResult)
 
@@ -74,35 +100,225 @@ func CalculateCostsForBestCandidate(ctx context.Context, pool *pgxpool.Pool, bes
 	return results, nil
 }
 
-// calcForProvider finds the exact or nearest match for a provider's pricing with all purchase options.
-func calcForProvider(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64) (CostResult, error) {
-	cr := CostResult{Provider: provider}
+// Calculate costs for a specific provider and region
+func CalculateCostsForProviderInRegion(ctx context.Context, pool *pgxpool.Pool, provider string, best rules.CandidateScore, region string) (CostResult, error) {
+	vcpu := best.Candidate.Spec.VCPU
+	mem := best.Candidate.Spec.MemoryGB
 
-	// 1) First try to find exact match
-	exactMatches, err := findExactMatches(ctx, pool, provider, table, vcpu, mem)
+	table := map[string]string{
+		"aws":   "aws_compute_prices",
+		"azure": "azure_compute_prices",
+		"gcp":   "gcp_compute_prices",
+	}[provider]
+
+	if table == "" {
+		return CostResult{Provider: provider}, fmt.Errorf("unknown provider: %s", provider)
+	}
+
+	return calcForProviderInRegion(ctx, pool, provider, table, vcpu, mem, region)
+}
+
+// CONTROL PLANE
+func GetControlPlanePrice(ctx context.Context, pool *pgxpool.Pool, provider string) (tier string, price float64, err error) {
+	service := map[string]string{
+		"aws":   "eks",
+		"azure": "aks",
+		"gcp":   "gke",
+	}[provider]
+
+	err = pool.QueryRow(ctx, `
+		SELECT tier, price_per_hour
+		FROM k8s_control_plane_prices
+		WHERE provider = $1 AND service = $2
+		ORDER BY price_per_hour ASC
+		LIMIT 1
+	`, provider, service).Scan(&tier, &price)
+
+	return
+}
+
+// CLUSTER COST - Main function
+func CalculateClusterCosts(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	best rules.CandidateScore,
+	nodeCount int,
+	region string,
+	budgetMonth float64,
+	providerRegionOverride string,
+) (map[string][]ClusterCostResult, error) {
+
+	perNodeCosts, err := CalculateCostsForBestCandidate(ctx, pool, best)
 	if err != nil {
-		return cr, fmt.Errorf("finding exact matches failed: %w", err)
+		return nil, err
 	}
 
-	if len(exactMatches) > 0 {
-		// Use the exact match with On-Demand pricing as reference
-		return processExactMatches(exactMatches, provider, vcpu, mem), nil
+	results := make(map[string][]ClusterCostResult)
+
+	for _, provider := range []string{"aws", "azure", "gcp"} {
+		nodeCost := perNodeCosts[provider]
+		list := []ClusterCostResult{}
+
+		cpTier, cpHour, _ := GetControlPlanePrice(ctx, pool, provider)
+		cpMonth := cpHour * HoursPerMonth()
+
+		if !nodeCost.FoundMatches {
+			results[provider] = list
+			continue
+		}
+
+		if provider == providerRegionOverride && region != "" {
+			recalculatedCost, err := CalculateCostsForProviderInRegion(ctx, pool, provider, best, region)
+			if err == nil && recalculatedCost.FoundMatches {
+				nodeCost = recalculatedCost
+			}
+		}
+
+		selectedRegion := nodeCost.Region
+
+		var onDemand, res1yr, res3yr *PurchaseOption
+
+		for _, po := range nodeCost.PurchaseOptions {
+			t := strings.ToLower(po.Type)
+			ll := strings.ToLower(po.LeaseContractLength)
+
+			switch {
+			case t == "ondemand" || po.Type == "":
+				onDemand = &po
+			case t == "reserved" && strings.Contains(ll, "1"):
+				res1yr = &po
+			case t == "reserved" && strings.Contains(ll, "3"):
+				res3yr = &po
+			}
+		}
+
+		add := func(label, lease string, po *PurchaseOption) {
+			if po == nil {
+				return
+			}
+
+			nHr := po.PricePerHour
+			nMo := nHr * HoursPerMonth()
+
+			totalHr := float64(nodeCount)*nHr + cpHour
+			totalMo := totalHr * HoursPerMonth()
+
+			list = append(list, ClusterCostResult{
+				Provider:          provider,
+				PurchaseType:      label,
+				LeaseContractType: lease,
+				InstanceType:      nodeCost.InstanceType,
+				Region:            selectedRegion,
+				Nodes:             nodeCount,
+
+				PricePerNodeHour:  round(nHr, 5),
+				PricePerNodeMonth: round(nMo, 2),
+
+				ControlPlaneTier:  cpTier,
+				ControlPlaneHour:  round(cpHour, 5),
+				ControlPlaneMonth: round(cpMonth, 2),
+
+				TotalHour:    round(totalHr, 5),
+				TotalMonth:   round(totalMo, 2),
+				BudgetMonth:  budgetMonth,
+				WithinBudget: budgetMonth > 0 && totalMo <= budgetMonth,
+			})
+		}
+
+		add("OnDemand", "", onDemand)
+		add("Reserved", "1yr", res1yr)
+		add("Reserved", "3yr", res3yr)
+
+		results[provider] = list
 	}
 
-	// 2) If no exact matches, find nearest match
-	nearestMatches, err := findNearestMatches(ctx, pool, provider, table, vcpu, mem)
+	return results, nil
+}
+
+// Get cluster costs for a specific provider only
+func CalculateClusterCostsForProvider(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	provider string,
+	best rules.CandidateScore,
+	nodeCount int,
+	region string,
+	budgetMonth float64,
+) ([]ClusterCostResult, error) {
+
+	list := []ClusterCostResult{}
+
+	// Calculate node costs for the specific provider and region
+	nodeCost, err := CalculateCostsForProviderInRegion(ctx, pool, provider, best, region)
 	if err != nil {
-		return cr, fmt.Errorf("finding nearest matches failed: %w", err)
+		return list, err
 	}
 
-	if len(nearestMatches) > 0 {
-		return processNearestMatches(nearestMatches, provider, vcpu, mem), nil
+	if !nodeCost.FoundMatches {
+		return list, nil
 	}
 
-	cr.FoundMatches = false
-	cr.MatchCount = 0
-	cr.Note = "no matching price rows found"
-	return cr, nil
+	// Get control plane price
+	cpTier, cpHour, err := GetControlPlanePrice(ctx, pool, provider)
+	if err != nil {
+		return list, err
+	}
+	cpMonth := cpHour * HoursPerMonth()
+
+	var onDemand, res1yr, res3yr *PurchaseOption
+
+	for _, po := range nodeCost.PurchaseOptions {
+		t := strings.ToLower(po.Type)
+		ll := strings.ToLower(po.LeaseContractLength)
+
+		switch {
+		case t == "ondemand" || po.Type == "":
+			onDemand = &po
+		case t == "reserved" && strings.Contains(ll, "1"):
+			res1yr = &po
+		case t == "reserved" && strings.Contains(ll, "3"):
+			res3yr = &po
+		}
+	}
+
+	add := func(label, lease string, po *PurchaseOption) {
+		if po == nil {
+			return
+		}
+
+		nHr := po.PricePerHour
+		nMo := nHr * HoursPerMonth()
+
+		totalHr := float64(nodeCount)*nHr + cpHour
+		totalMo := totalHr * HoursPerMonth()
+
+		list = append(list, ClusterCostResult{
+			Provider:          provider,
+			PurchaseType:      label,
+			LeaseContractType: lease,
+			InstanceType:      nodeCost.InstanceType,
+			Region:            nodeCost.Region,
+			Nodes:             nodeCount,
+
+			PricePerNodeHour:  round(nHr, 5),
+			PricePerNodeMonth: round(nMo, 2),
+
+			ControlPlaneTier:  cpTier,
+			ControlPlaneHour:  round(cpHour, 5),
+			ControlPlaneMonth: round(cpMonth, 2),
+
+			TotalHour:    round(totalHr, 5),
+			TotalMonth:   round(totalMo, 2),
+			BudgetMonth:  budgetMonth,
+			WithinBudget: budgetMonth > 0 && totalMo <= budgetMonth,
+		})
+	}
+
+	add("OnDemand", "", onDemand)
+	add("Reserved", "1yr", res1yr)
+	add("Reserved", "3yr", res3yr)
+
+	return list, nil
 }
 
 type priceRow struct {
@@ -122,6 +338,66 @@ type priceRow struct {
 	Distance            float64
 }
 
+// MATCH functions
+func calcForProvider(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64) (CostResult, error) {
+	cr := CostResult{Provider: provider}
+
+	exactMatches, err := findExactMatches(ctx, pool, provider, table, vcpu, mem)
+	if err != nil {
+		return cr, fmt.Errorf("finding exact matches failed: %w", err)
+	}
+
+	if len(exactMatches) > 0 {
+		return processExactMatches(exactMatches, provider, vcpu, mem), nil
+	}
+
+	nearestMatches, err := findNearestMatches(ctx, pool, provider, table, vcpu, mem)
+	if err != nil {
+		return cr, fmt.Errorf("finding nearest matches failed: %w", err)
+	}
+
+	if len(nearestMatches) > 0 {
+		return processNearestMatches(nearestMatches, provider, vcpu, mem), nil
+	}
+
+	cr.FoundMatches = false
+	cr.MatchCount = 0
+	cr.Note = "no matching price rows found"
+	return cr, nil
+}
+
+// Calculate for specific provider and region
+func calcForProviderInRegion(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64, region string) (CostResult, error) {
+	cr := CostResult{Provider: provider}
+
+	exactMatches, err := findExactMatchesInRegion(ctx, pool, provider, table, vcpu, mem, region)
+	if err != nil {
+		return cr, fmt.Errorf("finding exact matches in region failed: %w", err)
+	}
+
+	if len(exactMatches) > 0 {
+		result := processExactMatches(exactMatches, provider, vcpu, mem)
+		result.Region = region
+		return result, nil
+	}
+
+	nearestMatches, err := findNearestMatchesInRegion(ctx, pool, provider, table, vcpu, mem, region)
+	if err != nil {
+		return cr, fmt.Errorf("finding nearest matches in region failed: %w", err)
+	}
+
+	if len(nearestMatches) > 0 {
+		result := processNearestMatches(nearestMatches, provider, vcpu, mem)
+		result.Region = region
+		return result, nil
+	}
+
+	cr.FoundMatches = false
+	cr.MatchCount = 0
+	cr.Note = fmt.Sprintf("no matching price rows found in region: %s", region)
+	return cr, nil
+}
+
 func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64) ([]priceRow, error) {
 	query := ""
 
@@ -129,8 +405,8 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 	case "aws":
 		query = `
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
-			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as fetched_at,
-			       purchase_option, lease_contract_length, instance_family as service_family, NULL as usage_type
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, instance_family, NULL
 			FROM aws_compute_prices
 			WHERE vcpu = $1 AND memory_gb = $2 AND price_per_hour IS NOT NULL
 			ORDER BY price_per_hour ASC
@@ -138,8 +414,8 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 	case "azure":
 		query = `
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
-			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as fetched_at,
-			       purchase_option, lease_contract_length, service_family, NULL as usage_type
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, service_family, NULL
 			FROM azure_compute_prices
 			WHERE vcpu = $1 AND memory_gb = $2 AND price_per_hour IS NOT NULL
 			ORDER BY price_per_hour ASC
@@ -147,8 +423,8 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 	case "gcp":
 		query = `
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
-			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as fetched_at,
-			       purchase_option, NULL as lease_contract_length, resource_family as service_family, usage_type
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, NULL, resource_family, usage_type
 			FROM gcp_compute_prices
 			WHERE vcpu = $1 AND memory_gb = $2 AND price_per_hour IS NOT NULL
 			ORDER BY price_per_hour ASC
@@ -166,13 +442,73 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 	var matches []priceRow
 	for rows.Next() {
 		var r priceRow
-		err := rows.Scan(&r.SKUID, &r.InstanceType, &r.Region, &r.VCPU, &r.MemoryGB, &r.PriceHour,
-			&r.Currency, &r.Unit, &r.FetchedAt, &r.PurchaseOption, &r.LeaseContractLength,
-			&r.ServiceFamily, &r.UsageType)
-		if err != nil {
-			return nil, fmt.Errorf("scan failed: %w", err)
+		if err := rows.Scan(
+			&r.SKUID, &r.InstanceType, &r.Region, &r.VCPU, &r.MemoryGB,
+			&r.PriceHour, &r.Currency, &r.Unit, &r.FetchedAt,
+			&r.PurchaseOption, &r.LeaseContractLength, &r.ServiceFamily, &r.UsageType,
+		); err != nil {
+			return nil, err
 		}
-		r.Distance = 0 // exact match
+		r.Distance = 0
+		matches = append(matches, r)
+	}
+
+	return matches, nil
+}
+
+// Find exact matches in specific region
+func findExactMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64, region string) ([]priceRow, error) {
+	query := ""
+
+	switch provider {
+	case "aws":
+		query = `
+			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, instance_family, NULL
+			FROM aws_compute_prices
+			WHERE vcpu = $1 AND memory_gb = $2 AND region = $3 AND price_per_hour IS NOT NULL
+			ORDER BY price_per_hour ASC
+		`
+	case "azure":
+		query = `
+			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, service_family, NULL
+			FROM azure_compute_prices
+			WHERE vcpu = $1 AND memory_gb = $2 AND region = $3 AND price_per_hour IS NOT NULL
+			ORDER BY price_per_hour ASC
+		`
+	case "gcp":
+		query = `
+			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, NULL, resource_family, usage_type
+			FROM gcp_compute_prices
+			WHERE vcpu = $1 AND memory_gb = $2 AND region = $3 AND price_per_hour IS NOT NULL
+			ORDER BY price_per_hour ASC
+		`
+	default:
+		return nil, fmt.Errorf("unknown provider: %s", provider)
+	}
+
+	rows, err := pool.Query(ctx, query, vcpu, mem, region)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var matches []priceRow
+	for rows.Next() {
+		var r priceRow
+		if err := rows.Scan(
+			&r.SKUID, &r.InstanceType, &r.Region, &r.VCPU, &r.MemoryGB,
+			&r.PriceHour, &r.Currency, &r.Unit, &r.FetchedAt,
+			&r.PurchaseOption, &r.LeaseContractLength, &r.ServiceFamily, &r.UsageType,
+		); err != nil {
+			return nil, err
+		}
+		r.Distance = 0
 		matches = append(matches, r)
 	}
 
@@ -186,8 +522,8 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 	case "aws":
 		query = `
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
-			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as fetched_at,
-			       purchase_option, lease_contract_length, instance_family as service_family, NULL as usage_type,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, instance_family, NULL,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM aws_compute_prices
 			WHERE price_per_hour IS NOT NULL
@@ -197,23 +533,21 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 	case "azure":
 		query = `
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
-			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as fetched_at,
-			       purchase_option, lease_contract_length, service_family, NULL as usage_type,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, service_family, NULL,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM azure_compute_prices
 			WHERE price_per_hour IS NOT NULL
-			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	case "gcp":
 		query = `
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
-			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as fetched_at,
-			       purchase_option, NULL as lease_contract_length, resource_family as service_family, usage_type,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, NULL, resource_family, usage_type,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM gcp_compute_prices
 			WHERE price_per_hour IS NOT NULL
-			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	default:
@@ -222,18 +556,85 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 
 	rows, err := pool.Query(ctx, query, vcpu, mem)
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
 	var matches []priceRow
 	for rows.Next() {
 		var r priceRow
-		err := rows.Scan(&r.SKUID, &r.InstanceType, &r.Region, &r.VCPU, &r.MemoryGB, &r.PriceHour,
-			&r.Currency, &r.Unit, &r.FetchedAt, &r.PurchaseOption, &r.LeaseContractLength,
-			&r.ServiceFamily, &r.UsageType, &r.Distance)
-		if err != nil {
-			return nil, fmt.Errorf("scan failed: %w", err)
+		if err := rows.Scan(
+			&r.SKUID, &r.InstanceType, &r.Region, &r.VCPU, &r.MemoryGB,
+			&r.PriceHour, &r.Currency, &r.Unit, &r.FetchedAt,
+			&r.PurchaseOption, &r.LeaseContractLength, &r.ServiceFamily, &r.UsageType,
+			&r.Distance,
+		); err != nil {
+			return nil, err
+		}
+		matches = append(matches, r)
+	}
+
+	return matches, nil
+}
+
+// Find nearest matches in specific region
+func findNearestMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64, region string) ([]priceRow, error) {
+	query := ""
+
+	switch provider {
+	case "aws":
+		query = `
+			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, instance_family, NULL,
+			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			FROM aws_compute_prices
+			WHERE region = $3 AND price_per_hour IS NOT NULL
+			ORDER BY dist ASC, price_per_hour ASC
+			LIMIT 20
+		`
+	case "azure":
+		query = `
+			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, lease_contract_length, service_family, NULL,
+			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			FROM azure_compute_prices
+			WHERE region = $3 AND price_per_hour IS NOT NULL
+			ORDER BY dist ASC, price_per_hour ASC
+			LIMIT 20
+		`
+	case "gcp":
+		query = `
+			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
+			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       purchase_option, NULL, resource_family, usage_type,
+			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			FROM gcp_compute_prices
+			WHERE region = $3 AND price_per_hour IS NOT NULL
+			ORDER BY dist ASC, price_per_hour ASC
+			LIMIT 20
+		`
+	default:
+		return nil, fmt.Errorf("unknown provider: %s", provider)
+	}
+
+	rows, err := pool.Query(ctx, query, vcpu, mem, region)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []priceRow
+	for rows.Next() {
+		var r priceRow
+		if err := rows.Scan(
+			&r.SKUID, &r.InstanceType, &r.Region, &r.VCPU, &r.MemoryGB,
+			&r.PriceHour, &r.Currency, &r.Unit, &r.FetchedAt,
+			&r.PurchaseOption, &r.LeaseContractLength, &r.ServiceFamily, &r.UsageType,
+			&r.Distance,
+		); err != nil {
+			return nil, err
 		}
 		matches = append(matches, r)
 	}
@@ -356,7 +757,7 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 						strings.Contains(po, "consumption") ||
 						po == "on_demand" ||
 						strings.Contains(po, "on demand") ||
-						po == "" // Sometimes empty means On-Demand
+						po == ""
 				} else {
 					// If no purchase option specified, assume On-Demand
 					isOnDemand = true
@@ -428,7 +829,6 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 }
 
 func isTotalTermCost(pricePerHour float64, unit, leaseLength string) bool {
-
 	if pricePerHour > 100 {
 		return true
 	}
@@ -558,10 +958,9 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 		}
 	}
 
-	//  calculate savings percentages for Reserved instances
+	// Calculate savings percentages for Reserved instances
 	for key, option := range optionMap {
 		if option.Type == "Reserved" && onDemandPrice > 0 {
-
 			if option.PricePerHour > 0 && option.PricePerHour < onDemandPrice {
 				savings := ((onDemandPrice - option.PricePerHour) / onDemandPrice) * 100
 				if savings > 100 {
@@ -571,7 +970,6 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 				}
 				option.SavingPct = math.Round(savings*10) / 10
 			} else if option.PricePerHour > 0 && option.PricePerHour < onDemandPrice*2 {
-
 				savings := ((onDemandPrice - option.PricePerHour) / onDemandPrice) * 100
 				if savings > 0 {
 					option.SavingPct = math.Round(savings*10) / 10
@@ -581,7 +979,6 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 			} else {
 				option.SavingPct = 0
 				if option.MonthlyCost < option.PricePerHour*HoursPerMonth()*0.1 {
-
 					option.Note = "Converted from total term cost"
 				}
 			}

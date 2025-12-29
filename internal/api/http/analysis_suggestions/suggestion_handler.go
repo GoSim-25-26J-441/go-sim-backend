@@ -9,10 +9,11 @@ import (
 )
 
 type SuggestRequest struct {
-	UserID     string            `json:"user_id,omitempty"`
-	Design     rules.DesignInput `json:"design"`
-	Candidates []rules.Candidate `json:"candidates"`
-	RuleFile   string            `json:"rule_file,omitempty"`
+	UserID     string                `json:"user_id,omitempty"`
+	Design     rules.DesignInput     `json:"design"`
+	Simulation rules.SimulationInput `json:"simulation"`
+	Candidates []rules.Candidate     `json:"candidates"`
+	RuleFile   string                `json:"rule_file,omitempty"`
 }
 
 type SuggestResponse struct {
@@ -51,7 +52,7 @@ func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	results, storageID, err := engine.EvaluateAndStore(ctx, req.UserID, req.Design, req.Candidates)
+	results, storageID, err := engine.EvaluateAndStore(ctx, req.UserID, req.Design, req.Simulation, req.Candidates)
 	if err != nil {
 		log.Printf("evaluation/store error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "evaluation/store failed: " + err.Error()})
