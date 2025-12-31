@@ -6,6 +6,7 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/rules"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type SuggestRequest struct {
@@ -24,10 +25,11 @@ type SuggestResponse struct {
 
 type SuggestHandler struct {
 	rulePath string
+	pool     *pgxpool.Pool
 }
 
-func NewSuggestHandler(rulePath string) *SuggestHandler {
-	return &SuggestHandler{rulePath: rulePath}
+func NewSuggestHandler(rulePath string, pool *pgxpool.Pool) *SuggestHandler {
+	return &SuggestHandler{rulePath: rulePath, pool: pool}
 }
 
 func (h *SuggestHandler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -44,7 +46,7 @@ func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
 	if req.RuleFile != "" {
 		ruleFile = req.RuleFile
 	}
-	engine, err := rules.NewEngineFromFile(ruleFile)
+	engine, err := rules.NewEngineFromFile(ruleFile, h.pool)
 	if err != nil {
 		log.Printf("failed to load rules: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load rules: " + err.Error()})

@@ -68,6 +68,7 @@ type CandidateScore struct {
 
 type Engine struct {
 	rules []Rule
+	pool  *pgxpool.Pool
 }
 
 type RequestResponse struct {
@@ -80,7 +81,7 @@ type RequestResponse struct {
 	Response []CandidateScore `json:"response"`
 }
 
-func NewEngineFromFile(path string) (*Engine, error) {
+func NewEngineFromFile(path string, pool *pgxpool.Pool) (*Engine, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -89,7 +90,7 @@ func NewEngineFromFile(path string) (*Engine, error) {
 	if err := json.Unmarshal(b, &rules); err != nil {
 		return nil, err
 	}
-	return &Engine{rules: rules}, nil
+	return &Engine{rules: rules, pool: pool}, nil
 }
 
 func (e *Engine) EvaluateCandidates(design DesignInput, candidates []Candidate) ([]CandidateScore, error) {
@@ -124,18 +125,11 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 		return out, "", fmt.Errorf("no candidates evaluated")
 	}
 	best := out[0]
-
-	dbURL := os.Getenv("DATABASE_URL")
 	id := ""
-
-	if dbURL != "" {
-		pool, err := pgxpool.New(ctx, dbURL)
+	if e.pool != nil {
+		id, err = saveRequestResponseToDB(ctx, e.pool, userID, design, simulation, candidates, out, best)
 		if err == nil {
-			defer pool.Close()
-			id, err = saveRequestResponseToDB(ctx, pool, userID, design, simulation, candidates, out, best)
-			if err == nil {
-				return out, id, nil
-			}
+			return out, id, nil
 		}
 	}
 	u := uuid.New().String()

@@ -73,10 +73,10 @@ func main() {
 		importHandler := as.NewImportHandler()
 		importHandler.RegisterRoutes(api)
 
-		suggestHandler := as.NewSuggestHandler("internal/analysis_suggestions/rules/rules.json")
+		suggestHandler := as.NewSuggestHandler("internal/analysis_suggestions/rules/rules.json", pool)
 		suggestHandler.RegisterRoutes(api)
 
-		costHandler := as.NewCostHandler()
+		costHandler := as.NewCostHandler(pool)
 		costHandler.RegisterRoutes(api)
 
 		reqHandler := as.NewRequestHandler(pool)

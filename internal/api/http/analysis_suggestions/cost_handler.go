@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -23,9 +22,9 @@ type CostResponse struct {
 	StoredAt         string                            `json:"stored_at,omitempty"`
 }
 
-type CostHandler struct{}
+type CostHandler struct{ pool *pgxpool.Pool }
 
-func NewCostHandler() *CostHandler { return &CostHandler{} }
+func NewCostHandler(pool *pgxpool.Pool) *CostHandler { return &CostHandler{pool: pool} }
 
 func (h *CostHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/cost/:id", h.HandleCost)
@@ -36,17 +35,9 @@ func (h *CostHandler) RegisterRoutes(rg *gin.RouterGroup) {
 // GET REGIONS
 func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 	provider := strings.ToLower(c.Param("provider"))
-
-	dbURL := os.Getenv("DATABASE_URL")
 	ctx, cancel := context.WithTimeout(c, 10*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection failed"})
-		return
-	}
-	defer pool.Close()
+	pool := h.pool
 
 	table := map[string]string{
 		"aws":   "aws_compute_prices",
@@ -85,22 +76,14 @@ func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 // Calculation for all providers
 func (h *CostHandler) HandleCost(c *gin.Context) {
 	id := c.Param("id")
-
-	dbURL := os.Getenv("DATABASE_URL")
 	ctx, cancel := context.WithTimeout(c, 15*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection failed"})
-		return
-	}
-	defer pool.Close()
+	pool := h.pool
 
 	var bestJSON, reqJSON []byte
 	var created time.Time
 
-	err = pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, `
 		SELECT best_candidate::text, request::text, created_at 
 		FROM request_responses WHERE id=$1
 	`, id).Scan(&bestJSON, &reqJSON, &created)
@@ -167,22 +150,15 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 		return
 	}
 
-	dbURL := os.Getenv("DATABASE_URL")
 	ctx, cancel := context.WithTimeout(c, 15*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection failed"})
-		return
-	}
-	defer pool.Close()
+	pool := h.pool
 
 	// Read best_candidate JSON
 	var bestJSON, reqJSON []byte
 	var created time.Time
 
-	err = pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, `
 		SELECT best_candidate::text, request::text, created_at 
 		FROM request_responses WHERE id=$1
 	`, id).Scan(&bestJSON, &reqJSON, &created)
