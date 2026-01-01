@@ -46,6 +46,16 @@ func AnalyzeYAML(path string, outDir string, title string, dotBin string) (*Resu
 		all = append(all, ds...)
 	}
 
+	for i := range all {
+		if all[i].Nodes == nil {
+			all[i].Nodes = []string{}
+		}
+		if all[i].Edges == nil {
+			all[i].Edges = []int{}
+		}
+	}
+
+
 	res := &Result{Graph: g, DOTPath: dotPath, SVGPath: svgPath, Detections: all}
 
 	// NEW: persist full analysis in both JSON & YAML
