@@ -1,0 +1,83 @@
+services:
+  - name: api-gateway
+    calls:
+      - to: order-service
+        endpoints: ["POST /orders"]
+        rate_per_min: 300
+
+  # ✅ This one will have 4 anti-patterns:
+  # god_service + chatty_calls + tight_coupling + cycles
+  - name: order-service
+    calls:
+      # chatty_calls + tight_coupling with inventory-service
+      - to: inventory-service
+        endpoints: ["GET /inventory/:sku"]
+        rate_per_min: 950
+
+      # god_service (many dependencies)
+      - to: user-service
+        endpoints: ["GET /users/:id"]
+        rate_per_min: 260
+      - to: billing-service
+        endpoints: ["POST /bill"]
+        rate_per_min: 360
+      - to: notification-service
+        endpoints: ["POST /notify"]
+        rate_per_min: 220
+      - to: search-service
+        endpoints: ["GET /search/recommendations"]
+        rate_per_min: 180
+
+    databases:
+      reads: [orders-db, users-db]
+      writes: [orders-db] # owner inferred as writer (orders-db owned by order-service)
+
+  # ✅ Makes: tight_coupling + shared_db_writes + cross_db_read, and helps form cycles
+  - name: inventory-service
+    calls:
+      # tight_coupling (back edge) + helps create cycle
+      - to: order-service
+        endpoints: ["POST /inventory/reserve"]
+        rate_per_min: 820
+
+      # helps create cycle
+      - to: billing-service
+        endpoints: ["POST /bill/inventory-fee"]
+        rate_per_min: 320
+
+    databases:
+      # cross_db_read: reads orders-db owned by order-service
+      reads: [orders-db]
+      # shared_db_writes: also writes orders-db (multiple writers)
+      writes: [orders-db]
+
+  # ✅ Completes the service cycle:
+  # order-service → inventory-service → billing-service → order-service
+  - name: billing-service
+    calls:
+      - to: order-service
+        endpoints: ["POST /orders/confirm"]
+        rate_per_min: 260
+    databases:
+      reads: [payments-db]
+      writes: [payments-db]
+
+  - name: user-service
+    databases:
+      reads: [users-db]
+      writes: []
+
+  - name: notification-service
+    databases:
+      reads: []
+      writes: []
+
+  - name: search-service
+    databases:
+      reads: []
+      writes: []
+
+databases:
+  - name: orders-db
+  - name: payments-db
+  - name: users-db

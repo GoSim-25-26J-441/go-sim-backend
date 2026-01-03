@@ -1,1 +1,121 @@
-package architecture_modelling_antipattaren_detection
+package suggestion
+
+import (
+	"sort"
+
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/parser"
+)
+
+type Suggestion struct {
+	Kind           domain.AntiPatternKind `json:"kind" yaml:"kind"`
+	Title          string                 `json:"title" yaml:"title"`
+	Bullets        []string               `json:"bullets" yaml:"bullets"`
+
+	// Filled only when "apply" is used
+	AutoFixApplied bool     `json:"auto_fix_applied" yaml:"auto_fix_applied"`
+	AutoFixNotes   []string `json:"auto_fix_notes,omitempty" yaml:"auto_fix_notes,omitempty"`
+}
+
+type Strategy interface {
+	Kind() domain.AntiPatternKind
+	Suggest(g *domain.Graph, det domain.Detection) Suggestion
+	Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (changed bool, notes []string)
+}
+
+var strategies []Strategy
+
+func Register(s Strategy) { strategies = append(strategies, s) }
+
+func findStrategy(kind domain.AntiPatternKind) Strategy {
+	for _, s := range strategies {
+		if s.Kind() == kind {
+			return s
+		}
+	}
+	return nil
+}
+
+func severityWeight(s domain.Severity) int {
+	switch s {
+	case domain.SeverityHigh:
+		return 3
+	case domain.SeverityMedium:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// BuildSuggestions returns simple bullet-point guidance for current detections
+func BuildSuggestions(g *domain.Graph, dets []domain.Detection) []Suggestion {
+	// High severity first, then stable order by kind
+	tmp := make([]domain.Detection, 0, len(dets))
+	tmp = append(tmp, dets...)
+	sort.SliceStable(tmp, func(i, j int) bool {
+		wi := severityWeight(tmp[i].Severity)
+		wj := severityWeight(tmp[j].Severity)
+		if wi != wj {
+			return wi > wj
+		}
+		return string(tmp[i].Kind) < string(tmp[j].Kind)
+	})
+
+	out := make([]Suggestion, 0, len(tmp))
+	seen := map[string]bool{} // de-dup same kind + same nodes
+	for _, d := range tmp {
+		key := string(d.Kind) + "|" + join(d.Nodes, ",")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		s := findStrategy(d.Kind)
+		if s == nil {
+			out = append(out, Suggestion{
+				Kind:    d.Kind,
+				Title:   d.Title,
+				Bullets: []string{"No suggestion strategy found for this anti-pattern yet."},
+			})
+			continue
+		}
+		out = append(out, s.Suggest(g, d))
+	}
+	return out
+}
+
+// ApplyFixesYAMLBytes applies heuristic auto-fixes and returns (fixedYamlBytes, appliedSuggestions)
+func ApplyFixesYAMLBytes(yamlBytes []byte, g *domain.Graph, dets []domain.Detection) ([]byte, []Suggestion, error) {
+	spec, err := parser.ParseYAMLBytes(yamlBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Apply high severity first
+	tmp := make([]domain.Detection, 0, len(dets))
+	tmp = append(tmp, dets...)
+	sort.SliceStable(tmp, func(i, j int) bool {
+		return severityWeight(tmp[i].Severity) > severityWeight(tmp[j].Severity)
+	})
+
+	var applied []Suggestion
+	for _, d := range tmp {
+		s := findStrategy(d.Kind)
+		if s == nil {
+			continue
+		}
+		changed, notes := s.Apply(spec, g, d)
+		if changed {
+			ss := s.Suggest(g, d)
+			ss.AutoFixApplied = true
+			ss.AutoFixNotes = notes
+			applied = append(applied, ss)
+		}
+	}
+
+	b, err := marshalSpec(spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, applied, nil
+}

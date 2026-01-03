@@ -12,60 +12,82 @@ func idify(kind domain.NodeKind, name string) string {
 	return fmt.Sprintf("%s:%s", kind, strings.ToLower(name))
 }
 
+func ensureNode(g *domain.Graph, kind domain.NodeKind, name string) string {
+	id := idify(kind, name)
+	if _, ok := g.Nodes[id]; !ok {
+		g.AddNode(&domain.Node{
+			ID:   id,
+			Name: name,
+			Kind: kind,
+		})
+	}
+	return id
+}
+
 func ToGraph(s *parser.YSpec) *domain.Graph {
 	g := domain.NewGraph()
 
-	// DB nodes
+	// DB nodes (declared)
 	for _, d := range s.Databases {
-		g.AddNode(&domain.Node{
-			ID:   idify(domain.NodeDB, d.Name),
-			Name: d.Name, Kind: domain.NodeDB,
-		})
+		_ = ensureNode(g, domain.NodeDB, d.Name)
 	}
 
-	// Service nodes
+	// Service nodes (declared)
 	for _, svc := range s.Services {
-		g.AddNode(&domain.Node{
-			ID: idify(domain.NodeService, svc.Name),
-			Name: svc.Name, Kind: domain.NodeService,
-		})
+		_ = ensureNode(g, domain.NodeService, svc.Name)
 	}
 
-	// Service edges (calls)
+	// Edges + implied nodes (for edited YAML that references undeclared items)
 	for _, svc := range s.Services {
-		from := idify(domain.NodeService, svc.Name)
+		from := ensureNode(g, domain.NodeService, svc.Name)
+
+		// Service edges (calls)
 		for _, c := range svc.Calls {
-			to := idify(domain.NodeService, c.To)
+			to := ensureNode(g, domain.NodeService, c.To)
 			g.AddEdge(&domain.Edge{
-				From: from, To: to, Kind: domain.EdgeCalls,
+				From: from,
+				To:   to,
+				Kind: domain.EdgeCalls,
 				Attrs: domain.Attrs{
-					"endpoints":     c.Endpoints,
-					"rate_per_min":  c.RatePerMin,
-					"per_item":      c.PerItem,
-					"count":         len(c.Endpoints),
+					"endpoints":    c.Endpoints,
+					"rate_per_min": c.RatePerMin,
+					"per_item":     c.PerItem,
+					"count":        len(c.Endpoints),
 				},
 			})
 		}
+
 		// DB reads
 		for _, db := range svc.Databases.Reads {
-			to := idify(domain.NodeDB, db)
+			to := ensureNode(g, domain.NodeDB, db)
 			g.AddEdge(&domain.Edge{
-				From: from, To: to, Kind: domain.EdgeReads,
+				From: from,
+				To:   to,
+				Kind: domain.EdgeReads,
 			})
 		}
+
 		// DB writes
 		for _, db := range svc.Databases.Writes {
-			to := idify(domain.NodeDB, db)
+			to := ensureNode(g, domain.NodeDB, db)
 			g.AddEdge(&domain.Edge{
-				From: from, To: to, Kind: domain.EdgeWrites,
-				Attrs: domain.Attrs{"owner": true},
+				From: from,
+				To:   to,
+				Kind: domain.EdgeWrites,
+				Attrs: domain.Attrs{
+					"owner": true,
+				},
 			})
-			// mark DB node owner=true for convenience
+
+			// mark DB node owner=svc.Name for convenience
 			if n, ok := g.Nodes[to]; ok {
-				if n.Attrs == nil { n.Attrs = domain.Attrs{} }
+				if n.Attrs == nil {
+					n.Attrs = domain.Attrs{}
+				}
 				n.Attrs["owner"] = svc.Name
 			}
 		}
 	}
+
 	return g
 }

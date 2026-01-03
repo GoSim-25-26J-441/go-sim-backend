@@ -21,31 +21,63 @@ type Result struct {
 	Detections []domain.Detection `json:"detections" yaml:"detections"`
 }
 
+// Existing behavior: writes fixed filenames into outDir.
 func AnalyzeYAML(path string, outDir string, title string, dotBin string) (*Result, error) {
 	ys, err := parser.ParseYAML(path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	g := mapper.ToGraph(ys)
+	return analyzeGraphToDir(g, outDir, title, dotBin)
+}
 
-	if outDir == "" { outDir = "out" }
+// New: analyze from YAML bytes into a specific directory (good for versioning/multiple tabs)
+func AnalyzeYAMLBytesToDir(yamlBytes []byte, outDir string, title string, dotBin string) (*Result, error) {
+	ys, err := parser.ParseYAMLBytes(yamlBytes)
+	if err != nil {
+		return nil, err
+	}
+	g := mapper.ToGraph(ys)
+	return analyzeGraphToDir(g, outDir, title, dotBin)
+}
+
+// New: analyze from YAML bytes into a unique run folder under outBaseDir/runs/<id>
+func AnalyzeYAMLBytes(yamlBytes []byte, outBaseDir string, title string, dotBin string) (*Result, error) {
+	if outBaseDir == "" {
+		outBaseDir = "out"
+	}
+	runDir := filepath.Join(outBaseDir, "runs", utils.NewID())
+	return AnalyzeYAMLBytesToDir(yamlBytes, runDir, title, dotBin)
+}
+
+func analyzeGraphToDir(g *domain.Graph, outDir string, title string, dotBin string) (*Result, error) {
+	if outDir == "" {
+		outDir = "out"
+	}
 	_ = os.MkdirAll(outDir, 0755)
 
 	// export DOT/SVG
 	dot := export.ToDOT(g, title)
 	dotPath := filepath.Join(outDir, "graph.dot")
-	if err := utils.WriteFile(dotPath, dot); err != nil { return nil, err }
+	if err := utils.WriteFile(dotPath, dot); err != nil {
+		return nil, err
+	}
+
 	svgPath := filepath.Join(outDir, "graph.svg")
-	if dotBin == "" { dotBin = "dot" } // safe default
+	if dotBin == "" {
+		dotBin = "dot" // safe default
+	}
 	if err := utils.DotTo(dotPath, svgPath, "svg", dotBin); err != nil {
 		return nil, fmt.Errorf("graphviz render: %w", err)
 	}
 
 	// detection
-	var all []domain.Detection
-	for _, d := range detection.All() {
-		ds, err := d.Detect(g); if err != nil { return nil, err }
-		all = append(all, ds...)
+	all, err := detection.RunAll(g)
+	if err != nil {
+		return nil, err
 	}
 
+	// normalize empty slices for frontend stability
 	for i := range all {
 		if all[i].Nodes == nil {
 			all[i].Nodes = []string{}
@@ -55,12 +87,15 @@ func AnalyzeYAML(path string, outDir string, title string, dotBin string) (*Resu
 		}
 	}
 
-
 	res := &Result{Graph: g, DOTPath: dotPath, SVGPath: svgPath, Detections: all}
 
-	// NEW: persist full analysis in both JSON & YAML
-	if err := export.WriteJSON(filepath.Join(outDir, "analysis.json"), res); err != nil { return nil, err }
-	if err := export.WriteYAML(filepath.Join(outDir, "analysis.yaml"), res); err != nil { return nil, err }
+	// persist full analysis in both JSON & YAML
+	if err := export.WriteJSON(filepath.Join(outDir, "analysis.json"), res); err != nil {
+		return nil, err
+	}
+	if err := export.WriteYAML(filepath.Join(outDir, "analysis.yaml"), res); err != nil {
+		return nil, err
+	}
 
 	return res, nil
 }

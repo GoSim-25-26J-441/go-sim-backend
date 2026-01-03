@@ -32,6 +32,16 @@
         "name": "billing-service",
         "kind": "SERVICE"
       },
+      "SERVICE:new-service-1": {
+        "id": "SERVICE:new-service-1",
+        "name": "new-service-1",
+        "kind": "SERVICE"
+      },
+      "SERVICE:new-service-2": {
+        "id": "SERVICE:new-service-2",
+        "name": "new-service-2",
+        "kind": "SERVICE"
+      },
       "SERVICE:payment-service": {
         "id": "SERVICE:payment-service",
         "name": "payment-service",
@@ -71,22 +81,31 @@
         }
       },
       {
-        "from": "SERVICE:user-service",
-        "to": "SERVICE:auth-service",
+        "from": "SERVICE:api-gateway",
+        "to": "SERVICE:new-service-2",
         "kind": "CALLS",
         "attrs": {
-          "count": 1,
+          "count": 15,
           "endpoints": [
-            "POST /verify"
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15"
           ],
           "per_item": false,
-          "rate_per_min": 600
+          "rate_per_min": 500
         }
-      },
-      {
-        "from": "SERVICE:user-service",
-        "to": "DATABASE:users-db",
-        "kind": "READS"
       },
       {
         "from": "SERVICE:auth-service",
@@ -125,6 +144,78 @@
         "kind": "WRITES",
         "attrs": {
           "owner": true
+        }
+      },
+      {
+        "from": "SERVICE:user-service",
+        "to": "SERVICE:auth-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /verify"
+          ],
+          "per_item": false,
+          "rate_per_min": 600
+        }
+      },
+      {
+        "from": "SERVICE:user-service",
+        "to": "DATABASE:users-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:new-service-2",
+        "to": "SERVICE:new-service-1",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 15,
+          "endpoints": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15"
+          ],
+          "per_item": false,
+          "rate_per_min": 500
+        }
+      },
+      {
+        "from": "SERVICE:new-service-1",
+        "to": "SERVICE:api-gateway",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 15,
+          "endpoints": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15"
+          ],
+          "per_item": false,
+          "rate_per_min": 500
         }
       }
     ]
@@ -172,15 +263,15 @@
       "title": "Chatty call",
       "summary": "High-frequency or per-item chattiness between services",
       "nodes": [
-        "SERVICE:user-service",
-        "SERVICE:auth-service"
+        "SERVICE:api-gateway",
+        "SERVICE:new-service-2"
       ],
       "edges": [
         2
       ],
       "evidence": {
         "per_item": false,
-        "rate_per_min": 600
+        "rate_per_min": 500
       }
     },
     {
@@ -193,7 +284,58 @@
         "SERVICE:payment-service"
       ],
       "edges": [
-        6
+        5
+      ],
+      "evidence": {
+        "per_item": false,
+        "rate_per_min": 500
+      }
+    },
+    {
+      "kind": "chatty_calls",
+      "severity": "MEDIUM",
+      "title": "Chatty call",
+      "summary": "High-frequency or per-item chattiness between services",
+      "nodes": [
+        "SERVICE:user-service",
+        "SERVICE:auth-service"
+      ],
+      "edges": [
+        8
+      ],
+      "evidence": {
+        "per_item": false,
+        "rate_per_min": 600
+      }
+    },
+    {
+      "kind": "chatty_calls",
+      "severity": "MEDIUM",
+      "title": "Chatty call",
+      "summary": "High-frequency or per-item chattiness between services",
+      "nodes": [
+        "SERVICE:new-service-2",
+        "SERVICE:new-service-1"
+      ],
+      "edges": [
+        10
+      ],
+      "evidence": {
+        "per_item": false,
+        "rate_per_min": 500
+      }
+    },
+    {
+      "kind": "chatty_calls",
+      "severity": "MEDIUM",
+      "title": "Chatty call",
+      "summary": "High-frequency or per-item chattiness between services",
+      "nodes": [
+        "SERVICE:new-service-1",
+        "SERVICE:api-gateway"
+      ],
+      "edges": [
+        11
       ],
       "evidence": {
         "per_item": false,
@@ -206,15 +348,15 @@
       "title": "Cross-DB read",
       "summary": "Service reads DB owned by another service",
       "nodes": [
-        "SERVICE:user-service",
-        "DATABASE:users-db"
+        "SERVICE:billing-service",
+        "DATABASE:payments-db"
       ],
       "edges": [
-        3
+        6
       ],
       "evidence": {
-        "owner": "auth-service",
-        "reader": "user-service"
+        "owner": "payment-service",
+        "reader": "billing-service"
       }
     },
     {
@@ -223,16 +365,28 @@
       "title": "Cross-DB read",
       "summary": "Service reads DB owned by another service",
       "nodes": [
-        "SERVICE:billing-service",
-        "DATABASE:payments-db"
+        "SERVICE:user-service",
+        "DATABASE:users-db"
       ],
       "edges": [
-        7
+        9
       ],
       "evidence": {
-        "owner": "payment-service",
-        "reader": "billing-service"
+        "owner": "auth-service",
+        "reader": "user-service"
       }
+    },
+    {
+      "kind": "cycles",
+      "severity": "HIGH",
+      "title": "Cyclic dependency",
+      "summary": "Services mutually depend on each other",
+      "nodes": [
+        "SERVICE:new-service-1",
+        "SERVICE:new-service-2",
+        "SERVICE:api-gateway"
+      ],
+      "edges": []
     }
   ]
 }
