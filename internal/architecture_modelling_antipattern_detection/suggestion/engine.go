@@ -64,7 +64,9 @@ func BuildSuggestions(g *domain.Graph, dets []domain.Detection) []Suggestion {
 	out := make([]Suggestion, 0, len(tmp))
 	seen := map[string]bool{} // de-dup same kind + same nodes
 	for _, d := range tmp {
-		key := string(d.Kind) + "|" + join(d.Nodes, ",")
+		nodesKey := append([]string{}, d.Nodes...)
+		sort.Strings(nodesKey)
+		key := string(d.Kind) + "|" + join(nodesKey, ",")
 		if seen[key] {
 			continue
 		}

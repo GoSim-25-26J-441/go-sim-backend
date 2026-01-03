@@ -1,0 +1,36 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:order-service_split" [label="order-service_split", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:orders-db" [label="orders-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "DATABASE:orders-db_order-service" [label="orders-db_order-service", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:api-gateway" [label="api-gateway", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:order-service" [label="order-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:user-service" [label="user-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:payments-db" [label="payments-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "DATABASE:users-db" [label="users-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "DATABASE:orders-db_inventory-service" [label="orders-db_inventory-service", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:inventory-service" [label="inventory-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:billing-service" [label="billing-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:notification-service" [label="notification-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:search-service" [label="search-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:api-gateway" -> "SERVICE:order-service" [label="calls (1 ep), 30rpm", tooltip="edge#0"];
+  "SERVICE:order-service" -> "SERVICE:inventory-service" [label="calls (1 ep), 95rpm", tooltip="edge#1"];
+  "SERVICE:order-service" -> "SERVICE:user-service" [label="calls (1 ep), 260rpm", tooltip="edge#2"];
+  "SERVICE:order-service" -> "SERVICE:order-service_split" [label="calls (1 ep), 30rpm", tooltip="edge#3"];
+  "SERVICE:order-service" -> "SERVICE:notification-service" [label="calls (1 ep), 220rpm", tooltip="edge#4"];
+  "SERVICE:order-service" -> "SERVICE:search-service" [label="calls (1 ep), 180rpm", tooltip="edge#5"];
+  "SERVICE:order-service" -> "DATABASE:users-db" [label="READS", tooltip="edge#6"];
+  "SERVICE:order-service" -> "DATABASE:orders-db_order-service" [label="WRITES", tooltip="edge#7"];
+  "SERVICE:inventory-service" -> "SERVICE:billing-service" [label="calls (1 ep), 32rpm", tooltip="edge#8"];
+  "SERVICE:inventory-service" -> "DATABASE:orders-db" [label="READS", tooltip="edge#9"];
+  "SERVICE:inventory-service" -> "DATABASE:orders-db_inventory-service" [label="WRITES", tooltip="edge#10"];
+  "SERVICE:billing-service" -> "SERVICE:order-service" [label="calls (1 ep), 260rpm", tooltip="edge#11"];
+  "SERVICE:billing-service" -> "DATABASE:payments-db" [label="READS", tooltip="edge#12"];
+  "SERVICE:billing-service" -> "DATABASE:payments-db" [label="WRITES", tooltip="edge#13"];
+  "SERVICE:user-service" -> "DATABASE:users-db" [label="READS", tooltip="edge#14"];
+  "SERVICE:order-service_split" -> "SERVICE:billing-service" [label="calls (1 ep), 36rpm", tooltip="edge#15"];
+  "SERVICE:order-service_split" -> "SERVICE:notification-service" [label="calls (1 ep), 220rpm", tooltip="edge#16"];
+  "SERVICE:order-service_split" -> "SERVICE:search-service" [label="calls (1 ep), 180rpm", tooltip="edge#17"];
+}

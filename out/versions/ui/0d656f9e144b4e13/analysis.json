@@ -1,0 +1,246 @@
+{
+  "graph": {
+    "nodes": {
+      "DATABASE:orders-db": {
+        "id": "DATABASE:orders-db",
+        "name": "orders-db",
+        "kind": "DATABASE"
+      },
+      "DATABASE:orders-db_inventory-service": {
+        "id": "DATABASE:orders-db_inventory-service",
+        "name": "orders-db_inventory-service",
+        "kind": "DATABASE",
+        "attrs": {
+          "owner": "inventory-service"
+        }
+      },
+      "DATABASE:orders-db_order-service": {
+        "id": "DATABASE:orders-db_order-service",
+        "name": "orders-db_order-service",
+        "kind": "DATABASE",
+        "attrs": {
+          "owner": "order-service"
+        }
+      },
+      "DATABASE:payments-db": {
+        "id": "DATABASE:payments-db",
+        "name": "payments-db",
+        "kind": "DATABASE",
+        "attrs": {
+          "owner": "billing-service"
+        }
+      },
+      "DATABASE:users-db": {
+        "id": "DATABASE:users-db",
+        "name": "users-db",
+        "kind": "DATABASE"
+      },
+      "SERVICE:api-gateway": {
+        "id": "SERVICE:api-gateway",
+        "name": "api-gateway",
+        "kind": "SERVICE"
+      },
+      "SERVICE:billing-service": {
+        "id": "SERVICE:billing-service",
+        "name": "billing-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:inventory-service": {
+        "id": "SERVICE:inventory-service",
+        "name": "inventory-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:notification-service": {
+        "id": "SERVICE:notification-service",
+        "name": "notification-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:order-service": {
+        "id": "SERVICE:order-service",
+        "name": "order-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:order-service_split": {
+        "id": "SERVICE:order-service_split",
+        "name": "order-service_split",
+        "kind": "SERVICE"
+      },
+      "SERVICE:search-service": {
+        "id": "SERVICE:search-service",
+        "name": "search-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:user-service": {
+        "id": "SERVICE:user-service",
+        "name": "user-service",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:api-gateway",
+        "to": "SERVICE:order-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /orders"
+          ],
+          "per_item": false,
+          "rate_per_min": 30
+        }
+      },
+      {
+        "from": "SERVICE:order-service",
+        "to": "SERVICE:inventory-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "GET /inventory/:sku"
+          ],
+          "per_item": false,
+          "rate_per_min": 95
+        }
+      },
+      {
+        "from": "SERVICE:order-service",
+        "to": "SERVICE:user-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "GET /users/:id"
+          ],
+          "per_item": false,
+          "rate_per_min": 260
+        }
+      },
+      {
+        "from": "SERVICE:order-service",
+        "to": "SERVICE:order-service_split",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /delegate"
+          ],
+          "per_item": false,
+          "rate_per_min": 30
+        }
+      },
+      {
+        "from": "SERVICE:order-service",
+        "to": "SERVICE:notification-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /notify"
+          ],
+          "per_item": false,
+          "rate_per_min": 220
+        }
+      },
+      {
+        "from": "SERVICE:order-service",
+        "to": "SERVICE:search-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "GET /search/recommendations"
+          ],
+          "per_item": false,
+          "rate_per_min": 180
+        }
+      },
+      {
+        "from": "SERVICE:order-service",
+        "to": "DATABASE:users-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:order-service",
+        "to": "DATABASE:orders-db_order-service",
+        "kind": "WRITES",
+        "attrs": {
+          "owner": true
+        }
+      },
+      {
+        "from": "SERVICE:inventory-service",
+        "to": "SERVICE:billing-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /bill/inventory-fee"
+          ],
+          "per_item": false,
+          "rate_per_min": 32
+        }
+      },
+      {
+        "from": "SERVICE:inventory-service",
+        "to": "DATABASE:orders-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:inventory-service",
+        "to": "DATABASE:orders-db_inventory-service",
+        "kind": "WRITES",
+        "attrs": {
+          "owner": true
+        }
+      },
+      {
+        "from": "SERVICE:billing-service",
+        "to": "DATABASE:payments-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:billing-service",
+        "to": "DATABASE:payments-db",
+        "kind": "WRITES",
+        "attrs": {
+          "owner": true
+        }
+      },
+      {
+        "from": "SERVICE:user-service",
+        "to": "DATABASE:users-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:order-service_split",
+        "to": "SERVICE:notification-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /notify"
+          ],
+          "per_item": false,
+          "rate_per_min": 220
+        }
+      },
+      {
+        "from": "SERVICE:order-service_split",
+        "to": "SERVICE:search-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "GET /search/recommendations"
+          ],
+          "per_item": false,
+          "rate_per_min": 180
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/versions/ui/0d656f9e144b4e13/graph.dot",
+  "svg_path": "/app/out/versions/ui/0d656f9e144b4e13/graph.svg",
+  "detections": null
+}

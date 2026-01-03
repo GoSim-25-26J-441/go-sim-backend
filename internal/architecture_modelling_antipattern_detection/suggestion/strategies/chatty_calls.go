@@ -19,20 +19,41 @@ func (chattyCalls) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sug
 		from = nodeName(g, det.Nodes[0])
 		to = nodeName(g, det.Nodes[1])
 	}
+
 	title := "Reduce chatty calls"
 	if from != "" && to != "" {
 		title = fmt.Sprintf("Reduce chatty calls (%s → %s)", from, to)
 	}
+
+	// Pull details if available
+	rpm, eps, ok := findCallEdgeBetween(g, from, to)
+
+	bullets := []string{}
+	if from != "" && to != "" {
+		if ok {
+			bullets = append(bullets,
+				fmt.Sprintf("Detected frequent small calls from %s → %s (%d endpoints, ~%d rpm).", from, to, eps, rpm),
+			)
+		} else {
+			bullets = append(bullets,
+				fmt.Sprintf("Detected frequent small calls from %s → %s.", from, to),
+			)
+		}
+	}
+
+	bullets = append(bullets,
+		"Fix idea: batch requests (fewer, larger requests) instead of calling per item in a loop.",
+		"Fix idea: cache results where possible so the same data isn’t requested repeatedly.",
+		"Auto-fix preview: we will disable per-item calling and reduce rate_per_min for "+from+" → "+to+" (then re-run detection).",
+	)
+
 	return suggestion.Suggestion{
-		Kind:  det.Kind,
-		Title: title,
-		Bullets: []string{
-			"Too many small calls are happening between these services.",
-			"Batch requests (send fewer, bigger requests) instead of per-item calls.",
-			"Add caching where possible and avoid calling for each item in a loop.",
-		},
+		Kind:    det.Kind,
+		Title:   title,
+		Bullets: bullets,
 	}
 }
+
 
 func (chattyCalls) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
 	if len(det.Nodes) < 2 {

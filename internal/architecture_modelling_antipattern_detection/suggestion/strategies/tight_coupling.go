@@ -19,20 +19,39 @@ func (tightCoupling) Suggest(g *domain.Graph, det domain.Detection) suggestion.S
 		a = nodeName(g, det.Nodes[0])
 		b = nodeName(g, det.Nodes[1])
 	}
+
 	title := "Reduce tight coupling"
 	if a != "" && b != "" {
 		title = fmt.Sprintf("Reduce tight coupling (%s ↔ %s)", a, b)
 	}
+
+	rpmAB, epsAB, okAB := findCallEdgeBetween(g, a, b)
+	rpmBA, epsBA, okBA := findCallEdgeBetween(g, b, a)
+
+	bullets := []string{
+		fmt.Sprintf("Detected strong two-way dependency between %s and %s.", a, b),
+	}
+
+	if okAB {
+		bullets = append(bullets, fmt.Sprintf("%s → %s: %d endpoints, ~%d rpm.", a, b, epsAB, rpmAB))
+	}
+	if okBA {
+		bullets = append(bullets, fmt.Sprintf("%s → %s: %d endpoints, ~%d rpm.", b, a, epsBA, rpmBA))
+	}
+
+	bullets = append(bullets,
+		"Fix idea: remove bidirectional calls where possible — keep one direction as events (pub/sub) or use a single owning service.",
+		"Fix idea: extract shared logic into a separate service/module so changes don’t ripple between both services.",
+		"Auto-fix preview: we will shrink call edges by keeping 1 endpoint and reducing rate_per_min on "+a+" → "+b+" and "+b+" → "+a+" (then re-run detection).",
+	)
+
 	return suggestion.Suggestion{
-		Kind:  det.Kind,
-		Title: title,
-		Bullets: []string{
-			"These two services depend on each other too much (too much back-and-forth).",
-			"Try to move shared logic/data into a separate service or shared module.",
-			"Reduce bi-directional calls: batch, cache, or replace one direction with events.",
-		},
+		Kind:    det.Kind,
+		Title:   title,
+		Bullets: bullets,
 	}
 }
+
 
 func (tightCoupling) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
 	if len(det.Nodes) < 2 {

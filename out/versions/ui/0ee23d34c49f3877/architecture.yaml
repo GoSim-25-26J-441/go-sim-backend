@@ -1,0 +1,104 @@
+services:
+    - name: api-gateway
+      calls:
+        - to: order-service
+          endpoints:
+            - POST /orders
+          rate_per_min: 30
+          per_item: false
+      databases:
+        reads: []
+        writes: []
+    - name: order-service
+      calls:
+        - to: inventory-service
+          endpoints:
+            - GET /inventory/:sku
+          rate_per_min: 95
+          per_item: false
+        - to: user-service
+          endpoints:
+            - GET /users/:id
+          rate_per_min: 260
+          per_item: false
+        - to: order-service_split
+          endpoints:
+            - POST /delegate
+          rate_per_min: 30
+          per_item: false
+        - to: notification-service
+          endpoints:
+            - POST /notify
+          rate_per_min: 220
+          per_item: false
+        - to: search-service
+          endpoints:
+            - GET /search/recommendations
+          rate_per_min: 180
+          per_item: false
+      databases:
+        reads:
+            - users-db
+        writes:
+            - orders-db_order-service
+    - name: inventory-service
+      calls:
+        - to: billing-service
+          endpoints:
+            - POST /bill/inventory-fee
+          rate_per_min: 32
+          per_item: false
+      databases:
+        reads:
+            - orders-db
+        writes:
+            - orders-db_inventory-service
+    - name: billing-service
+      calls:
+        - to: order-service
+          endpoints:
+            - POST /orders/confirm
+          rate_per_min: 260
+          per_item: false
+      databases:
+        reads:
+            - payments-db
+        writes:
+            - payments-db
+    - name: user-service
+      calls: []
+      databases:
+        reads:
+            - users-db
+        writes: []
+    - name: notification-service
+      calls: []
+      databases:
+        reads: []
+        writes: []
+    - name: search-service
+      calls: []
+      databases:
+        reads: []
+        writes: []
+    - name: order-service_split
+      calls:
+        - to: notification-service
+          endpoints:
+            - POST /notify
+          rate_per_min: 220
+          per_item: false
+        - to: search-service
+          endpoints:
+            - GET /search/recommendations
+          rate_per_min: 180
+          per_item: false
+      databases:
+        reads: []
+        writes: []
+databases:
+    - name: orders-db
+    - name: payments-db
+    - name: users-db
+    - name: orders-db_order-service
+    - name: orders-db_inventory-service

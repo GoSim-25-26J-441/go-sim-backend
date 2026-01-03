@@ -1,0 +1,52 @@
+{
+  "graph": {
+    "nodes": {
+      "SERVICE:service-a": {
+        "id": "SERVICE:service-a",
+        "name": "service-a",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service-b": {
+        "id": "SERVICE:service-b",
+        "name": "service-b",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service-c": {
+        "id": "SERVICE:service-c",
+        "name": "service-c",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:service-a",
+        "to": "SERVICE:service-b",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "GET /b"
+          ],
+          "per_item": false,
+          "rate_per_min": 10
+        }
+      },
+      {
+        "from": "SERVICE:service-b",
+        "to": "SERVICE:service-c",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "GET /c"
+          ],
+          "per_item": false,
+          "rate_per_min": 10
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/versions/ui/48b2d901ec4f47d8/graph.dot",
+  "svg_path": "/app/out/versions/ui/48b2d901ec4f47d8/graph.svg",
+  "detections": null
+}

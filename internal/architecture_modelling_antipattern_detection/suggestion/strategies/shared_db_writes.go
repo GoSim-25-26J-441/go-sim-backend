@@ -13,16 +13,52 @@ type sharedDBWrites struct{}
 func (sharedDBWrites) Kind() domain.AntiPatternKind { return domain.APSharedDBWrites }
 
 func (sharedDBWrites) Suggest(g *domain.Graph, det domain.Detection) suggestion.Suggestion {
-	return suggestion.Suggestion{
-		Kind:  det.Kind,
-		Title: "Give each service its own database",
-		Bullets: []string{
+	dbName := ""
+	if len(det.Nodes) >= 1 {
+		dbName = nodeName(g, det.Nodes[0])
+	}
+
+	writers := []string{}
+	if len(det.Nodes) >= 2 {
+		for _, w := range det.Nodes[1:] {
+			writers = append(writers, nodeName(g, w))
+		}
+	}
+
+	title := "Give each service its own database"
+	if dbName != "" && len(writers) > 0 {
+		title = fmt.Sprintf("Stop multiple writers to %s (%d writers)", dbName, len(writers))
+	}
+
+	bullets := []string{}
+	if dbName != "" && len(writers) > 0 {
+		bullets = append(bullets,
+			fmt.Sprintf("Detected shared DB writes: %s is written by %s.", dbName, joinNice(writers)),
+			"Why it matters: multi-writes can cause data corruption, conflicting transactions, and unclear ownership.",
+			"Auto-fix preview: create a dedicated DB per writer and move writes away from "+dbName+".",
+		)
+		// preview names
+		for _, w := range writers {
+			bullets = append(bullets, fmt.Sprintf("• %s will write to: %s_%s", w, dbName, w))
+		}
+	} else {
+		bullets = append(bullets,
 			"More than one service is writing to the same database.",
-			"Give each service its own database (database ownership per service).",
-			"Share data via APIs/events instead of direct multi-writes to one DB.",
-		},
+			"Auto-fix preview: create dedicated DBs and move writes per service.",
+		)
+	}
+
+	bullets = append(bullets,
+		"Recommended: share data via APIs/events instead of allowing many services to write to one DB.",
+	)
+
+	return suggestion.Suggestion{
+		Kind:    det.Kind,
+		Title:   title,
+		Bullets: bullets,
 	}
 }
+
 
 func (sharedDBWrites) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
 	// Detection nodes: [db, writer1, writer2, ...] (writer IDs)

@@ -2,6 +2,7 @@ package strategies
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/parser"
@@ -17,20 +18,59 @@ func (godService) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sugg
 	if len(det.Nodes) >= 1 {
 		name = nodeName(g, det.Nodes[0])
 	}
+
 	title := "Split the god service"
 	if name != "" {
 		title = fmt.Sprintf("Split the god service (%s)", name)
 	}
+
+	// Compute simple stats from graph (fan-out/fan-in)
+	outCalls := 0
+	inCalls := 0
+	dbTouches := 0
+
+	if g != nil && name != "" {
+		for _, e := range g.Edges {
+			from := nodeName(g, e.From)
+			to := nodeName(g, e.To)
+
+			if e.Kind == domain.EdgeCalls {
+				if strings.EqualFold(from, name) {
+					outCalls++
+				}
+				if strings.EqualFold(to, name) {
+					inCalls++
+				}
+			}
+			if e.Kind == domain.EdgeReads || e.Kind == domain.EdgeWrites {
+				if strings.EqualFold(from, name) {
+					dbTouches++
+				}
+			}
+		}
+	}
+
+	bullets := []string{
+		"This service has too many responsibilities and dependencies (hard to change and scale).",
+	}
+	if name != "" {
+		bullets = append(bullets,
+			fmt.Sprintf("%s summary: outgoing calls=%d, incoming calls=%d, DB touches=%d.", name, outCalls, inCalls, dbTouches),
+			"Auto-fix preview: we will move about half of "+name+"'s outgoing calls into a new service ("+name+"_split) and add one delegate call "+name+" → "+name+"_split.",
+		)
+	}
+
+	bullets = append(bullets,
+		"Better long-term fix: split by bounded context (Orders / Payments / Shipping style split).",
+	)
+
 	return suggestion.Suggestion{
-		Kind:  det.Kind,
-		Title: title,
-		Bullets: []string{
-			"This service has too many dependencies (it is doing too much).",
-			"Split it into smaller services by feature (example: Orders → Orders + Payments + Shipping).",
-			"Keep one facade/API and move internal work to other services.",
-		},
+		Kind:    det.Kind,
+		Title:   title,
+		Bullets: bullets,
 	}
 }
+
 
 func (godService) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
 	if len(det.Nodes) < 1 {

@@ -1,0 +1,120 @@
+graph:
+    nodes:
+        SERVICE:service-a:
+            id: SERVICE:service-a
+            name: service-a
+            kind: SERVICE
+            attrs: {}
+        SERVICE:service-b:
+            id: SERVICE:service-b
+            name: service-b
+            kind: SERVICE
+            attrs: {}
+        SERVICE:service-c:
+            id: SERVICE:service-c
+            name: service-c
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:service-a
+          to: SERVICE:service-b
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - GET /b
+            per_item: false
+            rate_per_min: 10
+        - from: SERVICE:service-b
+          to: SERVICE:service-c
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - GET /c
+            per_item: false
+            rate_per_min: 10
+        - from: SERVICE:service-c
+          to: SERVICE:service-a
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - GET /a
+            per_item: false
+            rate_per_min: 10
+    out:
+        SERVICE:service-a:
+            - from: SERVICE:service-a
+              to: SERVICE:service-b
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /b
+                per_item: false
+                rate_per_min: 10
+        SERVICE:service-b:
+            - from: SERVICE:service-b
+              to: SERVICE:service-c
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /c
+                per_item: false
+                rate_per_min: 10
+        SERVICE:service-c:
+            - from: SERVICE:service-c
+              to: SERVICE:service-a
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /a
+                per_item: false
+                rate_per_min: 10
+    in:
+        SERVICE:service-a:
+            - from: SERVICE:service-c
+              to: SERVICE:service-a
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /a
+                per_item: false
+                rate_per_min: 10
+        SERVICE:service-b:
+            - from: SERVICE:service-a
+              to: SERVICE:service-b
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /b
+                per_item: false
+                rate_per_min: 10
+        SERVICE:service-c:
+            - from: SERVICE:service-b
+              to: SERVICE:service-c
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /c
+                per_item: false
+                rate_per_min: 10
+dot_path: /app/out/runs/2d016b3029e70e11/graph.dot
+svg_path: /app/out/runs/2d016b3029e70e11/graph.svg
+detections:
+    - kind: cycles
+      severity: HIGH
+      title: Cyclic dependency
+      summary: Services mutually depend on each other
+      nodes:
+        - SERVICE:service-c
+        - SERVICE:service-b
+        - SERVICE:service-a
+      edges: []
+      evidence: {}
