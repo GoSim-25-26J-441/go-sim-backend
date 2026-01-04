@@ -1,1 +1,1 @@
-package architecture_modelling_antipattaren_detection
+package architecture_modelling_antipattern_detection
