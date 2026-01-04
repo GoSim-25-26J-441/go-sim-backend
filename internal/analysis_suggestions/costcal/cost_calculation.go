@@ -408,7 +408,9 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, instance_family, NULL
 			FROM aws_compute_prices
-			WHERE vcpu = $1 AND memory_gb = $2 AND price_per_hour IS NOT NULL
+			WHERE vcpu = $1 AND memory_gb = $2 
+			  AND price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
 			ORDER BY price_per_hour ASC
 		`
 	case "azure":
@@ -417,7 +419,8 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, service_family, NULL
 			FROM azure_compute_prices
-			WHERE vcpu = $1 AND memory_gb = $2 AND price_per_hour IS NOT NULL
+			WHERE vcpu = $1 AND memory_gb = $2 
+			  AND price_per_hour IS NOT NULL
 			ORDER BY price_per_hour ASC
 		`
 	case "gcp":
@@ -426,7 +429,9 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, NULL, resource_family, usage_type
 			FROM gcp_compute_prices
-			WHERE vcpu = $1 AND memory_gb = $2 AND price_per_hour IS NOT NULL
+			WHERE vcpu = $1 AND memory_gb = $2 
+			  AND price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
 			ORDER BY price_per_hour ASC
 		`
 	default:
@@ -467,7 +472,10 @@ func findExactMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, instance_family, NULL
 			FROM aws_compute_prices
-			WHERE vcpu = $1 AND memory_gb = $2 AND region = $3 AND price_per_hour IS NOT NULL
+			WHERE vcpu = $1 AND memory_gb = $2 
+			  AND region = $3 
+			  AND price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
 			ORDER BY price_per_hour ASC
 		`
 	case "azure":
@@ -476,7 +484,9 @@ func findExactMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, service_family, NULL
 			FROM azure_compute_prices
-			WHERE vcpu = $1 AND memory_gb = $2 AND region = $3 AND price_per_hour IS NOT NULL
+			WHERE vcpu = $1 AND memory_gb = $2 
+			  AND region = $3 
+			  AND price_per_hour IS NOT NULL
 			ORDER BY price_per_hour ASC
 		`
 	case "gcp":
@@ -485,7 +495,10 @@ func findExactMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, NULL, resource_family, usage_type
 			FROM gcp_compute_prices
-			WHERE vcpu = $1 AND memory_gb = $2 AND region = $3 AND price_per_hour IS NOT NULL
+			WHERE vcpu = $1 AND memory_gb = $2 
+			  AND region = $3 
+			  AND price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
 			ORDER BY price_per_hour ASC
 		`
 	default:
@@ -526,7 +539,8 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 			       purchase_option, lease_contract_length, instance_family, NULL,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM aws_compute_prices
-			WHERE price_per_hour IS NOT NULL
+			WHERE price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
 			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
@@ -538,6 +552,7 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM azure_compute_prices
 			WHERE price_per_hour IS NOT NULL
+			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	case "gcp":
@@ -547,7 +562,9 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 			       purchase_option, NULL, resource_family, usage_type,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM gcp_compute_prices
-			WHERE price_per_hour IS NOT NULL
+			WHERE price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
+			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	default:
@@ -589,7 +606,9 @@ func findNearestMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provide
 			       purchase_option, lease_contract_length, instance_family, NULL,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM aws_compute_prices
-			WHERE region = $3 AND price_per_hour IS NOT NULL
+			WHERE region = $3 
+			  AND price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
 			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
@@ -600,7 +619,8 @@ func findNearestMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provide
 			       purchase_option, lease_contract_length, service_family, NULL,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM azure_compute_prices
-			WHERE region = $3 AND price_per_hour IS NOT NULL
+			WHERE region = $3 
+			  AND price_per_hour IS NOT NULL
 			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
@@ -611,7 +631,9 @@ func findNearestMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provide
 			       purchase_option, NULL, resource_family, usage_type,
 			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
 			FROM gcp_compute_prices
-			WHERE region = $3 AND price_per_hour IS NOT NULL
+			WHERE region = $3 
+			  AND price_per_hour IS NOT NULL 
+			  AND price_per_hour <= 10
 			ORDER BY dist ASC, price_per_hour ASC
 			LIMIT 20
 		`
@@ -643,6 +665,32 @@ func findNearestMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provide
 }
 
 func processExactMatches(matches []priceRow, provider string, targetVCPU int, targetMem float64) CostResult {
+	var affordableMatches []priceRow
+	for _, match := range matches {
+		if provider == "azure" && match.PurchaseOption != nil {
+			po := strings.ToLower(*match.PurchaseOption)
+			if strings.Contains(po, "reserved") || strings.Contains(po, "savings") {
+				affordableMatches = append(affordableMatches, match)
+				continue
+			}
+		}
+
+		if match.PriceHour != nil && *match.PriceHour <= 10 {
+			affordableMatches = append(affordableMatches, match)
+		}
+	}
+
+	if len(affordableMatches) == 0 {
+		return CostResult{
+			Provider:     provider,
+			FoundMatches: false,
+			MatchCount:   0,
+			Note:         "no affordable exact matches found",
+		}
+	}
+
+	matches = affordableMatches
+
 	cr := CostResult{
 		Provider:     provider,
 		FoundMatches: true,
@@ -725,6 +773,32 @@ func processExactMatches(matches []priceRow, provider string, targetVCPU int, ta
 }
 
 func processNearestMatches(matches []priceRow, provider string, targetVCPU int, targetMem float64) CostResult {
+	var affordableMatches []priceRow
+	for _, match := range matches {
+		if provider == "azure" && match.PurchaseOption != nil {
+			po := strings.ToLower(*match.PurchaseOption)
+			if strings.Contains(po, "reserved") || strings.Contains(po, "savings") {
+				affordableMatches = append(affordableMatches, match)
+				continue
+			}
+		}
+
+		if match.PriceHour != nil && *match.PriceHour <= 10 {
+			affordableMatches = append(affordableMatches, match)
+		}
+	}
+
+	if len(affordableMatches) == 0 {
+		return CostResult{
+			Provider:     provider,
+			FoundMatches: false,
+			MatchCount:   0,
+			Note:         "no affordable options found",
+		}
+	}
+
+	matches = affordableMatches
+
 	cr := CostResult{
 		Provider:        provider,
 		FoundMatches:    true,
@@ -828,57 +902,31 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 	return cr
 }
 
-func isTotalTermCost(pricePerHour float64, unit, leaseLength string) bool {
-	if pricePerHour > 100 {
-		return true
-	}
-
-	// Check unit for indicators of total term cost
-	unitLower := strings.ToLower(unit)
-	if strings.Contains(unitLower, "quantity") ||
-		strings.Contains(unitLower, "upfront") ||
-		strings.Contains(unitLower, "total") ||
-		strings.Contains(unitLower, "term") ||
-		strings.Contains(unitLower, "year") ||
-		strings.Contains(unitLower, "month") && !strings.Contains(unitLower, "hour") {
-		return true
-	}
-
-	return false
-}
-
-func convertTotalTermToMonthly(price float64, leaseLength string) (pricePerHour, monthlyCost float64) {
-	leaseLower := strings.ToLower(leaseLength)
-
-	// Convert total term cost to monthly equivalent
-	if strings.Contains(leaseLower, "3") {
-		// 3 year term (36 months)
-		monthlyCost = price / 36
-	} else {
-		// Default to 1 year term (12 months)
-		monthlyCost = price / 12
-	}
-
-	// Calculate hourly rate from monthly cost
-	pricePerHour = monthlyCost / HoursPerMonth()
-
-	return pricePerHour, monthlyCost
-}
-
 func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 	purchaseOptions := make([]PurchaseOption, 0)
 	optionMap := make(map[string]PurchaseOption)
 
 	var onDemandPrice float64
 
-	// First pass: collect all options and find On-Demand price
+	var filteredRows []priceRow
 	for _, row := range rows {
 		if row.PriceHour == nil || *row.PriceHour <= 0 {
 			continue
 		}
+		if row.Unit != nil && strings.ToLower(*row.Unit) == "quantity" {
+			continue
+		}
+		if provider != "azure" && *row.PriceHour > 10 {
+			continue
+		}
+		filteredRows = append(filteredRows, row)
+	}
 
+	for _, row := range filteredRows {
 		optionType := "Other"
 		leaseLength := ""
+		pricePerHour := *row.PriceHour
+		note := ""
 
 		if row.PurchaseOption != nil {
 			po := strings.ToLower(*row.PurchaseOption)
@@ -888,7 +936,7 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 				strings.Contains(po, "consumption") || po == "on_demand" ||
 				strings.Contains(po, "on demand") || po == "":
 				optionType = "OnDemand"
-				onDemandPrice = *row.PriceHour
+				onDemandPrice = pricePerHour
 
 			case strings.Contains(po, "reserved") || strings.Contains(po, "savings") ||
 				strings.Contains(po, "commitment") || strings.Contains(po, "reservation"):
@@ -913,11 +961,29 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 						leaseLength = "1yr"
 					}
 				}
+
+				if provider == "azure" && optionType == "Reserved" {
+					var totalMonthsInLease float64
+					if strings.Contains(strings.ToLower(leaseLength), "1") || leaseLength == "1yr" {
+						totalMonthsInLease = 12
+					} else if strings.Contains(strings.ToLower(leaseLength), "3") || leaseLength == "3yr" {
+						totalMonthsInLease = 36
+					} else {
+						totalMonthsInLease = 12
+					}
+
+					if pricePerHour > 100 {
+						monthlyCost := pricePerHour / totalMonthsInLease
+						pricePerHour = monthlyCost / 720
+						note = fmt.Sprintf("Converted from total reservation cost: $%.2f/%d months/720 hrs",
+							*row.PriceHour, int(totalMonthsInLease))
+					}
+				}
 			}
 		} else {
 			// If no purchase option specified, assume On-Demand
 			optionType = "OnDemand"
-			onDemandPrice = *row.PriceHour
+			onDemandPrice = pricePerHour
 		}
 
 		key := fmt.Sprintf("%s_%s", optionType, leaseLength)
@@ -927,28 +993,15 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 			currency = *row.Currency
 		}
 
-		unit := "USD"
-		if row.Unit != nil {
-			unit = *row.Unit
-		}
+		unit := "Hrs"
 
-		pricePerHour := *row.PriceHour
 		monthlyCost := pricePerHour * HoursPerMonth()
-
-		// For Reserved instances, check if price represents total term cost
-		if optionType == "Reserved" {
-			// Check multiple indicators that this might be total term cost
-			if isTotalTermCost(pricePerHour, unit, leaseLength) {
-				// Convert total term cost to monthly equivalent
-				pricePerHour, monthlyCost = convertTotalTermToMonthly(pricePerHour, leaseLength)
-			}
-		}
 
 		// Round the values
 		pricePerHour = math.Round(pricePerHour*100000) / 100000
 		monthlyCost = math.Round(monthlyCost*100) / 100
 
-		optionMap[key] = PurchaseOption{
+		po := PurchaseOption{
 			Type:                optionType,
 			LeaseContractLength: leaseLength,
 			PricePerHour:        pricePerHour,
@@ -956,6 +1009,12 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 			Currency:            currency,
 			Unit:                unit,
 		}
+
+		if note != "" {
+			po.Note = note
+		}
+
+		optionMap[key] = po
 	}
 
 	// Calculate savings percentages for Reserved instances
@@ -978,9 +1037,6 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 				}
 			} else {
 				option.SavingPct = 0
-				if option.MonthlyCost < option.PricePerHour*HoursPerMonth()*0.1 {
-					option.Note = "Converted from total term cost"
-				}
 			}
 			optionMap[key] = option
 		}
