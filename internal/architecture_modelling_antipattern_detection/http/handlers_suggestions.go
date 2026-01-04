@@ -1,4 +1,4 @@
-package amg_apd
+package http
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/service"
 )
 
-func SuggestionPreview(c *gin.Context) {
+func (h *Handler) SuggestionPreview(c *gin.Context) {
 	var req SuggestionPreviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.String(http.StatusBadRequest, "invalid json body")
@@ -34,7 +34,7 @@ func SuggestionPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-func SuggestionApply(c *gin.Context) {
+func (h *Handler) SuggestionApply(c *gin.Context) {
 	var req SuggestionApplyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.String(http.StatusBadRequest, "invalid json body")
@@ -62,3 +62,4 @@ func SuggestionApply(c *gin.Context) {
 
 	c.JSON(http.StatusOK, res)
 }
+

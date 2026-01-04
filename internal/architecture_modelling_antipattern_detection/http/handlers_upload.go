@@ -1,4 +1,4 @@
-package amg_apd
+package http
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ type analyzeRawReq struct {
 }
 
 // AnalyzeRaw: send YAML as a string in JSON body (quick testing)
-func AnalyzeRaw(c *gin.Context) {
+func (h *Handler) AnalyzeRaw(c *gin.Context) {
 	var req analyzeRawReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.String(http.StatusBadRequest, "invalid json body")
@@ -59,7 +59,7 @@ func AnalyzeRaw(c *gin.Context) {
 // - field "file" (required): the spec file
 // - field "title" (optional): overrides default title
 // - field "out_dir" (optional): output directory, default "/app/out"
-func AnalyzeUpload(c *gin.Context) {
+func (h *Handler) AnalyzeUpload(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.String(http.StatusBadRequest, "file is required")
@@ -99,3 +99,4 @@ func AnalyzeUpload(c *gin.Context) {
 
 	c.JSON(http.StatusOK, res)
 }
+

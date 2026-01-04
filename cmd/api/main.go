@@ -7,7 +7,7 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	apihttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
-	amgapd "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/amg_apd"
+	amgapdhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/http"
 )
 
 func main() {
@@ -23,7 +23,10 @@ func main() {
 	healthHandler.RegisterRoutes(r)
 
 	// AMG & APD HTTP API
-	amgapd.Register(r)
+	api := r.Group("/api/v1")
+	amgapdGroup := api.Group("/amg-apd")
+	amgapdHandler := amgapdhttp.New()
+	amgapdHandler.Register(amgapdGroup)
 
 	log.Printf("listening on :%s", cfg.Server.Port)
 	if err := r.Run(":" + cfg.Server.Port); err != nil {
