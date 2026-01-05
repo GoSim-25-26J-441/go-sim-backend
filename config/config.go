@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 type ServerConfig struct {
@@ -37,6 +39,11 @@ type RAGConfig struct {
 	SnippetsDir string
 }
 
+type FirebaseConfig struct {
+	CredentialsPath string // Path to Firebase service account JSON
+	ProjectID       string // Firebase project ID (optional, can be in credentials)
+}
+
 type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
@@ -44,9 +51,14 @@ type Config struct {
 	Upstreams UpstreamsConfig
 	LLM       LLMConfig
 	RAG       RAGConfig
+	Firebase  FirebaseConfig
 }
 
 func Load() (*Config, error) {
+	// Load .env file if it exists (ignore error if file doesn't exist)
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: .env file not found, using environment variables: %v", err)
+	}
 
 	cfg := &Config{
 		Server: ServerConfig{
@@ -72,6 +84,10 @@ func Load() (*Config, error) {
 		},
 		RAG: RAGConfig{
 			SnippetsDir: getEnv("RAG_SNIPPETS_DIR", "internal/design_input_processing/rag/snippets"),
+		},
+		Firebase: FirebaseConfig{
+			CredentialsPath: getEnv("FIREBASE_CREDENTIALS_PATH", ""),
+			ProjectID:       getEnv("FIREBASE_PROJECT_ID", ""),
 		},
 	}
 
