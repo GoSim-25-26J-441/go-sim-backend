@@ -39,6 +39,7 @@ func (h *Handler) SyncUser(c *gin.Context) {
 
 	// Parse optional request body for additional user data
 	var body struct {
+		Email        string                 `json:"email,omitempty"`
 		DisplayName  *string                `json:"display_name,omitempty"`
 		PhotoURL     *string                `json:"photo_url,omitempty"`
 		Organization *string                `json:"organization,omitempty"`
@@ -47,7 +48,21 @@ func (h *Handler) SyncUser(c *gin.Context) {
 	}
 
 	// Try to bind JSON body (ignore error if body is empty - this is optional)
-	_ = c.ShouldBindJSON(&body)
+	// But if body is provided and invalid, we should handle it
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON body", "details": err.Error()})
+			return
+		}
+	}
+
+	// Email is required - prioritize: body > token > fallback
+	if body.Email != "" {
+		email = body.Email
+	} else if email == "" {
+		// If email is not in token or body, use a fallback based on firebase_uid
+		email = firebaseUID + "@firebase.local" // Fallback email
+	}
 
 	// Sync user with data from token and request body
 	req := &domain.CreateUserRequest{
@@ -62,7 +77,13 @@ func (h *Handler) SyncUser(c *gin.Context) {
 
 	user, err := h.authService.SyncUser(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync user"})
+		// Check for specific database errors
+		if err.Error() == "pq: duplicate key value violates unique constraint \"users_email_key\"" {
+			c.JSON(http.StatusConflict, gin.H{"error": "email already exists"})
+			return
+		}
+		// Log the actual error for debugging (in production, use proper logging)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync user", "details": err.Error()})
 		return
 	}
 

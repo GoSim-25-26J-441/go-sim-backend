@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 type ServerConfig struct {
@@ -53,6 +55,10 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	// Load .env file if it exists (ignore error if file doesn't exist)
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: .env file not found, using environment variables: %v", err)
+	}
 
 	cfg := &Config{
 		Server: ServerConfig{
