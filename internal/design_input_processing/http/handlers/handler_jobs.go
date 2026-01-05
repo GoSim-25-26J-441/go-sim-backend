@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/goccy/go-yaml"
 )
 
 type JobSummary struct {
@@ -68,10 +67,7 @@ func Fuse(c *gin.Context, upstreamURL string) {
 		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
 		return
 	}
-	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
+
 	defer resp.Body.Close()
 
 	for k, v := range resp.Header {
@@ -85,83 +81,97 @@ func Fuse(c *gin.Context, upstreamURL string) {
 
 func Export(c *gin.Context, upstreamURL string) {
 	jobID := c.Param("id")
-	format := strings.ToLower(c.Query("format")) // "json" or "yaml"
-	download := strings.ToLower(c.Query("download")) == "true"
 
-	// Same user-id logic as in Chat
+	// Resolve user ID (same pattern as chat / summaries)
 	userID := c.GetString("user_id")
 	if userID == "" {
 		userID = c.GetHeader("X-User-Id")
-	}
-	if strings.TrimSpace(userID) == "" {
-		userID = "demo-user"
+		if userID == "" {
+			userID = "demo-user"
+		}
 	}
 
-	// 1) Always fetch JSON spec from upstream (so we can mutate it)
-	upURL := fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID)
+	// Read query from incoming request
+	format := c.Query("format")
+	if format == "" {
+		format = "json"
+	}
+	download := c.Query("download")
+	if download == "" {
+		download = "false"
+	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(upURL)
+	// Build upstream URL safely
+	u, err := url.Parse(upstreamURL)
+	if err != nil {
+		c.JSON(502, gin.H{"ok": false, "error": "invalid upstream URL: " + err.Error()})
+		return
+	}
+	u.Path = u.Path + "/jobs/" + jobID + "/export"
+
+	q := u.Query()
+	q.Set("format", format)
+	q.Set("download", download)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		c.JSON(502, gin.H{"ok": false, "error": "build request: " + err.Error()})
+		return
+	}
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(502, gin.H{"ok": false, "error": "upstream export: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		c.JSON(502, gin.H{"ok": false, "error": fmt.Sprintf("upstream export status %d", resp.StatusCode)})
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(502, gin.H{"ok": false, "error": "read upstream export: " + err.Error()})
 		return
 	}
 
-	var spec map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": "decode upstream spec: " + err.Error()})
+	if resp.StatusCode != http.StatusOK {
+		for k, vs := range resp.Header {
+			if len(vs) > 0 {
+				c.Header(k, vs[0])
+			}
+		}
+		c.Status(resp.StatusCode)
+		_, _ = c.Writer.Write(body)
 		return
 	}
 
-	// 2) Aggregate sizing signals from chat history
-	sigs := loadSignalsFromHistory(jobID, userID)
+	if format == "json" {
+		var spec map[string]any
+		if err := json.Unmarshal(body, &spec); err == nil {
+			signals := loadSignalsFromHistory(jobID, userID)
 
-	sizing := map[string]any{}
-	if v := sigs["rps_peak"]; v != 0 {
-		sizing["rps_peak"] = v
-	}
-	if v := sigs["rps_avg"]; v != 0 {
-		sizing["rps_avg"] = v
-	}
-	if v := sigs["latency_p95_ms"]; v != 0 {
-		sizing["latency_p95_ms"] = v
-	}
-	if v := sigs["cpu_vcpu"]; v != 0 {
-		sizing["cpu_vcpu"] = v
-	}
+			if len(signals) > 0 {
+				sizing := map[string]any{}
+				for k, v := range signals {
+					if v != 0 {
+						sizing[k] = v
+					}
+				}
+				spec["sizing"] = sizing
 
-	if len(sizing) > 0 {
-		spec["sizing"] = sizing
-	}
-
-	// 3) Return in requested format
-	switch format {
-	case "yaml", "yml":
-		out, err := yaml.Marshal(spec)
-		if err != nil {
-			c.JSON(500, gin.H{"ok": false, "error": "encode yaml: " + err.Error()})
-			return
+				body, _ = json.MarshalIndent(spec, "", "  ")
+				resp.Header.Set("Content-Type", "application/json; charset=utf-8")
+			}
 		}
-
-		if download {
-			c.Header("Content-Disposition",
-				fmt.Sprintf(`attachment; filename="go-sim-%s.yaml"`, jobID))
-		}
-		c.Data(200, "application/x-yaml", out)
-
-	default: // JSON
-		if download {
-			c.Header("Content-Disposition",
-				fmt.Sprintf(`attachment; filename="go-sim-%s.json"`, jobID))
-		}
-		c.JSON(200, spec)
 	}
+
+	for k, vs := range resp.Header {
+		if len(vs) > 0 {
+			c.Header(k, vs[0])
+		}
+	}
+	c.Status(resp.StatusCode)
+	_, _ = c.Writer.Write(body)
 }
 
 func Report(c *gin.Context, upstreamURL string) {
