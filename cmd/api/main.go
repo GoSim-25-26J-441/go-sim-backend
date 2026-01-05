@@ -3,11 +3,18 @@ package main
 import (
 	"log"
 
+	"firebase.google.com/go/v4/auth"
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
+	authpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
+	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"
+	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
+	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
+	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
 	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
-	middleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
+	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,6 +35,28 @@ func main() {
 		log.Printf("RAG load: %v", err)
 	}
 
+	// Initialize database connection
+	db, err := postgres.NewConnection(&cfg.Database)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+	log.Printf("Database connection established")
+
+	// Initialize Firebase Auth (optional - only if credentials are provided)
+	var authClient interface{}
+	if cfg.Firebase.CredentialsPath != "" {
+		fbAuth, err := authpkg.InitializeFirebase(&cfg.Firebase)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize Firebase: %v (auth endpoints will be disabled)", err)
+		} else {
+			authClient = fbAuth
+			log.Printf("Firebase Auth initialized")
+		}
+	} else {
+		log.Printf("Firebase credentials not provided (auth endpoints will be disabled)")
+	}
+
 	router := gin.Default()
 
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
@@ -35,11 +64,28 @@ func main() {
 
 	api := router.Group("/api/v1")
 
+	// Design Input Processing routes
 	dip := api.Group("/design-input")
-	dip.Use(middleware.APIKeyMiddleware())
-	dip.Use(middleware.RequestIDMiddleware())
+	dip.Use(dipmiddleware.APIKeyMiddleware())
+	dip.Use(dipmiddleware.RequestIDMiddleware())
 	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
 	dipHandler.Register(dip)
+
+	// Auth routes (only if Firebase is initialized)
+	if authClient != nil {
+		authGroup := api.Group("/auth")
+
+		// Initialize auth module
+		userRepo := authrepo.NewUserRepository(db)
+		authService := authservice.NewAuthService(userRepo)
+		authHandler := authhttp.New(authService)
+
+		// Apply Firebase Auth middleware to auth routes
+		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+		authHandler.Register(authGroup)
+
+		log.Printf("Auth endpoints registered at /api/v1/auth")
+	}
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
