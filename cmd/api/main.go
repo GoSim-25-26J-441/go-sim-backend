@@ -15,6 +15,10 @@ import (
 	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
+	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
+	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
+	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
+	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +47,14 @@ func main() {
 	}
 	defer db.Close()
 	log.Printf("Database connection established")
+
+	// Initialize Redis connection
+	redisClient, err := redisstorage.NewConnection(&cfg.Redis)
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	defer redisClient.Close()
+	log.Printf("Redis connection established")
 
 	// Initialize Firebase Auth (optional - only if credentials are provided)
 	var authClient interface{}
@@ -96,6 +108,15 @@ func main() {
 
 		log.Printf("Auth endpoints registered at /api/v1/auth")
 	}
+
+	// Simulation routes
+	simGroup := api.Group("/simulation")
+	// Initialize simulation module
+	simRunRepo := simrepo.NewRunRepository(redisClient)
+	simService := simservice.NewSimulationService(simRunRepo)
+	simHandler := simhttp.New(simService, cfg.Upstreams.SimulationEngineURL)
+	simHandler.Register(simGroup)
+	log.Printf("Simulation endpoints registered at /api/v1/simulation")
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
