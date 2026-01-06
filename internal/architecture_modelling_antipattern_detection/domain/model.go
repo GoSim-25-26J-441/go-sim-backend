@@ -3,27 +3,24 @@ package domain
 type Attrs map[string]any
 
 type Node struct {
-	ID   string   `json:"id"`
-	Name string   `json:"name"`
-	Kind NodeKind `json:"kind"`
-	// attributes e.g., owner=true, team, etc.
-	Attrs Attrs `json:"attrs,omitempty"`
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Kind  NodeKind `json:"kind"`
+	Attrs Attrs    `json:"attrs,omitempty"`
 }
 
 type Edge struct {
-	From string   `json:"from"`
-	To   string   `json:"to"`
-	Kind EdgeKind `json:"kind"`
-	// weights/meta e.g., endpoints, rate_per_min, per_item=true
-	Attrs Attrs `json:"attrs,omitempty"`
+	From  string   `json:"from"`
+	To    string   `json:"to"`
+	Kind  EdgeKind `json:"kind"`
+	Attrs Attrs    `json:"attrs,omitempty"`
 }
 
 type Graph struct {
-	Nodes map[string]*Node `json:"nodes"`
-	Edges []*Edge          `json:"edges"`
-	// adjacency for algorithms
-	Out map[string][]*Edge `json:"-"`
-	In  map[string][]*Edge `json:"-"`
+	Nodes map[string]*Node   `json:"nodes"`
+	Edges []*Edge            `json:"edges"`
+	Out   map[string][]*Edge `json:"-"`
+	In    map[string][]*Edge `json:"-"`
 }
 
 func NewGraph() *Graph {
@@ -53,6 +50,6 @@ type Detection struct {
 	Title    string          `json:"title"`
 	Summary  string          `json:"summary"`
 	Nodes    []string        `json:"nodes"`
-	Edges    []int           `json:"edges"` // indexes into g.Edges
+	Edges    []int           `json:"edges"`
 	Evidence Attrs           `json:"evidence,omitempty"`
 }

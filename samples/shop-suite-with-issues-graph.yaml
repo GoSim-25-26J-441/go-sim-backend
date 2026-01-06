@@ -18,7 +18,7 @@ services:
   - name: auth-service
     databases:
       reads: [users-db]
-      writes: [users-db] # owner inferred as writer
+      writes: [users-db]
   - name: billing-service
     calls:
       - to: payment-service

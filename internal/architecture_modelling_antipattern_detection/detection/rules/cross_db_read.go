@@ -9,7 +9,7 @@ type crossRead struct{}
 func (c crossRead) Name() string { return "cross_db_read" }
 
 func (c crossRead) Detect(g *domain.Graph) ([]domain.Detection, error) {
-	owner := map[string]string{} // dbID -> serviceName
+	owner := map[string]string{}
 	for _, e := range g.Edges {
 		if e.Kind == domain.EdgeWrites {
 			if n, ok := g.Nodes[e.From]; ok {
@@ -21,9 +21,9 @@ func (c crossRead) Detect(g *domain.Graph) ([]domain.Detection, error) {
 	for i, e := range g.Edges {
 		if e.Kind != domain.EdgeReads { continue }
 		dbOwner := owner[e.To]
-		if dbOwner == "" { continue } // unknown, ignore
+		if dbOwner == "" { continue }
 		reader := g.Nodes[e.From].Name
-		if reader != dbOwner { // cross read
+		if reader != dbOwner {
 			out = append(out, domain.Detection{
 				Kind: domain.APCrossDBRead, Severity: domain.SeverityMedium,
 				Title: "Cross-DB read",

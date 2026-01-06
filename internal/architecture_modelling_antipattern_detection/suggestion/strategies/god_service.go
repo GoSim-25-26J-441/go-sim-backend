@@ -24,7 +24,6 @@ func (godService) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sugg
 		title = fmt.Sprintf("Split the god service (%s)", name)
 	}
 
-	// Compute simple stats from graph (fan-out/fan-in)
 	outCalls := 0
 	inCalls := 0
 	dbTouches := 0
@@ -82,7 +81,6 @@ func (godService) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detectio
 		return false, nil
 	}
 
-	// heuristic: split HALF of outgoing calls into a new service and add a single delegate call
 	if len(mainSvc.Calls) < 2 {
 		return false, nil
 	}
@@ -95,7 +93,6 @@ func (godService) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detectio
 	mainSvc.Calls = mainSvc.Calls[:half]
 	splitSvc.Calls = append(splitSvc.Calls, moved...)
 
-	// add one delegate call from main -> split (reduces edge fan-out)
 	mainSvc.Calls = append(mainSvc.Calls, parser.YCall{
 		To:         newName,
 		Endpoints:  []string{"POST /delegate"},

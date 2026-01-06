@@ -37,7 +37,6 @@ func (sharedDBWrites) Suggest(g *domain.Graph, det domain.Detection) suggestion.
 			"Why it matters: multi-writes can cause data corruption, conflicting transactions, and unclear ownership.",
 			"Auto-fix preview: create a dedicated DB per writer and move writes away from "+dbName+".",
 		)
-		// preview names
 		for _, w := range writers {
 			bullets = append(bullets, fmt.Sprintf("• %s will write to: %s_%s", w, dbName, w))
 		}
@@ -61,7 +60,7 @@ func (sharedDBWrites) Suggest(g *domain.Graph, det domain.Detection) suggestion.
 
 
 func (sharedDBWrites) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
-	// Detection nodes: [db, writer1, writer2, ...] (writer IDs)
+
 	if len(det.Nodes) < 3 {
 		return false, nil
 	}
@@ -70,7 +69,7 @@ func (sharedDBWrites) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Dete
 	changed := false
 	var notes []string
 
-	// For each writer, create a dedicated DB and move writes to it
+	
 	for _, writerID := range det.Nodes[1:] {
 		writer := nodeName(g, writerID)
 		svc := findService(spec, writer)
@@ -81,7 +80,6 @@ func (sharedDBWrites) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Dete
 
 		ensureDB(spec, newDB)
 
-		// remove old db from writes, add new db to writes
 		var removed bool
 		svc.Databases.Writes, removed = removeString(svc.Databases.Writes, dbName)
 		if removed {

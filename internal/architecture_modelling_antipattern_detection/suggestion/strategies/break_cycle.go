@@ -15,13 +15,12 @@ func (breakCycle) Kind() domain.AntiPatternKind { return domain.APCycles }
 func (breakCycle) Suggest(g *domain.Graph, det domain.Detection) suggestion.Suggestion {
 	names := namesFromNodeIDs(g, det.Nodes)
 
-	// Build a readable loop: A → B → C → A
+
 	loop := ""
 	if len(names) >= 2 {
 		loop = strings.Join(names, " → ") + " → " + names[0]
 	}
 
-	// Preview what Apply() is likely to remove: first CALL edge we can find
 	removeFrom := ""
 	removeTo := ""
 	if len(det.Nodes) >= 2 {
@@ -33,7 +32,7 @@ func (breakCycle) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sugg
 				}
 				toName := nodeName(g, toID)
 
-				// If a CALL edge exists in the graph, that's a good preview
+
 				if _, _, ok := findCallEdgeBetween(g, fromName, toName); ok {
 					removeFrom = fromName
 					removeTo = toName
@@ -82,7 +81,6 @@ func (breakCycle) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sugg
 
 
 func (breakCycle) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
-	// Heuristic: remove the first call edge we can find among the cycle nodes
 	if len(det.Nodes) < 2 {
 		return false, nil
 	}
@@ -100,7 +98,6 @@ func (breakCycle) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detectio
 			}
 			toName := nodeName(g, toID)
 
-			// remove call from fromName -> toName if exists
 			changed := false
 			newCalls := make([]parser.YCall, 0, len(svc.Calls))
 			for _, c := range svc.Calls {
@@ -122,13 +119,13 @@ func (breakCycle) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detectio
 
 func equalFold(a, b string) bool { return len(a) == len(b) && (a == b || (a != "" && b != "" && stringsEqualFold(a, b))) }
 
-// tiny wrapper to avoid importing strings in multiple strategy files
+
 func stringsEqualFold(a, b string) bool {
-	// local minimal equal-fold
+
 	if a == b {
 		return true
 	}
-	// fallback: use case-insensitive compare via byte lowering (ASCII only is fine for service names)
+
 	if len(a) != len(b) {
 		return false
 	}

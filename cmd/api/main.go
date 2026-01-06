@@ -18,11 +18,9 @@ func main() {
 
 	r := gin.Default()
 
-	// Health endpoints
 	healthHandler := apihttp.NewHealthHandler("amg-apd-service", cfg.App.Version)
 	healthHandler.RegisterRoutes(r)
 
-	// AMG & APD HTTP API
 	amgapd.Register(r)
 
 	log.Printf("listening on :%s", cfg.Server.Port)

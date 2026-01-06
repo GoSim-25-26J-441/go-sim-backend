@@ -8,13 +8,8 @@ services:
   - name: api-gateway
     lang: go
     team: core
-    responsibilities: [
-        "routing",
-        "orchestration",
-        "auth",
-        "payments",
-        "inventory",
-      ] # ANTI-PATTERN: God service / orchestrator
+    responsibilities:
+      ["routing", "orchestration", "auth", "payments", "inventory"]
     replicas: 2
 
   - name: auth-service
@@ -32,7 +27,7 @@ services:
     databases:
       - name: users-db
         access: readwrite
-      - name: orders-db # ANTI-PATTERN: cross-service direct DB access
+      - name: orders-db
         access: readonly
 
   - name: order-service
@@ -57,7 +52,7 @@ services:
     team: merch
     responsibilities: ["list", "details"]
     databases:
-      - name: shared-catalog-db # ANTI-PATTERN: shared DB with Search (both write)
+      - name: shared-catalog-db
         access: readwrite
 
   - name: search-service
@@ -65,7 +60,7 @@ services:
     team: merch
     responsibilities: ["index", "search"]
     databases:
-      - name: shared-catalog-db # ANTI-PATTERN: shared DB with Catalog (both write)
+      - name: shared-catalog-db
         access: readwrite
 
   - name: email-service
@@ -77,7 +72,7 @@ services:
   - name: notification-service
     lang: go
     team: comms
-    responsibilities: ["send-email", "push", "sms"] # ANTI-PATTERN: overlap with email-service (redundant responsibility)
+    responsibilities: ["send-email", "push", "sms"]
 
   - name: billing-service
     lang: go
@@ -97,9 +92,7 @@ datastores:
   - name: shared-catalog-db
     engine: postgres
 
-# Edges (service → service). 'sync' = true => request/response; false => async (event/queue)
 calls:
-  # Gateway as a "god" orchestrator
   - from: api-gateway
     to: auth-service
     sync: true
@@ -130,14 +123,12 @@ calls:
     sync: true
     endpoint: "/charge"
 
-  # N+1 chatter: order-service calls product per item (mode: per-item)
   - from: order-service
     to: catalog-service
     sync: true
     endpoint: "/items/batch"
     mode: per-item
 
-  # Cycle: auth -> user -> billing -> auth
   - from: auth-service
     to: user-service
     sync: true
@@ -153,7 +144,6 @@ calls:
     sync: true
     endpoint: "/roles/{id}"
 
-  # Tight coupling & async fan-out
   - from: order-service
     to: payment-service
     sync: true
@@ -169,13 +159,12 @@ calls:
     sync: false
     topic: "order.events"
 
-# Extra evidence for detectors
 non_functional_hints:
   timeouts_ms:
     api-gateway->payment-service: 200
     order-service->catalog-service: 100
   frequencies_per_minute:
-    order-service->catalog-service: 600 # suggests chatty
+    order-service->catalog-service: 600
 
 expect_issues:
   - cycle(auth-service, user-service, billing-service)

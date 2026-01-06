@@ -14,5 +14,3 @@ services:
       - to: service-a
         endpoints: ["GET /a"]
         rate_per_min: 10
-# No databases: avoids shared_db_writes / cross_db_read
-# Low rpm: avoids chatty_calls

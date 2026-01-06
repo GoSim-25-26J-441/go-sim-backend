@@ -19,10 +19,6 @@ type Version struct {
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 }
 
-// CreateVersion writes a new YAML "snapshot" under:
-//   <outBaseDir>/versions/<jobID>/<versionID>/architecture.yaml
-//
-// The same folder will also store analysis outputs (graph.dot, graph.svg, analysis.json, ...).
 func CreateVersion(jobID, outBaseDir, label string, yamlBytes []byte) (*Version, error) {
 	if outBaseDir == "" {
 		outBaseDir = "out"

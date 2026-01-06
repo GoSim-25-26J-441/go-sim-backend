@@ -2,10 +2,20 @@ digraph G {
   rankdir=LR;
   node [shape=box, style=rounded];
   labelloc="t"; label="dsada"; fontname="Helvetica";
-  "SERVICE:service-b" [label="service-b", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
-  "SERVICE:service-c" [label="service-c", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
-  "SERVICE:service-a" [label="service-a", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
-  "SERVICE:service-a" -> "SERVICE:service-b" [label="calls (1 ep), 10rpm", tooltip="edge#0"];
-  "SERVICE:service-b" -> "SERVICE:service-c" [label="calls (1 ep), 10rpm", tooltip="edge#1"];
-  "SERVICE:service-c" -> "SERVICE:service-a" [label="calls (1 ep), 10rpm", tooltip="edge#2"];
+  "SERVICE:auth-service" [label="auth-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:billing-service" [label="billing-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:payment-service" [label="payment-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:users-db" [label="users-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "DATABASE:payments-db" [label="payments-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:api-gateway" [label="api-gateway", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:user-service" [label="user-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:api-gateway" -> "SERVICE:user-service" [label="calls (1 ep), 600rpm", tooltip="edge#0"];
+  "SERVICE:api-gateway" -> "SERVICE:billing-service" [label="calls (1 ep), 300rpm", tooltip="edge#1"];
+  "SERVICE:user-service" -> "SERVICE:auth-service" [label="calls (1 ep), 600rpm", tooltip="edge#2"];
+  "SERVICE:user-service" -> "DATABASE:users-db" [label="READS", tooltip="edge#3"];
+  "SERVICE:auth-service" -> "DATABASE:users-db" [label="READS", tooltip="edge#4"];
+  "SERVICE:auth-service" -> "DATABASE:users-db" [label="WRITES", tooltip="edge#5"];
+  "SERVICE:billing-service" -> "SERVICE:payment-service" [label="calls (1 ep), 500rpm", tooltip="edge#6"];
+  "SERVICE:billing-service" -> "DATABASE:payments-db" [label="READS", tooltip="edge#7"];
+  "SERVICE:payment-service" -> "DATABASE:payments-db" [label="WRITES", tooltip="edge#8"];
 }

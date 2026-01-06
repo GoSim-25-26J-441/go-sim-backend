@@ -34,7 +34,6 @@ type AppConfig struct {
 }
 
 func Load() (*Config, error) {
-	// Load .env file if it exists (ignore error in production)
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}

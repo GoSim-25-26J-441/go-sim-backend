@@ -38,7 +38,6 @@ func (t tight) Detect(g *domain.Graph) ([]domain.Detection, error) {
 			bid := e.To + "|" + a.ID
 			fwd := a.ID + "|" + e.To
 			if seen[fwd] || seen[bid] { continue }
-			// only pair service<->service
 			if b, ok := g.Nodes[e.To]; !ok || b.Kind != domain.NodeService { continue }
 
 			ab, aOut := countCalls(g, a.ID, e.To)

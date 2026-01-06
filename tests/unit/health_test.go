@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
+	"github.com/gin-gonic/gin"
 )
 
 func TestHealthCheck(t *testing.T) {
@@ -52,7 +52,6 @@ func TestHealthCheckMethodNotAllowed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	// Enable HandleMethodNotAllowed to return 405 instead of 404
 	router.HandleMethodNotAllowed = true
 
 	handler := httpapi.NewHealthHandler("test-service", "1.0.0")

@@ -18,7 +18,7 @@ func (crossDBRead) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sug
 
 	dbName := ""
 	if len(det.Nodes) >= 2 {
-		dbName = nodeName(g, det.Nodes[1]) // [service, db]
+		dbName = nodeName(g, det.Nodes[1])
 	}
 
 	title := "Do not read another service’s database"
@@ -59,7 +59,6 @@ func (crossDBRead) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detecti
 		return false, nil
 	}
 
-	// nodes: [service, db] (from rule it adds {e.From, e.To})
 	dbName := nodeName(g, det.Nodes[1])
 
 	readerSvc := findService(spec, reader)
@@ -67,14 +66,12 @@ func (crossDBRead) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detecti
 		return false, nil
 	}
 
-	// remove direct DB read
 	var removed bool
 	readerSvc.Databases.Reads, removed = removeString(readerSvc.Databases.Reads, dbName)
 	if !removed {
 		return false, nil
 	}
 
-	// add a call to the owner service as a replacement
 	call := parser.YCall{
 		To:         owner,
 		Endpoints:  []string{fmt.Sprintf("GET /%s/read", dbName)},

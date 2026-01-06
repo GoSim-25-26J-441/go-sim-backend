@@ -9,7 +9,6 @@ type sharedWrite struct{}
 func (s sharedWrite) Name() string { return "shared_db_writes" }
 
 func (s sharedWrite) Detect(g *domain.Graph) ([]domain.Detection, error) {
-	// dbID -> writer services
 	writers := map[string][]string{}
 	for _, e := range g.Edges {
 		if e.Kind == domain.EdgeWrites {

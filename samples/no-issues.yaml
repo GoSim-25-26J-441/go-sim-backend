@@ -18,13 +18,13 @@ services:
     calls: []
     databases:
       reads: [users-db]
-      writes: [users-db] # user-service owns users-db and is the only reader/writer
+      writes: [users-db]
 
   - name: catalog-service
     calls: []
     databases:
       reads: [catalog-db]
-      writes: [catalog-db] # catalog-service owns catalog-db and is the only reader/writer
+      writes: [catalog-db]
 
   - name: order-service
     calls:
@@ -36,19 +36,19 @@ services:
         rate_per_min: 40
     databases:
       reads: [orders-db]
-      writes: [orders-db] # order-service owns orders-db
+      writes: [orders-db]
 
   - name: payment-service
     calls: []
     databases:
       reads: [payments-db]
-      writes: [payments-db] # payment-service owns payments-db
+      writes: [payments-db]
 
   - name: shipping-service
     calls: []
     databases:
       reads: [shipping-db]
-      writes: [shipping-db] # shipping-service owns shipping-db
+      writes: [shipping-db]
 
 databases:
   - name: users-db

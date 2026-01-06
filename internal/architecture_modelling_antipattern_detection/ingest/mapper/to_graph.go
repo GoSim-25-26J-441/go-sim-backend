@@ -27,21 +27,21 @@ func ensureNode(g *domain.Graph, kind domain.NodeKind, name string) string {
 func ToGraph(s *parser.YSpec) *domain.Graph {
 	g := domain.NewGraph()
 
-	// DB nodes (declared)
+
 	for _, d := range s.Databases {
 		_ = ensureNode(g, domain.NodeDB, d.Name)
 	}
 
-	// Service nodes (declared)
+
 	for _, svc := range s.Services {
 		_ = ensureNode(g, domain.NodeService, svc.Name)
 	}
 
-	// Edges + implied nodes (for edited YAML that references undeclared items)
+
 	for _, svc := range s.Services {
 		from := ensureNode(g, domain.NodeService, svc.Name)
 
-		// Service edges (calls)
+
 		for _, c := range svc.Calls {
 			to := ensureNode(g, domain.NodeService, c.To)
 			g.AddEdge(&domain.Edge{
@@ -57,7 +57,6 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 			})
 		}
 
-		// DB reads
 		for _, db := range svc.Databases.Reads {
 			to := ensureNode(g, domain.NodeDB, db)
 			g.AddEdge(&domain.Edge{
@@ -67,7 +66,7 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 			})
 		}
 
-		// DB writes
+
 		for _, db := range svc.Databases.Writes {
 			to := ensureNode(g, domain.NodeDB, db)
 			g.AddEdge(&domain.Edge{
@@ -79,7 +78,6 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 				},
 			})
 
-			// mark DB node owner=svc.Name for convenience
 			if n, ok := g.Nodes[to]; ok {
 				if n.Attrs == nil {
 					n.Attrs = domain.Attrs{}

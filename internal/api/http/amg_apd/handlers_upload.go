@@ -19,7 +19,6 @@ type analyzeRawReq struct {
 	OutDir string `json:"out_dir"`
 }
 
-// AnalyzeRaw: send YAML as a string in JSON body (quick testing)
 func AnalyzeRaw(c *gin.Context) {
 	var req analyzeRawReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -37,7 +36,6 @@ func AnalyzeRaw(c *gin.Context) {
 		req.Title = "Uploaded"
 	}
 
-	// write temp file, then reuse AnalyzeYAML(path, ...)
 	_ = os.MkdirAll("/app/incoming", 0o755)
 	tmp := filepath.Join("/app/incoming", utils.NewID()+".yaml")
 	if err := os.WriteFile(tmp, []byte(req.YAML), 0o644); err != nil {
@@ -55,10 +53,6 @@ func AnalyzeRaw(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// AnalyzeUpload: upload YAML/JSON file via multipart/form-data
-// - field "file" (required): the spec file
-// - field "title" (optional): overrides default title
-// - field "out_dir" (optional): output directory, default "/app/out"
 func AnalyzeUpload(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -68,7 +62,6 @@ func AnalyzeUpload(c *gin.Context) {
 
 	outDir := c.DefaultPostForm("out_dir", "/app/out")
 
-	// Default title: provided form field OR derive from filename
 	title := c.PostForm("title")
 	if title == "" {
 		base := filepath.Base(file.Filename)
@@ -78,11 +71,11 @@ func AnalyzeUpload(c *gin.Context) {
 		}
 	}
 
-	// Save uploaded file to a temp location
+
 	_ = os.MkdirAll("/app/incoming", 0o755)
 	ext := filepath.Ext(file.Filename)
 	if ext == "" {
-		ext = ".yaml" // fallback
+		ext = ".yaml"
 	}
 	tmpPath := filepath.Join("/app/incoming", utils.NewID()+ext)
 	if err := c.SaveUploadedFile(file, tmpPath); err != nil {

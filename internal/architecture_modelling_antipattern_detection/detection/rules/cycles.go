@@ -9,7 +9,6 @@ type cycles struct{}
 func (c cycles) Name() string { return "cycles" }
 
 func (c cycles) Detect(g *domain.Graph) ([]domain.Detection, error) {
-	// Tarjan SCC over CALLS edges between services
 	index := 0
 	stack := []string{}
 	onStack := map[string]bool{}
@@ -36,7 +35,7 @@ func (c cycles) Detect(g *domain.Graph) ([]domain.Detection, error) {
 				low[v] = id[w]
 			}
 		}
-		// root?
+		
 		if low[v] == id[v] {
 			comp := []string{}
 			for {

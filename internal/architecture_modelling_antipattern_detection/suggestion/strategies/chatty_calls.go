@@ -25,7 +25,6 @@ func (chattyCalls) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sug
 		title = fmt.Sprintf("Reduce chatty calls (%s → %s)", from, to)
 	}
 
-	// Pull details if available
 	rpm, eps, ok := findCallEdgeBetween(g, from, to)
 
 	bullets := []string{}
@@ -78,7 +77,6 @@ func (chattyCalls) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detecti
 		oldRpm := svc.Calls[i].RatePerMin
 		oldPerItem := svc.Calls[i].PerItem
 
-		// heuristic fix: disable per-item and reduce RPM
 		svc.Calls[i].PerItem = false
 		if svc.Calls[i].RatePerMin > 0 {
 			svc.Calls[i].RatePerMin = maxInt(1, svc.Calls[i].RatePerMin/10)

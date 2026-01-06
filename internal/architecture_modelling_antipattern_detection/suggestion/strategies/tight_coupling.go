@@ -87,7 +87,6 @@ func shrinkEdge(spec *parser.YSpec, from, to string) (bool, string) {
 		oldEps := len(svc.Calls[i].Endpoints)
 		oldRpm := svc.Calls[i].RatePerMin
 
-		// heuristic: reduce endpoints list and RPM
 		if len(svc.Calls[i].Endpoints) > 1 {
 			svc.Calls[i].Endpoints = svc.Calls[i].Endpoints[:1]
 		}

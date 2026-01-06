@@ -12,7 +12,6 @@ type Suggestion struct {
 	Title          string                 `json:"title" yaml:"title"`
 	Bullets        []string               `json:"bullets" yaml:"bullets"`
 
-	// Filled only when "apply" is used
 	AutoFixApplied bool     `json:"auto_fix_applied" yaml:"auto_fix_applied"`
 	AutoFixNotes   []string `json:"auto_fix_notes,omitempty" yaml:"auto_fix_notes,omitempty"`
 }
@@ -47,9 +46,7 @@ func severityWeight(s domain.Severity) int {
 	}
 }
 
-// BuildSuggestions returns simple bullet-point guidance for current detections
 func BuildSuggestions(g *domain.Graph, dets []domain.Detection) []Suggestion {
-	// High severity first, then stable order by kind
 	tmp := make([]domain.Detection, 0, len(dets))
 	tmp = append(tmp, dets...)
 	sort.SliceStable(tmp, func(i, j int) bool {
@@ -62,7 +59,7 @@ func BuildSuggestions(g *domain.Graph, dets []domain.Detection) []Suggestion {
 	})
 
 	out := make([]Suggestion, 0, len(tmp))
-	seen := map[string]bool{} // de-dup same kind + same nodes
+	seen := map[string]bool{}
 	for _, d := range tmp {
 		nodesKey := append([]string{}, d.Nodes...)
 		sort.Strings(nodesKey)
@@ -86,14 +83,13 @@ func BuildSuggestions(g *domain.Graph, dets []domain.Detection) []Suggestion {
 	return out
 }
 
-// ApplyFixesYAMLBytes applies heuristic auto-fixes and returns (fixedYamlBytes, appliedSuggestions)
+
 func ApplyFixesYAMLBytes(yamlBytes []byte, g *domain.Graph, dets []domain.Detection) ([]byte, []Suggestion, error) {
 	spec, err := parser.ParseYAMLBytes(yamlBytes)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Apply high severity first
 	tmp := make([]domain.Detection, 0, len(dets))
 	tmp = append(tmp, dets...)
 	sort.SliceStable(tmp, func(i, j int) bool {

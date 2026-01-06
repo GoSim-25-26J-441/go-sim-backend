@@ -61,7 +61,6 @@ func removeString(xs []string, v string) ([]string, bool) {
 	return out, removed
 }
 
-// ---- personalization helpers ----
 
 func namesFromNodeIDs(g *domain.Graph, ids []string) []string {
 	out := make([]string, 0, len(ids))
@@ -81,7 +80,7 @@ func joinNice(xs []string) string {
 	if len(xs) == 2 {
 		return xs[0] + " and " + xs[1]
 	}
-	// a, b, c
+
 	var b strings.Builder
 	for i := range xs {
 		if i > 0 {
@@ -122,7 +121,7 @@ func asInt(v any) (int, bool) {
 	}
 }
 
-// Best-effort edge preview (works even if Evidence is missing)
+
 func findCallEdgeBetween(g *domain.Graph, fromName, toName string) (rpm int, endpoints int, ok bool) {
 	if g == nil {
 		return 0, 0, false
