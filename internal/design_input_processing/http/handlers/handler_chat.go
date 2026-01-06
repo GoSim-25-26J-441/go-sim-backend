@@ -125,7 +125,6 @@ func isRAGCandidate(q string) bool {
 }
 
 // --- Main Chat handler ---
-
 func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -192,6 +191,8 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	isDef := looksLikeDefinition(req.Message)
 	isJob := isJobSpecific(req.Message)
 	isDiag := isDiagramQuestion(req.Message)
+	isSum := isSummaryQuestion(req.Message)
+	ragCandidate := isRAGCandidate(req.Message)
 
 	missing := findMissingSignals(signals)
 	if isSizing && len(missing) > 0 {
@@ -227,7 +228,13 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 
 	skipRAG := isSizing && len(missing) == 0
 
-	tryRAG := !skipRAG && !req.ForceLLM && !isDef && !isJob && !isDiag
+	tryRAG := ragCandidate &&
+		!skipRAG &&
+		!req.ForceLLM &&
+		!isDef &&
+		!isJob &&
+		!isDiag &&
+		!isSum
 
 	if tryRAG {
 		if ans, refs := ragAnswer(req.Message); ans != "" {
@@ -536,6 +543,16 @@ func ragAnswer(msg string) (string, []string) {
 		return "", nil
 	}
 
+	lower := strings.ToLower(msg)
+
+	// Only show the “sizing prompts / defaults & guardrails” docs if user explicitly
+	// asks for prompts or defaults.
+	allowMetaDocs := strings.Contains(lower, "sizing prompt") ||
+		strings.Contains(lower, "questions should i ask") ||
+		strings.Contains(lower, "what should i ask") ||
+		strings.Contains(lower, "defaults") ||
+		strings.Contains(lower, "guardrail")
+
 	var b strings.Builder
 	refs := make([]string, 0, 2)
 	used := 0
@@ -548,15 +565,21 @@ func ragAnswer(msg string) (string, []string) {
 			continue
 		}
 
+		base := r.ID
+		if slash := strings.LastIndexAny(base, `/\`); slash >= 0 {
+			base = base[slash+1:]
+		}
+
+		// 🚫 Skip these meta docs unless user explicitly asked
+		if !allowMetaDocs && (base == "sizing_prompts.md" || base == "defaults_guardrails.md") {
+			continue
+		}
+
 		b.WriteString(sn)
 		if !strings.HasSuffix(sn, "\n") {
 			b.WriteString("\n")
 		}
 
-		base := r.ID
-		if slash := strings.LastIndexAny(base, `/\`); slash >= 0 {
-			base = base[slash+1:]
-		}
 		refs = append(refs, base)
 
 		used++
@@ -567,6 +590,7 @@ func ragAnswer(msg string) (string, []string) {
 
 	ans := strings.TrimSpace(b.String())
 	if ans == "" {
+		// all hits filtered → let caller fall back to LLM
 		return "", refs
 	}
 	return ans, refs
@@ -752,6 +776,30 @@ func isJobSpecific(msg string) bool {
 	}
 	for _, p := range patterns {
 		if strings.Contains(m, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSummaryQuestion(q string) bool {
+	s := strings.ToLower(q)
+
+	summaryPhrases := []string{
+		"overall summary",
+		"summary of the system",
+		"summary of my system",
+		"final idea",
+		"overall idea",
+		"what do you think",
+		"your opinion",
+		"tell me about my system",
+		"explain my system",
+		"explain my chat",
+	}
+
+	for _, p := range summaryPhrases {
+		if strings.Contains(s, p) {
 			return true
 		}
 	}

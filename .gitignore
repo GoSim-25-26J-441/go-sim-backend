@@ -23,7 +23,7 @@ go.work
 *.swp
 *.swo
 
-# # OS generated files
+# OS generated files
 .DS_Store
 .DS_Store?
 ._*
@@ -48,7 +48,7 @@ Thumbs.db
 
 # # job data (never commit)
 /projects/*
-!/projects/.gitkeep
+/projects/.gitkeep
 /downloads/
 
 # # runtime chat logs
