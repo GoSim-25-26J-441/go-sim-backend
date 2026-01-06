@@ -69,11 +69,9 @@ func looksLikeDefinition(q string) bool {
 	return false
 }
 
-// Questions clearly about the uploaded diagram / image
 func isDiagramQuestion(q string) bool {
 	s := strings.ToLower(q)
 
-	// direct mentions of diagrams/images
 	if strings.Contains(s, "diagram") ||
 		strings.Contains(s, "picture") ||
 		strings.Contains(s, "image") ||
@@ -81,7 +79,6 @@ func isDiagramQuestion(q string) bool {
 		return true
 	}
 
-	// user talking about the uploaded artifact
 	if strings.Contains(s, "what i upload") ||
 		strings.Contains(s, "what i uploaded") ||
 		strings.Contains(s, "in what i upload") ||
@@ -89,7 +86,6 @@ func isDiagramQuestion(q string) bool {
 		return true
 	}
 
-	// common phrasing
 	if strings.Contains(s, "my services") ||
 		strings.Contains(s, "my edges") ||
 		strings.Contains(s, "services and edges") {
@@ -114,7 +110,7 @@ func isRAGCandidate(q string) bool {
 		"autoscale", "auto scale",
 		"rate limit", "rate limiting",
 		"timeouts", "retries",
-		"rps @", // e.g. "200 rps @ 150ms"
+		"rps @",
 		"p95", "p99",
 		"slo", "sla",
 		"sizing guide",
@@ -131,7 +127,6 @@ func isRAGCandidate(q string) bool {
 // --- Main Chat handler ---
 
 func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
-	// 1) Parse JSON (robust)
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(400, gin.H{"ok": false, "error": "read body: " + err.Error()})
@@ -148,7 +143,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	jobID := c.Param("id")
 	strict := strings.EqualFold(req.Mode, "design-guardrails")
 
-	// Resolve user id (for per-user chat logs)
 	userID := c.GetString("user_id")
 	if userID == "" {
 		userID = c.GetHeader("X-User-Id")
@@ -157,12 +151,10 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		userID = "demo-user"
 	}
 
-	// --- Aggregate signals from history + this message ---
 	historySignals := loadSignalsFromHistory(jobID, userID)
 	thisSignals := extractSignals(req.Message)
 	signals := mergeSignals(historySignals, thisSignals)
 
-	// 2) Optional strict guardrails
 	if strict && !onTopic(req.Message) {
 		guardMsg := "Let’s keep it on software architecture (microservices, APIs, sizing, latency, etc.)."
 		appendChat(jobID, chatTurn{
@@ -181,7 +173,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// 3) Log the user message
 	appendChat(jobID, chatTurn{
 		Role:   "user",
 		Text:   req.Message,
@@ -190,7 +181,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		UserID: userID,
 	})
 
-	// ---- Intent detection ----
 	lowerMsg := strings.ToLower(req.Message)
 	isSizing := strings.Contains(lowerMsg, "size") ||
 		strings.Contains(lowerMsg, "sizing") ||
@@ -203,14 +193,13 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	isJob := isJobSpecific(req.Message)
 	isDiag := isDiagramQuestion(req.Message)
 
-	// If it's a sizing-style question and we DON'T yet have all signals → ask for them
 	missing := findMissingSignals(signals)
 	if isSizing && len(missing) > 0 {
 		var b strings.Builder
 		b.WriteString("To size this accurately, I need:\n")
 		for i, m := range missing {
 			if i >= 3 {
-				break // keep prompt short
+				break
 			}
 			b.WriteString("- ")
 			b.WriteString(m.Q)
@@ -236,13 +225,10 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// If it's a sizing Q and we ALREADY have all signals → skip RAG, go straight to LLM
 	skipRAG := isSizing && len(missing) == 0
 
-	// Decide whether to try RAG at all
 	tryRAG := !skipRAG && !req.ForceLLM && !isDef && !isJob && !isDiag
 
-	// 4) Try RAG first (unless disabled)
 	if tryRAG {
 		if ans, refs := ragAnswer(req.Message); ans != "" {
 			appendChat(jobID, chatTurn{
@@ -264,7 +250,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		}
 	}
 
-	// 5) Fetch compact context for LLM
 	ig, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/intermediate", upstreamURL, jobID), 10*time.Second)
 	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second)
 	features := compactContext(ig, spec, req.Message)
@@ -272,7 +257,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 
 	signalsJSON, _ := json.Marshal(signals)
 
-	// 6) Call local Ollama (non-streaming)
 	body := map[string]any{
 		"model":  "llama3:instruct",
 		"stream": false,
@@ -318,7 +302,6 @@ Answer in plain English, not JSON.`,
 		return
 	}
 
-	// 7) Decode Ollama response
 	var gen struct {
 		Response string `json:"response"`
 	}
@@ -327,7 +310,6 @@ Answer in plain English, not JSON.`,
 		return
 	}
 
-	// Fix protocol wording if needed
 	answerText := strings.TrimSpace(gen.Response)
 
 	appendChat(jobID, chatTurn{
@@ -347,7 +329,6 @@ Answer in plain English, not JSON.`,
 }
 
 // --- Helpers / utilities ---
-
 func isArchitectureQuestion(s string) bool {
 	keys := []string{"service", "api", "grpc", "rest", "queue", "topic", "database", "latency", "rps", "throughput", "cache", "retry", "circuit"}
 	for _, k := range keys {
@@ -387,19 +368,17 @@ func postJSON(url string, body any, to time.Duration) ([]byte, error) {
 }
 
 func compactContext(ig, spec map[string]any, msg string) string {
-	// 1) Prefer spec.services; fall back to IG nodes
+
 	services := tryArrayNames(spec, "services", "name")
 	if len(services) == 0 {
 		services = tryArrayNames(ig, "Nodes", "Label")
 	}
 
-	// 2) Prefer spec.dependencies; fall back to IG edges
 	edges := tryDeps(spec)
 	if len(edges) == 0 {
 		edges = tryEdges(ig)
 	}
 
-	// 3) Gaps from spec (e.g., RPS, protocol certainty, etc.)
 	gaps := tryGaps(spec)
 
 	var b strings.Builder
@@ -442,7 +421,6 @@ func enforceProtocol(answer string, ig, spec map[string]any) string {
 		return answer
 	}
 
-	// Collect protocols from spec.dependencies first, then IG edges
 	edges := tryDeps(spec)
 	if len(edges) == 0 {
 		edges = tryEdges(ig)
@@ -450,14 +428,13 @@ func enforceProtocol(answer string, ig, spec map[string]any) string {
 
 	protos := map[string]bool{}
 	for _, e := range edges {
-		p := strings.ToLower(e[2]) // e[2] is protocol
+		p := strings.ToLower(e[2])
 		if p == "" {
 			continue
 		}
 		protos[p] = true
 	}
 	if len(protos) != 1 {
-		// Multiple or none – don't try to "fix" text
 		return answer
 	}
 
@@ -499,7 +476,6 @@ func tryArrayNames(m map[string]any, key, sub string) []string {
 }
 
 func appendChat(jobID string, turn chatTurn) {
-	// chatBaseDir(userID) is defined elsewhere in the same package
 	baseDir := chatBaseDir(turn.UserID)
 
 	_ = os.MkdirAll(baseDir, 0o755)
@@ -528,7 +504,7 @@ func ListJobsForUser(userID string) ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		name := e.Name() // chat-<job>.jsonl
+		name := e.Name()
 		if !strings.HasPrefix(name, "chat-") || !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
@@ -538,7 +514,6 @@ func ListJobsForUser(userID string) ([]string, error) {
 	return jobIDs, nil
 }
 
-// intFromMap is used by summary code in the same package.
 func intFromMap(m map[string]any, key string) int {
 	if m == nil {
 		return 0
@@ -623,7 +598,6 @@ func tryGaps(m map[string]any) [][2]string {
 	return out
 }
 
-// Each triple is: [from, to, protocol]
 func tryDeps(spec map[string]any) [][3]string {
 	arr, _ := spec["dependencies"].([]any)
 	out := make([][3]string, 0, len(arr))
@@ -631,7 +605,7 @@ func tryDeps(spec map[string]any) [][3]string {
 		if obj, ok := v.(map[string]any); ok {
 			from, _ := obj["from"].(string)
 			to, _ := obj["to"].(string)
-			kind, _ := obj["kind"].(string) // "grpc", "rest", "pubsub", etc.
+			kind, _ := obj["kind"].(string)
 			out = append(out, [3]string{from, to, kind})
 		}
 	}
@@ -653,7 +627,6 @@ func tryEdges(m map[string]any) [][3]string {
 }
 
 // --- Signals extraction helpers ---
-
 func atoiSafe(s string) int {
 	n, err := strconv.Atoi(s)
 	if err != nil {
@@ -666,7 +639,6 @@ func extractSignals(msg string) map[string]int {
 	out := map[string]int{}
 	l := strings.ToLower(msg)
 
-	// RPS: if we see one number → treat as peak; if two → [0]=peak, [1]=avg
 	rpsMatches := rxRPS.FindAllStringSubmatch(l, -1)
 	if len(rpsMatches) >= 1 {
 		out["rps_peak"] = atoiSafe(rpsMatches[0][1])
@@ -675,12 +647,10 @@ func extractSignals(msg string) map[string]int {
 		out["rps_avg"] = atoiSafe(rpsMatches[1][1])
 	}
 
-	// p95 latency (ms)
 	if m := rxP95ms.FindStringSubmatch(l); len(m) == 2 {
 		out["latency_p95_ms"] = atoiSafe(m[1])
 	}
 
-	// payload size → normalize to KB
 	if m := rxPayload.FindStringSubmatch(l); len(m) == 3 {
 		v := atoiSafe(m[1])
 		unit := strings.ToLower(m[2])
@@ -690,12 +660,10 @@ func extractSignals(msg string) map[string]int {
 		out["payload_kb"] = v
 	}
 
-	// burst factor (e.g. "2x")
 	if m := rxBurst.FindStringSubmatch(l); len(m) == 2 {
 		out["burst_factor"] = atoiSafe(m[1])
 	}
 
-	// CPU (vCPU or cores)
 	if m := rxCPU.FindStringSubmatch(l); len(m) >= 2 {
 		out["cpu_vcpu"] = atoiSafe(m[1])
 	}
@@ -703,7 +671,6 @@ func extractSignals(msg string) map[string]int {
 	return out
 }
 
-// merge history + current signals (current overrides history if non-zero)
 func mergeSignals(history, current map[string]int) map[string]int {
 	out := map[string]int{}
 	for k, v := range history {
@@ -717,7 +684,6 @@ func mergeSignals(history, current map[string]int) map[string]int {
 	return out
 }
 
-// load signals from previous user turns for this job
 func loadSignalsFromHistory(jobID, userID string) map[string]int {
 	agg := map[string]int{}
 
@@ -726,7 +692,6 @@ func loadSignalsFromHistory(jobID, userID string) map[string]int {
 
 	f, err := os.Open(fpath)
 	if err != nil {
-		// no history yet, that's fine
 		return agg
 	}
 	defer f.Close()
@@ -738,7 +703,6 @@ func loadSignalsFromHistory(jobID, userID string) map[string]int {
 			if err == io.EOF {
 				break
 			}
-			// on decode error, just return what we have so far
 			return agg
 		}
 		if t.Role != "user" {
@@ -754,7 +718,6 @@ func loadSignalsFromHistory(jobID, userID string) map[string]int {
 	return agg
 }
 
-// Build list of missing signals (for follow-up questions), based on aggregated signals
 func findMissingSignals(signals map[string]int) []missing {
 	m := []missing{}
 

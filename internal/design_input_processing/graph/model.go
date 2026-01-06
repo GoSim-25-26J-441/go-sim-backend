@@ -1,6 +1,5 @@
 package graph
 
-// Graph is the “canonical graph” used for AMG/APD, Neo4j, GraphViz.
 type Graph struct {
 	Nodes []Node
 	Edges []Edge

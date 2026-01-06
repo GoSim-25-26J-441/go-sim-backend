@@ -11,13 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Assumes you already have these helpers/types in the same package:
-// - isArchitectureQuestion(string) bool
-// - appendChat(jobID string, turn chatTurn)
-// - fetchJSON(url string, timeout time.Duration) ([]byte, error)
-// - compactContext(igJSON, specJSON []byte, query string) string
-// - type chatTurn struct { Role, Text, Source string; Ts int64; Refs []string }
-
 func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 	msg := c.Query("message")
 	if msg == "" {
@@ -25,14 +18,12 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// Domain guard (simple)
 	if !isArchitectureQuestion(msg) {
-		// SSE early return
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
-		c.Header("X-Accel-Buffering", "no")          // nginx: disable buffering
-		c.Header("Access-Control-Allow-Origin", "*") // dev; restrict in prod
+		c.Header("X-Accel-Buffering", "no")
+		c.Header("Access-Control-Allow-Origin", "*")
 
 		fmt.Fprintf(c.Writer, "event: done\ndata: %s\n\n", `{"ok":true,"answer":"Architecture topics only."}`)
 		if f, ok := c.Writer.(http.Flusher); ok {
@@ -44,12 +35,10 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 	jobID := c.Param("id")
 	appendChat(jobID, chatTurn{Role: "user", Text: msg, Ts: time.Now().Unix()})
 
-	// Build compact context (same logic as non-streaming)
 	ig, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/intermediate", upstreamURL, jobID), 10*time.Second)
 	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second)
 	features := compactContext(ig, spec, msg)
 
-	// Prepare Ollama streaming request
 	payload := map[string]any{
 		"model":  "llama3:instruct",
 		"format": "json",
@@ -64,7 +53,7 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 
 	req, _ := http.NewRequest("POST", ollamaURL+"/api/generate", bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 0} // let stream run
+	client := &http.Client{Timeout: 0}
 	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": "ollama: " + err.Error()})
@@ -72,12 +61,11 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 	}
 	defer resp.Body.Close()
 
-	// SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")          // nginx: disable buffering
-	c.Header("Access-Control-Allow-Origin", "*") // dev; restrict in prod
+	c.Header("X-Accel-Buffering", "no")
+	c.Header("Access-Control-Allow-Origin", "*")
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -85,7 +73,6 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// Client disconnect handling + keep-alive pings
 	ctx := c.Request.Context()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -101,7 +88,6 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 		}
 	}()
 
-	// Stream tokens as they arrive
 	type chunk struct {
 		Response string `json:"response"`
 		Done     bool   `json:"done"`
@@ -109,7 +95,6 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 
 	var full string
 	sc := bufio.NewScanner(resp.Body)
-	// Increase buffer in case Ollama sends long lines
 	sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
 	for sc.Scan() {
@@ -122,7 +107,6 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 		if json.Unmarshal(sc.Bytes(), &ch) == nil {
 			if ch.Response != "" {
 				full += ch.Response
-				// Send partial to client UI (JSON string)
 				fmt.Fprintf(c.Writer, "event: delta\ndata: %s\n\n", jsonString(ch.Response))
 				flusher.Flush()
 			}
@@ -131,7 +115,7 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 			}
 		}
 	}
-	// finalize: try to extract {"answer": "..."} else use raw text
+
 	answer := full
 	var out struct {
 		Answer string `json:"answer"`
@@ -151,7 +135,6 @@ func ChatStream(c *gin.Context, upstreamURL, ollamaURL string) {
 	flusher.Flush()
 }
 
-// Helper: encode as JSON string
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
