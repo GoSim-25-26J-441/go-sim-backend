@@ -21,14 +21,17 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	}
 
 	var body struct {
-		Metadata map[string]interface{} `json:"metadata,omitempty"`
+		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
+		DurationMs   int64                  `json:"duration_ms,omitempty"`
+		Metadata     map[string]interface{} `json:"metadata,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		// Metadata is optional, so ignore binding errors for empty body
-		body.Metadata = make(map[string]interface{})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
 	}
 
+	// Create run in backend first
 	req := &domain.CreateRunRequest{
 		UserID:   userID,
 		Metadata: body.Metadata,
@@ -38,6 +41,34 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create run"})
 		return
+	}
+
+	// If scenario_yaml is provided, create run in simulation engine
+	if body.ScenarioYAML != "" && body.DurationMs > 0 {
+		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs)
+		if err != nil {
+			// Log error but don't fail the request - the run is already created in backend
+			// The user can retry by updating the run
+			c.JSON(http.StatusCreated, gin.H{
+				"run":     run,
+				"warning": "run created in backend but failed to create in simulation engine: " + err.Error(),
+			})
+			return
+		}
+
+		// Update run with engine run ID
+		engineRunIDPtr := &engineRunID
+		run, err = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+			EngineRunID: engineRunIDPtr,
+		})
+		if err != nil {
+			// Log error but return the run (engine run ID is set in engine)
+			c.JSON(http.StatusCreated, gin.H{
+				"run":     run,
+				"warning": "run created in engine but failed to update engine_run_id in backend",
+			})
+			return
+		}
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"run": run})
@@ -104,13 +135,46 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		return
 	}
 
+	// Get the run first to check if it has an engine_run_id
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+
+	// If status is being set to "running" and we have an engine_run_id, start the run in the engine
+	if body.Status != nil && *body.Status == domain.StatusRunning && run.EngineRunID != "" {
+		err := h.engineClient.StartRun(run.EngineRunID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to start run in simulation engine: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// If status is being set to "cancelled" and we have an engine_run_id, stop the run in the engine
+	if body.Status != nil && *body.Status == domain.StatusCancelled && run.EngineRunID != "" {
+		err := h.engineClient.StopRun(run.EngineRunID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to stop run in simulation engine: " + err.Error(),
+			})
+			return
+		}
+	}
+
 	req := &domain.UpdateRunRequest{
 		Status:      body.Status,
 		EngineRunID: body.EngineRunID,
 		Metadata:    body.Metadata,
 	}
 
-	run, err := h.simService.UpdateRun(runID, req)
+	run, err = h.simService.UpdateRun(runID, req)
 	if err != nil {
 		if err == domain.ErrRunNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
@@ -167,4 +231,3 @@ func (h *Handler) DeleteRun(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "run deleted successfully"})
 }
-

@@ -63,18 +63,18 @@ func (s *SimulationService) UpdateRun(runID string, req *domain.UpdateRunRequest
 			return nil, domain.ErrInvalidStatus
 		}
 		run.Status = *req.Status
-		
+
 		// Set completed_at if status is completed or failed
 		if *req.Status == domain.StatusCompleted || *req.Status == domain.StatusFailed {
 			now := time.Now()
 			run.CompletedAt = &now
 		}
 	}
-	
+
 	if req.EngineRunID != nil {
 		run.EngineRunID = *req.EngineRunID
 	}
-	
+
 	// Merge metadata if provided
 	if req.Metadata != nil && len(req.Metadata) > 0 {
 		if run.Metadata == nil {
@@ -110,4 +110,3 @@ func isValidStatus(status string) bool {
 		status == domain.StatusFailed ||
 		status == domain.StatusCancelled
 }
-

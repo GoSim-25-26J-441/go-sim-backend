@@ -14,11 +14,11 @@ import (
 	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
 	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
-	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
+	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -76,7 +76,7 @@ func main() {
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:8080"} // Common frontend dev ports
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With", "X-API-Key"}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With", "X-API-Key", "X-User-Id"}
 	corsConfig.AllowCredentials = true
 	corsConfig.MaxAge = 12 * 60 * 60 // 12 hours
 	router.Use(cors.New(corsConfig))
@@ -109,14 +109,23 @@ func main() {
 		log.Printf("Auth endpoints registered at /api/v1/auth")
 	}
 
-	// Simulation routes
-	simGroup := api.Group("/simulation")
-	// Initialize simulation module
-	simRunRepo := simrepo.NewRunRepository(redisClient)
-	simService := simservice.NewSimulationService(simRunRepo)
-	simHandler := simhttp.New(simService, cfg.Upstreams.SimulationEngineURL)
-	simHandler.Register(simGroup)
-	log.Printf("Simulation endpoints registered at /api/v1/simulation")
+	// Simulation routes (only if Firebase is initialized)
+	if authClient != nil {
+		simGroup := api.Group("/simulation")
+
+		// Apply Firebase Auth middleware to simulation routes
+		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+
+		// Initialize simulation module
+		simRunRepo := simrepo.NewRunRepository(redisClient)
+		simService := simservice.NewSimulationService(simRunRepo)
+		simHandler := simhttp.New(simService, cfg.Upstreams.SimulationEngineURL)
+		simHandler.Register(simGroup)
+
+		log.Printf("Simulation endpoints registered at /api/v1/simulation")
+	} else {
+		log.Printf("Simulation endpoints disabled (Firebase not initialized)")
+	}
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)

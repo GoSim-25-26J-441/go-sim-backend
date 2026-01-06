@@ -15,6 +15,7 @@ const (
 	runKeyPrefix       = "sim:run:"        // Key prefix for run data: sim:run:{run_id}
 	userRunSetPrefix   = "sim:user:"       // Set of run IDs for a user: sim:user:{user_id}
 	engineRunIDPrefix  = "sim:engine:"     // Mapping from engine run ID to our run ID: sim:engine:{engine_run_id} -> run_id
+	runEventChannelPrefix = "sim:events:"  // Pub/Sub channel for run events: sim:events:{run_id}
 	runTTL             = 7 * 24 * time.Hour // TTL for run data (7 days)
 )
 
@@ -147,6 +148,13 @@ func (r *RunRepository) Update(run *domain.SimulationRun) error {
 		return fmt.Errorf("failed to update run: %w", err)
 	}
 
+	// Publish update event to Redis Pub/Sub
+	eventChannel := r.runEventChannel(run.RunID)
+	eventData, err := json.Marshal(run)
+	if err == nil {
+		r.client.Publish(r.ctx, eventChannel, eventData)
+	}
+
 	return nil
 }
 
@@ -201,5 +209,9 @@ func (r *RunRepository) userRunSetKey(userID string) string {
 
 func (r *RunRepository) engineRunIDKey(engineRunID string) string {
 	return fmt.Sprintf("%s%s", engineRunIDPrefix, engineRunID)
+}
+
+func (r *RunRepository) runEventChannel(runID string) string {
+	return fmt.Sprintf("%s%s", runEventChannelPrefix, runID)
 }
 

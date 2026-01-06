@@ -8,6 +8,7 @@ import (
 type Handler struct {
 	simService          *service.SimulationService
 	simulationEngineURL string
+	engineClient        *SimulationEngineClient
 }
 
 // New creates a new Handler
@@ -15,5 +16,6 @@ func New(simService *service.SimulationService, simulationEngineURL string) *Han
 	return &Handler{
 		simService:          simService,
 		simulationEngineURL: simulationEngineURL,
+		engineClient:        NewSimulationEngineClient(simulationEngineURL),
 	}
 }
