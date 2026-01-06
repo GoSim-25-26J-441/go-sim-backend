@@ -105,7 +105,6 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 	defer txtF.Close()
 	tw := tabwriter.NewWriter(txtF, 0, 4, 2, ' ', 0)
 
-	// exact header requested by user (no metadata)
 	header := []string{
 		"id", "provider", "sku_id", "region", "instance_type", "instanceFamily",
 		"vcpu", "memory_gb", "price_per_hour", "currency", "unit",
@@ -266,7 +265,6 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 				if v, ok := attributes["instanceFamily"].(string); ok {
 					instanceFamily = v
 				}
-				// fallback: instanceFamily from instanceType token if available
 				if instanceFamily == "" && instanceType != "" {
 					instanceFamily = extractInstanceFamily(instanceType)
 				}
@@ -302,10 +300,8 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 
 			vcpu, memoryGB := extractSpecs(attributes, pl)
 
-			// extract all price entries (ondemand, spot, reserved 1yr/3yr)
 			priceEntries := extractAllPriceEntries(terms)
 
-			// For each priceEntry, emit a record
 			for _, pe := range priceEntries {
 				rec := &CloudComputePrice{
 					ID:                  fmt.Sprintf("aws|%s|%s|%s", skuID, region, pe.EntryID),
@@ -340,7 +336,6 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 		}
 		nextToken = resp.NextToken
 
-		// small jitter
 		time.Sleep(time.Duration(rand.Intn(100)+50) * time.Millisecond)
 	}
 
@@ -358,7 +353,6 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 	return nil
 }
 
-// PriceEntry represents a single purchasable price option derived from terms
 type PriceEntry struct {
 	EntryID             string   `json:"entry_id"`
 	PurchaseOption      string   `json:"purchase_option"`
@@ -547,19 +541,14 @@ func extractSpecs(attributes map[string]interface{}, rawJSON string) (*int, *flo
 }
 
 func extractInstanceFamily(instanceType string) string {
-	// simple heuristic: instance family is the prefix like "m5", "c6a", etc.
-	// take letters+digits prefix up to first dot or hyphen
 	if instanceType == "" {
 		return ""
 	}
 	if m := reInstToken.FindStringSubmatch(strings.ToLower(instanceType)); len(m) >= 1 {
-		// trim numeric suffix to leave family part if possible (e.g., m5.large -> m5)
 		token := m[0]
-		// remove trailing dot/part after dot
 		if idx := strings.IndexAny(token, ".-"); idx >= 0 {
 			token = token[:idx]
 		}
-		// trim after numeric part to capture family (e.g., c6a -> c6a)
 		return token
 	}
 	return ""

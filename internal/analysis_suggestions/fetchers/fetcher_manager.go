@@ -57,23 +57,23 @@ func main() {
 
 	for err := range errChan {
 		if err != nil {
-			log.Printf("⚠️ Fetcher error: %v", err)
+			log.Printf("Fetcher error: %v", err)
 		}
 	}
 
-	log.Printf("✅ All fetchers finished in %.2f seconds\n", time.Since(start).Seconds())
+	log.Printf("All fetchers finished in %.2f seconds\n", time.Since(start).Seconds())
 }
 
 func runFetcher(f Provider, errChan chan<- error) {
-	log.Printf("▶️ Starting %s fetcher...", f.Name)
+	log.Printf("Starting %s fetcher...", f.Name)
 	cmd := exec.Command("go", "run", f.Path)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
 		errChan <- err
-		log.Printf("❌ %s fetcher failed: %v", f.Name, err)
+		log.Printf("%s fetcher failed: %v", f.Name, err)
 		return
 	}
-	log.Printf("✅ %s fetcher completed successfully", f.Name)
+	log.Printf("%s fetcher completed successfully", f.Name)
 }

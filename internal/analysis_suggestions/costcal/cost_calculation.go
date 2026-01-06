@@ -746,7 +746,6 @@ func processExactMatches(matches []priceRow, provider string, targetVCPU int, ta
 	// Group purchase options
 	purchaseOptions := groupPurchaseOptions(instanceRows, provider)
 
-	// Sort purchase options: On-Demand first, then Reserved
 	sort.Slice(purchaseOptions, func(i, j int) bool {
 		if purchaseOptions[i].Type == "OnDemand" && purchaseOptions[j].Type != "OnDemand" {
 			return true
@@ -755,7 +754,6 @@ func processExactMatches(matches []priceRow, provider string, targetVCPU int, ta
 			return false
 		}
 		if purchaseOptions[i].Type == "Reserved" && purchaseOptions[j].Type == "Reserved" {
-			// Sort by lease length (1yr before 3yr)
 			if purchaseOptions[i].LeaseContractLength == "1yr" && purchaseOptions[j].LeaseContractLength == "3yr" {
 				return true
 			}
@@ -822,7 +820,6 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 	for instanceType, rows := range instanceGroups {
 		for _, row := range rows {
 			if row.PriceHour != nil && *row.PriceHour < lowestPrice {
-				// Check if this is an On-Demand or equivalent option
 				isOnDemand := false
 				if row.PurchaseOption != nil {
 					po := strings.ToLower(*row.PurchaseOption)
@@ -833,7 +830,6 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 						strings.Contains(po, "on demand") ||
 						po == ""
 				} else {
-					// If no purchase option specified, assume On-Demand
 					isOnDemand = true
 				}
 
@@ -845,12 +841,10 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 		}
 	}
 
-	// If no On-Demand found, use the first instance
 	if bestInstance == "" && len(matches) > 0 {
 		bestInstance = matches[0].InstanceType
 	}
 
-	// Collect all rows for the best instance
 	var instanceRows []priceRow
 	for _, match := range matches {
 		if match.InstanceType == bestInstance {
@@ -885,7 +879,6 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 			return false
 		}
 		if purchaseOptions[i].Type == "Reserved" && purchaseOptions[j].Type == "Reserved" {
-			// Sort by lease length (1yr before 3yr)
 			if purchaseOptions[i].LeaseContractLength == "1yr" && purchaseOptions[j].LeaseContractLength == "3yr" {
 				return true
 			}
@@ -947,7 +940,6 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 					leaseLength = *row.LeaseContractLength
 				}
 
-				// If no lease length in database, try to infer from purchase option
 				if leaseLength == "" {
 					if strings.Contains(po, "1year") || strings.Contains(po, "1-year") ||
 						strings.Contains(po, "1 yr") || strings.Contains(po, "1y") ||
@@ -981,7 +973,6 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 				}
 			}
 		} else {
-			// If no purchase option specified, assume On-Demand
 			optionType = "OnDemand"
 			onDemandPrice = pricePerHour
 		}

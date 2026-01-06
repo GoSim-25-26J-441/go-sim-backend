@@ -553,9 +553,8 @@ func normalizeLeaseContract(term string) string {
 	case strings.Contains(term, "5 year") || strings.Contains(term, "60 month"):
 		return "5 Year"
 	case term == "":
-		return "" // For OnDemand
+		return ""
 	default:
-		// Try to extract any numeric pattern
 		if re := regexp.MustCompile(`(\d+)\s*(year|month)`).FindStringSubmatch(term); len(re) >= 3 {
 			value := re[1]
 			unit := re[2]

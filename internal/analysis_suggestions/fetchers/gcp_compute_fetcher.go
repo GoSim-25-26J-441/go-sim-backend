@@ -140,7 +140,6 @@ func main() {
 						usageType = sku.Category.UsageType
 					}
 
-					// Determine purchase option
 					if strings.Contains(strings.ToLower(sku.Description), "preemptible") {
 						purchaseOption = "Preemptible"
 					} else if strings.Contains(strings.ToLower(sku.Description), "commitment") ||
@@ -208,10 +207,8 @@ func main() {
 }
 
 func extractInstanceType(sku *cloudbilling.Sku) string {
-	// Try to extract instance type from description
 	desc := strings.ToLower(sku.Description)
 
-	// Look for common GCP instance type patterns
 	patterns := []string{
 		"n1-standard", "n1-highmem", "n1-highcpu",
 		"n2-standard", "n2-highmem", "n2-highcpu", "n2d-standard", "n2d-highmem", "n2d-highcpu",
@@ -223,11 +220,9 @@ func extractInstanceType(sku *cloudbilling.Sku) string {
 
 	for _, pattern := range patterns {
 		if strings.Contains(desc, pattern) {
-			// Extract the full instance type (e.g., "n1-standard-4")
 			start := strings.Index(desc, pattern)
 			if start != -1 {
 				remaining := desc[start:]
-				// Find the end of the instance type (space, comma, or end of string)
 				end := len(remaining)
 				for i, char := range remaining {
 					if char == ' ' || char == ',' || char == '.' {
@@ -240,8 +235,7 @@ func extractInstanceType(sku *cloudbilling.Sku) string {
 		}
 	}
 
-	// Fallback: extract from SKU name
-	if strings.Contains(sku.Name, "services/6F81-5844-456A") { // Compute Engine service
+	if strings.Contains(sku.Name, "services/6F81-5844-456A") {
 		parts := strings.Split(sku.Name, "/")
 		if len(parts) > 0 {
 			lastPart := parts[len(parts)-1]
