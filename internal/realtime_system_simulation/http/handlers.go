@@ -1,6 +1,7 @@
 package http
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
@@ -45,7 +46,16 @@ func (h *Handler) CreateRun(c *gin.Context) {
 
 	// If scenario_yaml is provided, create run in simulation engine
 	if body.ScenarioYAML != "" && body.DurationMs > 0 {
-		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, h.callbackURL)
+		// Generate unique callback URL per run (includes run_id in path for identification)
+		var callbackURL string
+		if h.callbackURL != "" {
+			// Append run_id to callback URL path: /callback/{run_id}
+			callbackURL = h.callbackURL + "/" + run.RunID
+			log.Printf("Creating run in simulation engine with unique callback URL: %s", callbackURL)
+		} else {
+			log.Printf("Warning: SIMULATION_CALLBACK_URL not set - simulation engine will not call back when run completes")
+		}
+		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, callbackURL, h.callbackSecret)
 		if err != nil {
 			// Log error but don't fail the request - the run is already created in backend
 			// The user can retry by updating the run

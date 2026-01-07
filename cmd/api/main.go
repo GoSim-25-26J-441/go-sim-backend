@@ -109,31 +109,35 @@ func main() {
 		log.Printf("Auth endpoints registered at /api/v1/auth")
 	}
 
-	// Simulation routes (only if Firebase is initialized)
+	// Initialize simulation module (required for both user routes and callback routes)
+	simRunRepo := simrepo.NewRunRepository(redisClient)
+	simService := simservice.NewSimulationService(simRunRepo)
+	simHandler := simhttp.New(
+		simService,
+		cfg.Upstreams.SimulationEngineURL,
+		cfg.SimulationCallbacks.CallbackURL,
+		cfg.SimulationCallbacks.CallbackSecret,
+	)
+
+	// Simulation-engine callback routes (called by simulation engine, NOT by end-users)
+	// These routes should NOT require Firebase auth - they're called by the simulator
+	// Authentication is handled via callback secret (X-Simulation-Callback-Secret header)
+	simEngineGroup := api.Group("/simulation-engine")
+	simHandler.RegisterEngineCallbackRoutes(simEngineGroup)
+	log.Printf("Simulation engine callback endpoints registered at /api/v1/simulation-engine/runs/callback (no Firebase auth required)")
+
+	// Simulation routes (user-facing endpoints - require Firebase auth if Firebase is initialized)
 	if authClient != nil {
 		simGroup := api.Group("/simulation")
 
-		// Apply Firebase Auth middleware to simulation routes
+		// Apply Firebase Auth middleware to simulation routes (for user access)
 		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
-		// Initialize simulation module
-		simRunRepo := simrepo.NewRunRepository(redisClient)
-		simService := simservice.NewSimulationService(simRunRepo)
-		simHandler := simhttp.New(
-			simService,
-			cfg.Upstreams.SimulationEngineURL,
-			cfg.SimulationCallbacks.CallbackURL,
-			cfg.SimulationCallbacks.CallbackSecret,
-		)
 		simHandler.Register(simGroup)
 
-		// Simulation-engine callback routes (called by simulation engine, not by end-users)
-		simEngineGroup := api.Group("/simulation-engine")
-		simHandler.RegisterEngineCallbackRoutes(simEngineGroup)
-
-		log.Printf("Simulation endpoints registered at /api/v1/simulation")
+		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
 	} else {
-		log.Printf("Simulation endpoints disabled (Firebase not initialized)")
+		log.Printf("Simulation user endpoints disabled (Firebase not initialized)")
 	}
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
