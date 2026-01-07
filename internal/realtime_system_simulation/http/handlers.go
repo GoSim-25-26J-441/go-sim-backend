@@ -45,7 +45,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 
 	// If scenario_yaml is provided, create run in simulation engine
 	if body.ScenarioYAML != "" && body.DurationMs > 0 {
-		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs)
+		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, h.callbackURL)
 		if err != nil {
 			// Log error but don't fail the request - the run is already created in backend
 			// The user can retry by updating the run

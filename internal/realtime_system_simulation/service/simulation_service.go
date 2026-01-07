@@ -64,8 +64,8 @@ func (s *SimulationService) UpdateRun(runID string, req *domain.UpdateRunRequest
 		}
 		run.Status = *req.Status
 
-		// Set completed_at if status is completed or failed
-		if *req.Status == domain.StatusCompleted || *req.Status == domain.StatusFailed {
+		// Set completed_at if status is completed, failed, or cancelled (terminal states)
+		if *req.Status == domain.StatusCompleted || *req.Status == domain.StatusFailed || *req.Status == domain.StatusCancelled {
 			now := time.Now()
 			run.CompletedAt = &now
 		}

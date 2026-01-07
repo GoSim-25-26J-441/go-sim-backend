@@ -35,6 +35,7 @@ type CreateRunRequest struct {
 type RunInput struct {
 	ScenarioYAML string `json:"scenario_yaml"`
 	DurationMs   int64  `json:"duration_ms"`
+	CallbackURL  string `json:"callback_url,omitempty"`
 }
 
 // CreateRunResponse represents the response from creating a run
@@ -47,12 +48,13 @@ type CreateRunResponse struct {
 }
 
 // CreateRun creates a run in the simulation engine
-func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, durationMs int64) (string, error) {
+func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, durationMs int64, callbackURL string) (string, error) {
 	reqBody := CreateRunRequest{
 		RunID: runID,
 		Input: &RunInput{
 			ScenarioYAML: scenarioYAML,
 			DurationMs:   durationMs,
+			CallbackURL:  callbackURL,
 		},
 	}
 

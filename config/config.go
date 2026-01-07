@@ -52,6 +52,15 @@ type RedisConfig struct {
 	DB       int // Database number (0-15)
 }
 
+type SimulationCallbacksConfig struct {
+	// CallbackURL is the full URL that the simulation engine should call when a run changes terminal state.
+	// Example: http://localhost:8000/api/v1/simulation-engine/runs/callback
+	CallbackURL string
+	// CallbackSecret is a shared secret to authenticate callbacks from the simulation engine.
+	// The engine should set header: X-Simulation-Callback-Secret: <secret>
+	CallbackSecret string
+}
+
 type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
@@ -61,6 +70,7 @@ type Config struct {
 	RAG       RAGConfig
 	Firebase  FirebaseConfig
 	Redis     RedisConfig
+	SimulationCallbacks SimulationCallbacksConfig
 }
 
 func Load() (*Config, error) {
@@ -104,6 +114,10 @@ func Load() (*Config, error) {
 			Port:     getEnvAsInt("REDIS_PORT", 6379),
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getEnvAsInt("REDIS_DB", 0),
+		},
+		SimulationCallbacks: SimulationCallbacksConfig{
+			CallbackURL:    getEnv("SIMULATION_CALLBACK_URL", ""),
+			CallbackSecret: getEnv("SIMULATION_CALLBACK_SECRET", ""),
 		},
 	}
 

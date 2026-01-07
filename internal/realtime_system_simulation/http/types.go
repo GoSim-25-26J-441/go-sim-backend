@@ -9,13 +9,17 @@ type Handler struct {
 	simService          *service.SimulationService
 	simulationEngineURL string
 	engineClient        *SimulationEngineClient
+	callbackURL         string
+	callbackSecret      string
 }
 
 // New creates a new Handler
-func New(simService *service.SimulationService, simulationEngineURL string) *Handler {
+func New(simService *service.SimulationService, simulationEngineURL string, callbackURL string, callbackSecret string) *Handler {
 	return &Handler{
 		simService:          simService,
 		simulationEngineURL: simulationEngineURL,
 		engineClient:        NewSimulationEngineClient(simulationEngineURL),
+		callbackURL:         callbackURL,
+		callbackSecret:      callbackSecret,
 	}
 }

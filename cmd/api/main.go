@@ -119,8 +119,17 @@ func main() {
 		// Initialize simulation module
 		simRunRepo := simrepo.NewRunRepository(redisClient)
 		simService := simservice.NewSimulationService(simRunRepo)
-		simHandler := simhttp.New(simService, cfg.Upstreams.SimulationEngineURL)
+		simHandler := simhttp.New(
+			simService,
+			cfg.Upstreams.SimulationEngineURL,
+			cfg.SimulationCallbacks.CallbackURL,
+			cfg.SimulationCallbacks.CallbackSecret,
+		)
 		simHandler.Register(simGroup)
+
+		// Simulation-engine callback routes (called by simulation engine, not by end-users)
+		simEngineGroup := api.Group("/simulation-engine")
+		simHandler.RegisterEngineCallbackRoutes(simEngineGroup)
 
 		log.Printf("Simulation endpoints registered at /api/v1/simulation")
 	} else {
