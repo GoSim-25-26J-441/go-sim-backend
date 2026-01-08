@@ -35,6 +35,7 @@ type CreateRunRequest struct {
 type RunInput struct {
 	ScenarioYAML    string `json:"scenario_yaml"`
 	DurationMs      int64  `json:"duration_ms"`
+	RealTimeMode    *bool  `json:"real_time_mode,omitempty"`  // Enable real-time mode for faster simulation
 	CallbackURL     string `json:"callback_url,omitempty"`
 	CallbackSecret  string `json:"callback_secret,omitempty"` // Secret for simulator to use when calling back
 }
@@ -49,12 +50,13 @@ type CreateRunResponse struct {
 }
 
 // CreateRun creates a run in the simulation engine
-func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, durationMs int64, callbackURL string, callbackSecret string) (string, error) {
+func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, durationMs int64, realTimeMode *bool, callbackURL string, callbackSecret string) (string, error) {
 	reqBody := CreateRunRequest{
 		RunID: runID,
 		Input: &RunInput{
 			ScenarioYAML:   scenarioYAML,
 			DurationMs:     durationMs,
+			RealTimeMode:   realTimeMode,
 			CallbackURL:    callbackURL,
 			CallbackSecret: callbackSecret,
 		},

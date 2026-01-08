@@ -24,6 +24,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	var body struct {
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
+		RealTimeMode *bool                  `json:"real_time_mode,omitempty"` // Enable real-time mode
 		Metadata     map[string]interface{} `json:"metadata,omitempty"`
 	}
 
@@ -55,7 +56,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		} else {
 			log.Printf("Warning: SIMULATION_CALLBACK_URL not set - simulation engine will not call back when run completes")
 		}
-		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, callbackURL, h.callbackSecret)
+		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, body.RealTimeMode, callbackURL, h.callbackSecret)
 		if err != nil {
 			// Log error but don't fail the request - the run is already created in backend
 			// The user can retry by updating the run

@@ -59,15 +59,18 @@ func (h *Handler) StreamRunEvents(c *gin.Context) {
 	// Get context for cancellation
 	ctx := c.Request.Context()
 
+	// Subscribe to Redis Pub/Sub for real-time updates
+	// Channel format: sim:events:{run_id}
+	eventChannel := fmt.Sprintf("sim:events:%s", runID)
+	pubsub := h.redisClient.Subscribe(ctx, eventChannel)
+	defer pubsub.Close()
+
 	// Set up keep-alive pings
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	// Poll for updates (checks every second for changes)
-	pollTicker := time.NewTicker(1 * time.Second)
-	defer pollTicker.Stop()
-
-	lastUpdatedAt := run.UpdatedAt
+	// Channel for pubsub messages
+	pubsubChannel := pubsub.Channel()
 
 	for {
 		select {
@@ -80,29 +83,33 @@ func (h *Handler) StreamRunEvents(c *gin.Context) {
 			fmt.Fprint(c.Writer, ": keep-alive\n\n")
 			flusher.Flush()
 
-		case <-pollTicker.C:
-			// Poll for updates
-			updatedRun, err := h.simService.GetRun(runID)
-			if err != nil {
-				// Run might have been deleted
-				if err == domain.ErrRunNotFound {
-					eventData, _ := json.Marshal(gin.H{"event": "deleted", "run_id": runID})
-					fmt.Fprintf(c.Writer, "event: deleted\ndata: %s\n\n", string(eventData))
-					flusher.Flush()
-					return
-				}
+		case msg := <-pubsubChannel:
+			// Received update event from Redis Pub/Sub
+			if msg == nil {
 				continue
 			}
 
-			// Check if run was updated
-			if updatedRun.UpdatedAt.After(lastUpdatedAt) {
-				lastUpdatedAt = updatedRun.UpdatedAt
-
-				// Send update event
-				eventData, _ := json.Marshal(gin.H{"run": updatedRun})
-				fmt.Fprintf(c.Writer, "event: update\ndata: %s\n\n", string(eventData))
-				flusher.Flush()
+			// Parse the run data from the message
+			var updatedRun domain.SimulationRun
+			if err := json.Unmarshal([]byte(msg.Payload), &updatedRun); err != nil {
+				// If parsing fails, fetch the latest run state from service
+				latestRun, err := h.simService.GetRun(runID)
+				if err != nil {
+					if err == domain.ErrRunNotFound {
+						eventData, _ := json.Marshal(gin.H{"event": "deleted", "run_id": runID})
+						fmt.Fprintf(c.Writer, "event: deleted\ndata: %s\n\n", string(eventData))
+						flusher.Flush()
+						return
+					}
+					continue
+				}
+				updatedRun = *latestRun
 			}
+
+			// Send update event to frontend
+			eventData, _ := json.Marshal(gin.H{"run": updatedRun})
+			fmt.Fprintf(c.Writer, "event: update\ndata: %s\n\n", string(eventData))
+			flusher.Flush()
 		}
 	}
 }

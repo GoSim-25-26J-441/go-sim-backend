@@ -117,6 +117,7 @@ func main() {
 		cfg.Upstreams.SimulationEngineURL,
 		cfg.SimulationCallbacks.CallbackURL,
 		cfg.SimulationCallbacks.CallbackSecret,
+		redisClient,
 	)
 
 	// Simulation-engine callback routes (called by simulation engine, NOT by end-users)

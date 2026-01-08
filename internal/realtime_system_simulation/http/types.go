@@ -2,6 +2,7 @@ package http
 
 import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
+	"github.com/redis/go-redis/v9"
 )
 
 // Handler handles HTTP requests for simulation runs
@@ -11,15 +12,17 @@ type Handler struct {
 	engineClient        *SimulationEngineClient
 	callbackURL         string
 	callbackSecret      string
+	redisClient         *redis.Client
 }
 
 // New creates a new Handler
-func New(simService *service.SimulationService, simulationEngineURL string, callbackURL string, callbackSecret string) *Handler {
+func New(simService *service.SimulationService, simulationEngineURL string, callbackURL string, callbackSecret string, redisClient *redis.Client) *Handler {
 	return &Handler{
 		simService:          simService,
 		simulationEngineURL: simulationEngineURL,
 		engineClient:        NewSimulationEngineClient(simulationEngineURL),
 		callbackURL:         callbackURL,
 		callbackSecret:      callbackSecret,
+		redisClient:         redisClient,
 	}
 }
