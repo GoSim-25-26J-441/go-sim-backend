@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/service"
@@ -9,17 +10,26 @@ import (
 
 func RunAnalyze(args []string) {
 	if len(args) < 1 {
-		panic("usage: analyze <yamlPath> [outDir]")
+		log.Fatal("usage: worker analyze <yamlPath> [outDir] [title]")
 	}
-	yaml := args[0]
-	out := "out"
-	if len(args) > 1 {
-		out = args[1]
+
+	yamlPath := args[0]
+
+	outDir := "out"
+	if len(args) > 1 && args[1] != "" {
+		outDir = args[1]
 	}
-	res, err := service.AnalyzeYAML(yaml, out, "Architecture", os.Getenv("DOT_BIN"))
+
+	title := "Architecture"
+	if len(args) > 2 && args[2] != "" {
+		title = args[2]
+	}
+
+	res, err := service.AnalyzeYAML(yamlPath, outDir, title, os.Getenv("DOT_BIN"))
 	if err != nil {
-		panic(err)
+		log.Fatalf("analyze failed: %v", err)
 	}
+
 	fmt.Printf("Wrote: %s, %s\n", res.DOTPath, res.SVGPath)
 	fmt.Printf("Detections (%d):\n", len(res.Detections))
 	for _, d := range res.Detections {

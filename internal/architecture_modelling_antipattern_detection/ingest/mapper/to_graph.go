@@ -9,7 +9,7 @@ import (
 )
 
 func idify(kind domain.NodeKind, name string) string {
-	return fmt.Sprintf("%s:%s", kind, strings.ToLower(name))
+	return fmt.Sprintf("%s:%s", kind, strings.ToLower(strings.TrimSpace(name)))
 }
 
 func ensureNode(g *domain.Graph, kind domain.NodeKind, name string) string {
@@ -24,26 +24,92 @@ func ensureNode(g *domain.Graph, kind domain.NodeKind, name string) string {
 	return id
 }
 
+func isNewStyle(s *parser.YSpec) bool {
+
+	return s != nil && len(s.Dependencies) > 0
+}
+
 func ToGraph(s *parser.YSpec) *domain.Graph {
 	g := domain.NewGraph()
+	if s == nil {
+		return g
+	}
 
 
 	for _, d := range s.Databases {
+		if strings.TrimSpace(d.Name) == "" {
+			continue
+		}
 		_ = ensureNode(g, domain.NodeDB, d.Name)
 	}
 
 
-	for _, svc := range s.Services {
-		_ = ensureNode(g, domain.NodeService, svc.Name)
+	for _, ds := range s.Datastores {
+		if strings.TrimSpace(ds.Name) == "" {
+			continue
+		}
+		_ = ensureNode(g, domain.NodeDB, ds.Name)
 	}
 
 
 	for _, svc := range s.Services {
+		if strings.TrimSpace(svc.Name) == "" {
+			continue
+		}
+		_ = ensureNode(g, domain.NodeService, svc.Name)
+	}
+
+
+	if isNewStyle(s) {
+		
+		dsSet := map[string]bool{}
+		for _, ds := range s.Datastores {
+			dsSet[strings.ToLower(strings.TrimSpace(ds.Name))] = true
+		}
+
+		kindFor := func(name string) domain.NodeKind {
+			n := strings.ToLower(strings.TrimSpace(name))
+			if dsSet[n] {
+				return domain.NodeDB
+			}
+			return domain.NodeService
+		}
+
+		for _, dep := range s.Dependencies {
+			if strings.TrimSpace(dep.From) == "" || strings.TrimSpace(dep.To) == "" {
+				continue
+			}
+
+			from := ensureNode(g, kindFor(dep.From), dep.From)
+			to := ensureNode(g, kindFor(dep.To), dep.To)
+
+			attrs := domain.Attrs{
+				"sync":     dep.Sync,
+				"dep_kind": strings.ToLower(strings.TrimSpace(dep.Kind)),
+			}
+			g.AddEdge(&domain.Edge{
+				From:  from,
+				To:    to,
+				Kind:  domain.EdgeCalls,
+				Attrs: attrs,
+			})
+		}
+
+		return g
+	}
+
+	for _, svc := range s.Services {
+		if strings.TrimSpace(svc.Name) == "" {
+			continue
+		}
 		from := ensureNode(g, domain.NodeService, svc.Name)
 
-
 		for _, c := range svc.Calls {
+			if strings.TrimSpace(c.To) == "" {
+				continue
+			}
 			to := ensureNode(g, domain.NodeService, c.To)
+
 			g.AddEdge(&domain.Edge{
 				From: from,
 				To:   to,
@@ -53,11 +119,15 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 					"rate_per_min": c.RatePerMin,
 					"per_item":     c.PerItem,
 					"count":        len(c.Endpoints),
+					"sync": true,
 				},
 			})
 		}
 
 		for _, db := range svc.Databases.Reads {
+			if strings.TrimSpace(db) == "" {
+				continue
+			}
 			to := ensureNode(g, domain.NodeDB, db)
 			g.AddEdge(&domain.Edge{
 				From: from,
@@ -66,8 +136,10 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 			})
 		}
 
-
 		for _, db := range svc.Databases.Writes {
+			if strings.TrimSpace(db) == "" {
+				continue
+			}
 			to := ensureNode(g, domain.NodeDB, db)
 			g.AddEdge(&domain.Edge{
 				From: from,
@@ -78,7 +150,7 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 				},
 			})
 
-			if n, ok := g.Nodes[to]; ok {
+			if n, ok := g.Nodes[to]; ok && n != nil {
 				if n.Attrs == nil {
 					n.Attrs = domain.Attrs{}
 				}

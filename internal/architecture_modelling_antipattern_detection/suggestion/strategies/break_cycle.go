@@ -13,136 +13,42 @@ type breakCycle struct{}
 func (breakCycle) Kind() domain.AntiPatternKind { return domain.APCycles }
 
 func (breakCycle) Suggest(g *domain.Graph, det domain.Detection) suggestion.Suggestion {
-	names := namesFromNodeIDs(g, det.Nodes)
-
-
+	names := det.Nodes
 	loop := ""
 	if len(names) >= 2 {
 		loop = strings.Join(names, " → ") + " → " + names[0]
 	}
 
-	removeFrom := ""
-	removeTo := ""
-	if len(det.Nodes) >= 2 {
-		for _, fromID := range det.Nodes {
-			fromName := nodeName(g, fromID)
-			for _, toID := range det.Nodes {
-				if toID == fromID {
-					continue
-				}
-				toName := nodeName(g, toID)
-
-
-				if _, _, ok := findCallEdgeBetween(g, fromName, toName); ok {
-					removeFrom = fromName
-					removeTo = toName
-					break
-				}
-			}
-			if removeFrom != "" {
-				break
-			}
-		}
-	}
-
-	title := "Break the cycle (remove circular dependencies)"
+	title := "Break cyclic dependency"
 	if loop != "" {
 		title = "Break cycle: " + loop
 	}
 
-	bullets := []string{}
-	if loop != "" {
-		bullets = append(bullets, "Detected circular dependency: "+loop)
-	} else if len(names) > 0 {
-		bullets = append(bullets, "Detected a circular dependency among: "+joinNice(names))
+	bullets := []string{
+		"Services form a loop of dependencies.",
+		"Fix: remove one edge in the cycle or convert it to async/event-based.",
+		"Auto-fix: remove one dependency edge inside the loop.",
 	}
 
-	bullets = append(bullets,
-		"Why it matters: if one service slows down/fails, the entire loop can cascade and block requests.",
-	)
-
-	if removeFrom != "" && removeTo != "" {
-		bullets = append(bullets,
-			"Auto-fix preview: we will remove the direct call link "+removeFrom+" → "+removeTo+" to break the cycle.",
-			"Recommended replacement: publish an event from "+removeFrom+" (queue/pub-sub) and let "+removeTo+" consume it asynchronously.",
-		)
-	} else {
-		bullets = append(bullets,
-			"Auto-fix preview: we will remove one call link inside the loop to break the cycle (then re-run detection).",
-		)
-	}
-
-	return suggestion.Suggestion{
-		Kind:    det.Kind,
-		Title:   title,
-		Bullets: bullets,
-	}
+	return suggestion.Suggestion{Kind: det.Kind, Title: title, Bullets: bullets}
 }
 
-
 func (breakCycle) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
-	if len(det.Nodes) < 2 {
+	if spec == nil || len(det.Nodes) < 2 {
 		return false, nil
 	}
 
-	for _, fromID := range det.Nodes {
-		fromName := nodeName(g, fromID)
-		svc := findService(spec, fromName)
-		if svc == nil {
-			continue
-		}
-
-		for _, toID := range det.Nodes {
-			if toID == fromID {
+	for _, from := range det.Nodes {
+		for _, to := range det.Nodes {
+			if to == from {
 				continue
 			}
-			toName := nodeName(g, toID)
-
-			changed := false
-			newCalls := make([]parser.YCall, 0, len(svc.Calls))
-			for _, c := range svc.Calls {
-				if equalFold(c.To, toName) && !changed {
-					changed = true
-					continue
-				}
-				newCalls = append(newCalls, c)
-			}
-			if changed {
-				svc.Calls = newCalls
-				return true, []string{"Removed one call link to break the cycle: " + fromName + " → " + toName}
+			if ok, note := removeDependencyOnce(spec, from, to); ok {
+				return true, []string{note}
 			}
 		}
 	}
-
 	return false, nil
-}
-
-func equalFold(a, b string) bool { return len(a) == len(b) && (a == b || (a != "" && b != "" && stringsEqualFold(a, b))) }
-
-
-func stringsEqualFold(a, b string) bool {
-
-	if a == b {
-		return true
-	}
-
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		aa := a[i]
-		bb := b[i]
-		if aa >= 'A' && aa <= 'Z' {
-			aa = aa - 'A' + 'a'
-		}
-		if bb >= 'A' && bb <= 'Z' {
-			bb = bb - 'A' + 'a'
-		}
-		if aa != bb {
-			return false
-		}
-	}
-	return true
 }
 
 func init() { suggestion.Register(breakCycle{}) }

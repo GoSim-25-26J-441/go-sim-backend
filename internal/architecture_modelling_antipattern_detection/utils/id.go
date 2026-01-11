@@ -7,6 +7,8 @@ import (
 
 func NewID() string {
 	var b [8]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "0000000000000000"
+	}
 	return hex.EncodeToString(b[:])
 }

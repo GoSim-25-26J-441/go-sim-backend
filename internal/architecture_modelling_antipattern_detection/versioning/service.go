@@ -47,7 +47,7 @@ func CreateVersion(jobID, outBaseDir, label string, yamlBytes []byte) (*Version,
 		Label:     label,
 		Dir:       dir,
 		YAMLPath:  yamlPath,
-		CreatedAt: time.Now(),
+		CreatedAt: time.Now().UTC(),
 	}
 
 	metaPath := filepath.Join(dir, "version.json")

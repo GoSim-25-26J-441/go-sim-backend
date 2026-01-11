@@ -71,7 +71,6 @@ func AnalyzeUpload(c *gin.Context) {
 		}
 	}
 
-
 	_ = os.MkdirAll("/app/incoming", 0o755)
 	ext := filepath.Ext(file.Filename)
 	if ext == "" {

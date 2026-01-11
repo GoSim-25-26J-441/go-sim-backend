@@ -14,95 +14,82 @@ type godService struct{}
 func (godService) Kind() domain.AntiPatternKind { return domain.APGodService }
 
 func (godService) Suggest(g *domain.Graph, det domain.Detection) suggestion.Suggestion {
-	name := ""
-	if len(det.Nodes) >= 1 {
-		name = nodeName(g, det.Nodes[0])
+	main := ""
+	if len(det.Nodes) > 0 {
+		main = det.Nodes[0]
 	}
 
-	title := "Split the god service"
-	if name != "" {
-		title = fmt.Sprintf("Split the god service (%s)", name)
-	}
-
-	outCalls := 0
-	inCalls := 0
-	dbTouches := 0
-
-	if g != nil && name != "" {
-		for _, e := range g.Edges {
-			from := nodeName(g, e.From)
-			to := nodeName(g, e.To)
-
-			if e.Kind == domain.EdgeCalls {
-				if strings.EqualFold(from, name) {
-					outCalls++
-				}
-				if strings.EqualFold(to, name) {
-					inCalls++
-				}
-			}
-			if e.Kind == domain.EdgeReads || e.Kind == domain.EdgeWrites {
-				if strings.EqualFold(from, name) {
-					dbTouches++
-				}
-			}
-		}
+	title := "Split god service"
+	if main != "" {
+		title = fmt.Sprintf("Split god service (%s)", main)
 	}
 
 	bullets := []string{
-		"This service has too many responsibilities and dependencies (hard to change and scale).",
-	}
-	if name != "" {
-		bullets = append(bullets,
-			fmt.Sprintf("%s summary: outgoing calls=%d, incoming calls=%d, DB touches=%d.", name, outCalls, inCalls, dbTouches),
-			"Auto-fix preview: we will move about half of "+name+"'s outgoing calls into a new service ("+name+"_split) and add one delegate call "+name+" → "+name+"_split.",
-		)
+		"One service has too many dependencies (high centrality).",
+		"Fix: split responsibilities into smaller services.",
+		"Auto-fix: move some outgoing dependencies to a new service and add a delegate edge.",
 	}
 
-	bullets = append(bullets,
-		"Better long-term fix: split by bounded context (Orders / Payments / Shipping style split).",
-	)
-
-	return suggestion.Suggestion{
-		Kind:    det.Kind,
-		Title:   title,
-		Bullets: bullets,
-	}
+	return suggestion.Suggestion{Kind: det.Kind, Title: title, Bullets: bullets}
 }
 
-
 func (godService) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {
-	if len(det.Nodes) < 1 {
+	if spec == nil || len(det.Nodes) < 1 {
 		return false, nil
 	}
-	mainName := nodeName(g, det.Nodes[0])
-	mainSvc := findService(spec, mainName)
-	if mainSvc == nil {
+	main := det.Nodes[0]
+
+	var outIdx []int
+	for i := range spec.Dependencies {
+		if spec.Dependencies[i].From == "" || spec.Dependencies[i].To == "" {
+			continue
+		}
+		if stringsEqualFold(spec.Dependencies[i].From, main) {
+			outIdx = append(outIdx, i)
+		}
+	}
+	if len(outIdx) < 2 {
 		return false, nil
 	}
 
-	if len(mainSvc.Calls) < 2 {
-		return false, nil
+	newName := uniqueServiceName(spec, main+"_split")
+	ensureService(spec, newName)
+
+	half := len(outIdx) / 2
+	if half == 0 {
+		half = 1
 	}
 
-	newName := mainSvc.Name + "_split"
-	splitSvc := ensureService(spec, newName)
+	moved := 0
+	for j := half; j < len(outIdx); j++ {
+		i := outIdx[j]
+		spec.Dependencies[i].From = newName
+		moved++
+	}
 
-	half := len(mainSvc.Calls) / 2
-	moved := mainSvc.Calls[half:]
-	mainSvc.Calls = mainSvc.Calls[:half]
-	splitSvc.Calls = append(splitSvc.Calls, moved...)
-
-	mainSvc.Calls = append(mainSvc.Calls, parser.YCall{
-		To:         newName,
-		Endpoints:  []string{"POST /delegate"},
-		RatePerMin: 30,
-		PerItem:    false,
+	_, note := addDependencyIfMissing(spec, parser.YDependency{
+		From: main,
+		To:   newName,
+		Kind: "rest",
+		Sync: true,
 	})
 
-	return true, []string{
-		fmt.Sprintf("Split %s into %s (moved %d calls). Added delegate call %s → %s.", mainSvc.Name, newName, len(moved), mainSvc.Name, newName),
+	notes := []string{fmt.Sprintf("Moved %d outgoing dependencies from %s to %s.", moved, main, newName)}
+	if note != "" {
+		notes = append(notes, note)
 	}
+
+	return true, notes
+}
+
+func stringsEqualFold(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if len(a) != len(b) {
+		return strings.EqualFold(a, b)
+	}
+	return strings.EqualFold(a, b)
 }
 
 func init() { suggestion.Register(godService{}) }

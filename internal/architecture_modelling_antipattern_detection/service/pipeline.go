@@ -11,6 +11,7 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/graph/export"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/mapper"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/parser"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/validator"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/utils"
 )
 
@@ -26,6 +27,9 @@ func AnalyzeYAML(path string, outDir string, title string, dotBin string) (*Resu
 	if err != nil {
 		return nil, err
 	}
+	if err := validator.Validate(ys); err != nil {
+		return nil, err
+	}
 	g := mapper.ToGraph(ys)
 	return analyzeGraphToDir(g, outDir, title, dotBin)
 }
@@ -35,10 +39,12 @@ func AnalyzeYAMLBytesToDir(yamlBytes []byte, outDir string, title string, dotBin
 	if err != nil {
 		return nil, err
 	}
+	if err := validator.Validate(ys); err != nil {
+		return nil, err
+	}
 	g := mapper.ToGraph(ys)
 	return analyzeGraphToDir(g, outDir, title, dotBin)
 }
-
 
 func AnalyzeYAMLBytes(yamlBytes []byte, outBaseDir string, title string, dotBin string) (*Result, error) {
 	if outBaseDir == "" {
@@ -54,7 +60,6 @@ func analyzeGraphToDir(g *domain.Graph, outDir string, title string, dotBin stri
 	}
 	_ = os.MkdirAll(outDir, 0755)
 
-
 	dot := export.ToDOT(g, title)
 	dotPath := filepath.Join(outDir, "graph.dot")
 	if err := utils.WriteFile(dotPath, dot); err != nil {
@@ -63,18 +68,16 @@ func analyzeGraphToDir(g *domain.Graph, outDir string, title string, dotBin stri
 
 	svgPath := filepath.Join(outDir, "graph.svg")
 	if dotBin == "" {
-		dotBin = "dot" 
+		dotBin = "dot"
 	}
 	if err := utils.DotTo(dotPath, svgPath, "svg", dotBin); err != nil {
 		return nil, fmt.Errorf("graphviz render: %w", err)
 	}
 
-
 	all, err := detection.RunAll(g)
 	if err != nil {
 		return nil, err
 	}
-
 
 	for i := range all {
 		if all[i].Nodes == nil {

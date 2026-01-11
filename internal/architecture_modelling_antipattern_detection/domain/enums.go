@@ -18,12 +18,14 @@ const (
 type AntiPatternKind string
 
 const (
-	APCycles         AntiPatternKind = "cycles"
-	APGodService     AntiPatternKind = "god_service"
-	APTightCoupling  AntiPatternKind = "tight_coupling"
-	APSharedDBWrites AntiPatternKind = "shared_db_writes"
-	APCrossDBRead    AntiPatternKind = "cross_db_read"
-	APChattyCalls    AntiPatternKind = "chatty_calls"
+	APCycles             AntiPatternKind = "cycles"
+	APGodService         AntiPatternKind = "god_service"
+	APTightCoupling      AntiPatternKind = "tight_coupling"
+	APSharedDatabase     AntiPatternKind = "shared_database"
+	APSyncCallChain      AntiPatternKind = "sync_call_chain"
+	APPingPongDependency AntiPatternKind = "ping_pong_dependency"
+	APReverseDependency  AntiPatternKind = "reverse_dependency"
+	APUIOrchestrator     AntiPatternKind = "ui_orchestrator"
 )
 
 type Severity string

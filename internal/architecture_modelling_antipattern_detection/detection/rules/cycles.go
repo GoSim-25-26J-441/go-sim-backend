@@ -6,6 +6,7 @@ import (
 )
 
 type cycles struct{}
+
 func (c cycles) Name() string { return "cycles" }
 
 func (c cycles) Detect(g *domain.Graph) ([]domain.Detection, error) {
@@ -18,24 +19,42 @@ func (c cycles) Detect(g *domain.Graph) ([]domain.Detection, error) {
 
 	var nodes []string
 	for _, n := range g.Nodes {
-		if n.Kind == domain.NodeService { nodes = append(nodes, n.ID) }
+		if n.Kind == domain.NodeService {
+			nodes = append(nodes, n.ID)
+		}
 	}
+
+	isSvc := func(nodeID string) bool {
+		n, ok := g.Nodes[nodeID]
+		return ok && n.Kind == domain.NodeService
+	}
+
 	var dfs func(v string)
 	dfs = func(v string) {
 		index++
 		id[v], low[v] = index, index
-		stack = append(stack, v); onStack[v] = true
+		stack = append(stack, v)
+		onStack[v] = true
 
 		for _, e := range g.Out[v] {
-			if e.Kind != domain.EdgeCalls { continue }
+			if e.Kind != domain.EdgeCalls {
+				continue
+			}
 			w := e.To
+			if !isSvc(w) {
+				continue
+			}
+
 			if _, seen := id[w]; !seen {
-				dfs(w); if low[w] < low[v] { low[v] = low[w] }
+				dfs(w)
+				if low[w] < low[v] {
+					low[v] = low[w]
+				}
 			} else if onStack[w] && id[w] < low[v] {
 				low[v] = id[w]
 			}
 		}
-		
+
 		if low[v] == id[v] {
 			comp := []string{}
 			for {
@@ -43,22 +62,30 @@ func (c cycles) Detect(g *domain.Graph) ([]domain.Detection, error) {
 				stack = stack[:len(stack)-1]
 				onStack[w] = false
 				comp = append(comp, w)
-				if w == v { break }
+				if w == v {
+					break
+				}
 			}
 			if len(comp) > 1 {
 				dets = append(dets, domain.Detection{
-					Kind: domain.APCycles, Severity: domain.SeverityHigh,
-					Title: "Cyclic dependency",
-					Summary: "Services mutually depend on each other",
-					Nodes: comp,
+					Kind:     domain.APCycles,
+					Severity: domain.SeverityHigh,
+					Title:    "Cyclic dependency",
+					Summary:  "A loop of service dependencies was detected",
+					Nodes:    comp,
+					Evidence: domain.Attrs{"cycle_size": len(comp)},
 				})
 			}
 		}
 	}
+
 	for _, v := range nodes {
-		if _, seen := id[v]; !seen { dfs(v) }
+		if _, seen := id[v]; !seen {
+			dfs(v)
+		}
 	}
+
 	return dets, nil
 }
 
-func init(){ detection.Register(cycles{}) }
+func init() { detection.Register(cycles{}) }
