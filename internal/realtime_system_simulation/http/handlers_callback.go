@@ -74,19 +74,34 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	}
 
 	backendStatus := mapEngineStatusToBackendStatus(statusStr)
-	updateMeta := map[string]interface{}{
-		"engine_status":             statusStr,
-		"engine_status_string":      body.StatusString,
-		"engine_created_at_unix_ms": body.CreatedAtUnixMs,
-		"engine_started_at_unix_ms": body.StartedAtUnixMs,
-		"engine_ended_at_unix_ms":   body.EndedAtUnixMs,
-		"engine_callback_ts_unix_ms": body.TimestampUnixMs,
+	
+	// Preserve existing metadata and merge callback data
+	updateMeta := make(map[string]interface{})
+	if run.Metadata != nil {
+		// Copy existing metadata to preserve it
+		for k, v := range run.Metadata {
+			updateMeta[k] = v
+		}
 	}
+	
+	// Add/update callback-related metadata
+	updateMeta["engine_status"] = statusStr
+	updateMeta["engine_status_string"] = body.StatusString
+	updateMeta["engine_created_at_unix_ms"] = body.CreatedAtUnixMs
+	updateMeta["engine_started_at_unix_ms"] = body.StartedAtUnixMs
+	updateMeta["engine_ended_at_unix_ms"] = body.EndedAtUnixMs
+	updateMeta["engine_callback_ts_unix_ms"] = body.TimestampUnixMs
+	
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
-	if body.Metrics != nil {
+	
+	// Add metrics if provided
+	if len(body.Metrics) > 0 {
 		updateMeta["metrics"] = body.Metrics
+		log.Printf("Callback received metrics for run_id=%s (legacy): %d metric fields", body.RunID, len(body.Metrics))
+	} else {
+		log.Printf("Callback received NO metrics for run_id=%s (legacy) - metrics field is empty", body.RunID)
 	}
 
 	updated, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
@@ -173,19 +188,34 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	}
 
 	backendStatus := mapEngineStatusToBackendStatus(statusStr)
-	updateMeta := map[string]interface{}{
-		"engine_status":             statusStr,
-		"engine_status_string":      body.StatusString,
-		"engine_created_at_unix_ms": body.CreatedAtUnixMs,
-		"engine_started_at_unix_ms": body.StartedAtUnixMs,
-		"engine_ended_at_unix_ms":   body.EndedAtUnixMs,
-		"engine_callback_ts_unix_ms": body.TimestampUnixMs,
+	
+	// Preserve existing metadata and merge callback data
+	updateMeta := make(map[string]interface{})
+	if run.Metadata != nil {
+		// Copy existing metadata to preserve it
+		for k, v := range run.Metadata {
+			updateMeta[k] = v
+		}
 	}
+	
+	// Add/update callback-related metadata
+	updateMeta["engine_status"] = statusStr
+	updateMeta["engine_status_string"] = body.StatusString
+	updateMeta["engine_created_at_unix_ms"] = body.CreatedAtUnixMs
+	updateMeta["engine_started_at_unix_ms"] = body.StartedAtUnixMs
+	updateMeta["engine_ended_at_unix_ms"] = body.EndedAtUnixMs
+	updateMeta["engine_callback_ts_unix_ms"] = body.TimestampUnixMs
+	
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
-	if body.Metrics != nil {
+	
+	// Add metrics if provided
+	if len(body.Metrics) > 0 {
 		updateMeta["metrics"] = body.Metrics
+		log.Printf("Callback received metrics for run_id=%s: %d metric fields", runIDFromURL, len(body.Metrics))
+	} else {
+		log.Printf("Callback received NO metrics for run_id=%s - metrics field is empty", runIDFromURL)
 	}
 
 	updated, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{

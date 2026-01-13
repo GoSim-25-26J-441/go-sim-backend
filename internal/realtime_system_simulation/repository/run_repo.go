@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	runKeyPrefix       = "sim:run:"        // Key prefix for run data: sim:run:{run_id}
-	userRunSetPrefix   = "sim:user:"       // Set of run IDs for a user: sim:user:{user_id}
-	engineRunIDPrefix  = "sim:engine:"     // Mapping from engine run ID to our run ID: sim:engine:{engine_run_id} -> run_id
-	runEventChannelPrefix = "sim:events:"  // Pub/Sub channel for run events: sim:events:{run_id}
-	runTTL             = 7 * 24 * time.Hour // TTL for run data (7 days)
+	runKeyPrefix          = "sim:run:"         // Key prefix for run data: sim:run:{run_id}
+	userRunSetPrefix      = "sim:user:"        // Set of run IDs for a user: sim:user:{user_id}
+	engineRunIDPrefix     = "sim:engine:"      // Mapping from engine run ID to our run ID: sim:engine:{engine_run_id} -> run_id
+	runEventChannelPrefix = "sim:events:"      // Pub/Sub channel for run events: sim:events:{run_id}
+	runTTL                = 7 * 24 * time.Hour // TTL for run data (7 days)
 )
 
 // RunRepository handles Redis operations for simulation runs
@@ -59,7 +59,7 @@ func (r *RunRepository) Create(run *domain.SimulationRun) error {
 	pipe.Set(r.ctx, runKey, runData, runTTL)
 	pipe.SAdd(r.ctx, userRunSetKey, run.RunID)
 	pipe.Expire(r.ctx, userRunSetKey, runTTL)
-	
+
 	// If engine run ID is provided, create index mapping
 	if run.EngineRunID != "" {
 		engineKey := r.engineRunIDKey(run.EngineRunID)
@@ -77,7 +77,7 @@ func (r *RunRepository) Create(run *domain.SimulationRun) error {
 // GetByRunID retrieves a run by its ID
 func (r *RunRepository) GetByRunID(runID string) (*domain.SimulationRun, error) {
 	runKey := r.runKey(runID)
-	
+
 	data, err := r.client.Get(r.ctx, runKey).Result()
 	if err == redis.Nil {
 		return nil, domain.ErrRunNotFound
@@ -97,7 +97,7 @@ func (r *RunRepository) GetByRunID(runID string) (*domain.SimulationRun, error) 
 // GetByEngineRunID retrieves a run by the engine's run ID
 func (r *RunRepository) GetByEngineRunID(engineRunID string) (*domain.SimulationRun, error) {
 	engineKey := r.engineRunIDKey(engineRunID)
-	
+
 	// Get our run ID from the engine run ID index
 	runID, err := r.client.Get(r.ctx, engineKey).Result()
 	if err == redis.Nil {
@@ -122,7 +122,7 @@ func (r *RunRepository) Update(run *domain.SimulationRun) error {
 	}
 
 	runKey := r.runKey(run.RunID)
-	
+
 	runData, err := json.Marshal(run)
 	if err != nil {
 		return fmt.Errorf("failed to marshal run data: %w", err)
@@ -130,7 +130,7 @@ func (r *RunRepository) Update(run *domain.SimulationRun) error {
 
 	pipe := r.client.Pipeline()
 	pipe.Set(r.ctx, runKey, runData, runTTL)
-	
+
 	// Update engine run ID index if it changed
 	if run.EngineRunID != "" && run.EngineRunID != existing.EngineRunID {
 		// Remove old index if it existed
@@ -148,11 +148,14 @@ func (r *RunRepository) Update(run *domain.SimulationRun) error {
 		return fmt.Errorf("failed to update run: %w", err)
 	}
 
-	// Publish update event to Redis Pub/Sub
-	eventChannel := r.runEventChannel(run.RunID)
-	eventData, err := json.Marshal(run)
-	if err == nil {
-		r.client.Publish(r.ctx, eventChannel, eventData)
+	// Publish update event to Redis Pub/Sub only if run has valid data
+	// Skip publishing if run is empty/invalid (e.g., only has run_id)
+	if run.RunID != "" && run.Status != "" {
+		eventChannel := r.runEventChannel(run.RunID)
+		eventData, err := json.Marshal(run)
+		if err == nil {
+			r.client.Publish(r.ctx, eventChannel, eventData)
+		}
 	}
 
 	return nil
@@ -161,7 +164,7 @@ func (r *RunRepository) Update(run *domain.SimulationRun) error {
 // ListByUserID retrieves all run IDs for a user
 func (r *RunRepository) ListByUserID(userID string) ([]string, error) {
 	userRunSetKey := r.userRunSetKey(userID)
-	
+
 	runIDs, err := r.client.SMembers(r.ctx, userRunSetKey).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runs for user: %w", err)
@@ -183,7 +186,7 @@ func (r *RunRepository) Delete(runID string) error {
 	pipe := r.client.Pipeline()
 	pipe.Del(r.ctx, runKey)
 	pipe.SRem(r.ctx, userRunSetKey, runID)
-	
+
 	// Remove engine run ID index if it exists
 	if run.EngineRunID != "" {
 		engineKey := r.engineRunIDKey(run.EngineRunID)
@@ -214,4 +217,3 @@ func (r *RunRepository) engineRunIDKey(engineRunID string) string {
 func (r *RunRepository) runEventChannel(runID string) string {
 	return fmt.Sprintf("%s%s", runEventChannelPrefix, runID)
 }
-

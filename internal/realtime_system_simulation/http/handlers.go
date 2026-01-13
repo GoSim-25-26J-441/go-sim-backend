@@ -41,7 +41,8 @@ func (h *Handler) CreateRun(c *gin.Context) {
 
 	run, err := h.simService.CreateRun(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create run"})
+		log.Printf("Failed to create run in service: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create run", "details": err.Error()})
 		return
 	}
 
@@ -166,6 +167,11 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 			})
 			return
 		}
+
+		// Start subscribing to simulator's metrics stream and forwarding to frontend
+		// Use default interval of 1000ms (can be made configurable)
+		go h.StartMetricsStreamProxy(runID, run.EngineRunID, 1000)
+		log.Printf("Started metrics stream proxy for run_id=%s, engine_run_id=%s", runID, run.EngineRunID)
 	}
 
 	// If status is being set to "cancelled" and we have an engine_run_id, stop the run in the engine

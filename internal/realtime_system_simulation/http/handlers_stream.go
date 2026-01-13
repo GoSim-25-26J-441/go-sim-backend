@@ -69,8 +69,9 @@ func (h *Handler) StreamRunEvents(c *gin.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	// Channel for pubsub messages
-	pubsubChannel := pubsub.Channel()
+	// Channel for pubsub messages with larger buffer to prevent drops
+	// Default is 100, increase to 1000 to handle high-frequency metric updates
+	pubsubChannel := pubsub.ChannelSize(1000)
 
 	for {
 		select {
@@ -85,31 +86,48 @@ func (h *Handler) StreamRunEvents(c *gin.Context) {
 
 		case msg := <-pubsubChannel:
 			// Received update event from Redis Pub/Sub
-			if msg == nil {
+			if msg == nil || msg.Payload == "" {
 				continue
 			}
 
-			// Parse the run data from the message
-			var updatedRun domain.SimulationRun
-			if err := json.Unmarshal([]byte(msg.Payload), &updatedRun); err != nil {
-				// If parsing fails, fetch the latest run state from service
-				latestRun, err := h.simService.GetRun(runID)
-				if err != nil {
-					if err == domain.ErrRunNotFound {
-						eventData, _ := json.Marshal(gin.H{"event": "deleted", "run_id": runID})
-						fmt.Fprintf(c.Writer, "event: deleted\ndata: %s\n\n", string(eventData))
-						flusher.Flush()
-						return
-					}
-					continue
+			// Process message quickly to avoid blocking the channel
+			var eventType string
+			var eventJSON []byte
+
+			// Try to parse as metric event or other event type first (more specific)
+			// These are events from the metrics proxy (metric_update, status_change, etc.)
+			var eventData map[string]interface{}
+			if err := json.Unmarshal([]byte(msg.Payload), &eventData); err == nil {
+				// Check if it's a metric_update or other event with "event" field
+				if et, ok := eventData["event"].(string); ok {
+					eventType = et
+					eventJSON, _ = json.Marshal(eventData)
 				}
-				updatedRun = *latestRun
 			}
 
-			// Send update event to frontend
-			eventData, _ := json.Marshal(gin.H{"run": updatedRun})
-			fmt.Fprintf(c.Writer, "event: update\ndata: %s\n\n", string(eventData))
-			flusher.Flush()
+			// If not an event type, try to parse as run update
+			if eventType == "" {
+				var updatedRun domain.SimulationRun
+				if err := json.Unmarshal([]byte(msg.Payload), &updatedRun); err == nil {
+					// Validate that it's a valid run (has run_id and status)
+					if updatedRun.RunID != "" && updatedRun.Status != "" {
+						eventType = "update"
+						eventJSON, _ = json.Marshal(gin.H{"run": updatedRun})
+					} else {
+						// Skip invalid/empty run updates silently to avoid log spam
+						continue
+					}
+				} else {
+					// Failed to parse - skip silently to avoid log spam
+					continue
+				}
+			}
+
+			// If we have a valid event, send it to the client
+			if eventType != "" && len(eventJSON) > 0 {
+				fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, string(eventJSON))
+				flusher.Flush()
+			}
 		}
 	}
 }
