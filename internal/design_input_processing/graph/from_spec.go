@@ -15,8 +15,6 @@ type DependencySpec struct {
 	RPS      float64 `json:"rps"`
 }
 
-// Architecture is your canonical spec shape.
-// Adjust field names to match what uigp-service returns.
 type Architecture struct {
 	Services     []ServiceSpec    `json:"services"`
 	Dependencies []DependencySpec `json:"dependencies"`
