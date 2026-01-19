@@ -1,49 +1,50 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
-	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
-	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
-	middleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
-	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
-	"github.com/gin-gonic/gin"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/bootstrap"
+	"github.com/joho/godotenv"
 )
 
 const serviceName = "go-sim-backend"
 
 func main() {
+
+	_ = godotenv.Load()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	if cfg.App.Environment == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
+	bootstrap.SetGinMode(cfg.App.Environment)
 
-	// Load RAG snippets before starting server
-	if err := diprag.Load(cfg.RAG.SnippetsDir); err != nil {
+	if err := bootstrap.LoadRAG(cfg.RAG.SnippetsDir); err != nil {
 		log.Printf("RAG load: %v", err)
 	}
 
-	router := gin.Default()
+	dbPool, err := bootstrap.OpenDB(context.Background(), bootstrap.DBOptions{
+		DSN: os.Getenv("DB_DSN"),
+	})
+	if err != nil {
+		log.Fatalf("DB init failed: %v", err)
+	}
+	defer dbPool.Close()
 
-	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
-	healthHandler.RegisterRoutes(router)
-
-	api := router.Group("/api/v1")
-
-	dip := api.Group("/design-input")
-	dip.Use(middleware.APIKeyMiddleware())
-	dip.Use(middleware.RequestIDMiddleware())
-	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
-	dipHandler.Register(dip)
+	router := bootstrap.BuildRouter(bootstrap.RouterDeps{
+		ServiceName: serviceName,
+		Version:     cfg.App.Version,
+		UpstreamURL: cfg.Upstreams.LLMSvcURL,
+		OllamaURL:   cfg.LLM.OllamaURL,
+		DB:          dbPool,
+	})
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
-	log.Printf("Health endpoint available at: http://localhost:%s/health", cfg.Server.Port)
 
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
 		log.Fatal("Server failed to start:", err)
