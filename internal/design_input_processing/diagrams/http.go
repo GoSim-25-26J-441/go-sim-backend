@@ -9,13 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func RegisterProjectsSubroutes(projectsGroup *gin.RouterGroup, repo *Repo) {
-	h := &handler{repo: repo}
-
-	projectsGroup.POST("/:public_id/diagram", h.createVersion)
-	projectsGroup.GET("/:public_id/diagram/latest", h.latest)
-}
-
 type handler struct {
 	repo *Repo
 }
