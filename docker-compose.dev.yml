@@ -10,7 +10,7 @@ services:
     volumes:
       - gosim_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gosim -d gosim"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gosim"]
       interval: 5s
       timeout: 3s
       retries: 20
