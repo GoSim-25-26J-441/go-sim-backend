@@ -1,11 +1,18 @@
 package routes
 
 import (
+	"database/sql"
+
+	fbauth "firebase.google.com/go/v4/auth"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
+	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"
+	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
+	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
+	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
+
 	diproutes "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/api/http/routes"
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats"
-	dipdiagrams "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams"
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
+
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/users"
 
@@ -14,31 +21,36 @@ import (
 )
 
 type V1Deps struct {
-	DB          *pgxpool.Pool
-	UpstreamURL string
-	OllamaURL   string
+	DBPool   *pgxpool.Pool
+	AuthSQL  *sql.DB
+	Firebase *fbauth.Client
+
+	UIGP *dipllm.UIGPClient
 }
 
 func RegisterV1(r *gin.Engine, dep V1Deps) {
 	api := r.Group("/api/v1")
 
-	userRepo := users.NewRepo(dep.DB)
-	api.Use(auth.WithUser(userRepo))
+	if dep.Firebase != nil && dep.AuthSQL != nil {
+		authGroup := api.Group("/auth")
+		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(dep.Firebase))
 
-	projectRepo := projects.NewRepo(dep.DB)
-	projectsGroup := api.Group("/projects")
+		repo := authrepo.NewUserRepository(dep.AuthSQL)
+		svc := authservice.NewAuthService(repo)
+		h := authhttp.New(svc)
+		h.Register(authGroup)
+	}
+
+	protected := api.Group("")
+	userRepo := users.NewRepo(dep.DBPool)
+	protected.Use(auth.WithUser(userRepo))
+
+	projectsGroup := protected.Group("/projects")
+	projectRepo := projects.NewRepo(dep.DBPool)
 	projects.Register(projectsGroup, projectRepo)
 
-	chatRepo := chats.NewRepo(dep.DB)
-	chatHandler := chats.NewHandler(chatRepo, dipllm.NewUIGP())
-
-	chats.RegisterProjectChatRoutes(projectsGroup, chatHandler)
-
-	diagramsRepo := dipdiagrams.NewRepo(dep.DB)
-	dipdiagrams.RegisterProjectDiagramRoutes(projectsGroup, diagramsRepo)
-
-	diproutes.RegisterV1(api, diproutes.V1Deps{
-		UpstreamURL: dep.UpstreamURL,
-		OllamaURL:   dep.OllamaURL,
+	diproutes.RegisterProjectRoutes(projectsGroup, diproutes.ProjectDeps{
+		DB:   dep.DBPool,
+		UIGP: dep.UIGP,
 	})
 }

@@ -32,32 +32,24 @@ func NewHealthHandler(serviceName, version string, db *pgxpool.Pool) *HealthHand
 }
 
 func (h *HealthHandler) HealthCheck(c *gin.Context) {
-	resp := HealthResponse{
+	dbStatus := "disabled"
+	if h.db != nil {
+		pingCtx, cancel := context.WithTimeout(c.Request.Context(), 1*time.Second)
+		defer cancel()
+		if err := h.db.Ping(pingCtx); err != nil {
+			dbStatus = "down"
+		} else {
+			dbStatus = "up"
+		}
+	}
+
+	c.JSON(http.StatusOK, HealthResponse{
+		Status:    "healthy",
 		Timestamp: time.Now().UTC(),
 		Service:   h.serviceName,
 		Version:   h.version,
-	}
-
-	// If no DB injected, keep health OK (useful for local/unit tests)
-	if h.db == nil {
-		resp.Status = "healthy"
-		c.JSON(http.StatusOK, resp)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
-
-	if err := h.db.Ping(ctx); err != nil {
-		resp.Status = "unhealthy"
-		resp.DB = "down"
-		c.JSON(http.StatusServiceUnavailable, resp)
-		return
-	}
-
-	resp.Status = "healthy"
-	resp.DB = "up"
-	c.JSON(http.StatusOK, resp)
+		DB:        dbStatus,
+	})
 }
 
 func (h *HealthHandler) RegisterRoutes(router *gin.Engine) {
