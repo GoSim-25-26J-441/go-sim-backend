@@ -10,38 +10,44 @@ import (
 
 const (
 	CtxFirebaseUID = "firebase_uid"
-	CtxUserDBID    = "user_db_id"
 )
 
 func WithUser(userRepo *users.Repo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fuid := strings.TrimSpace(c.GetHeader("X-User-Id"))
 		if fuid == "" {
-			fuid = "demo-user"
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"ok":    false,
+				"error": "missing X-User-Id",
+			})
+			c.Abort()
+			return
 		}
 
-		uid, err := userRepo.EnsureUser(c.Request.Context(), users.UpsertUser{
+		_, err := userRepo.EnsureUser(c.Request.Context(), users.UpsertUser{
 			FirebaseUID: fuid,
-			Email:       c.GetHeader("X-User-Email"),
-			DisplayName: c.GetHeader("X-User-Name"),
-			PhotoURL:    c.GetHeader("X-User-Photo"),
+			Email:       strings.TrimSpace(c.GetHeader("X-User-Email")),
+			DisplayName: strings.TrimSpace(c.GetHeader("X-User-Name")),
+			PhotoURL:    strings.TrimSpace(c.GetHeader("X-User-Photo")),
 		})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "ensure user: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"ok":    false,
+				"error": "ensure user: " + err.Error(),
+			})
 			c.Abort()
 			return
 		}
 
 		c.Set(CtxFirebaseUID, fuid)
-		c.Set(CtxUserDBID, uid)
 		c.Next()
 	}
 }
 
+func UserFirebaseUID(c *gin.Context) string {
+	return strings.TrimSpace(c.GetString(CtxFirebaseUID))
+}
+
 func UserDBID(c *gin.Context) string {
-	v := c.GetString(CtxUserDBID)
-	if strings.TrimSpace(v) == "" {
-		return ""
-	}
-	return v
+	return UserFirebaseUID(c)
 }

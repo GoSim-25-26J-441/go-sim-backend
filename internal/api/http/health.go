@@ -36,6 +36,7 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 	if h.db != nil {
 		pingCtx, cancel := context.WithTimeout(c.Request.Context(), 1*time.Second)
 		defer cancel()
+
 		if err := h.db.Ping(pingCtx); err != nil {
 			dbStatus = "down"
 		} else {
@@ -52,7 +53,7 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 	})
 }
 
-func (h *HealthHandler) RegisterRoutes(router *gin.Engine) {
-	router.GET("/health", h.HealthCheck)
-	router.GET("/healthz", h.HealthCheck)
+func (h *HealthHandler) RegisterRoutes(r gin.IRouter) {
+	r.GET("/health", h.HealthCheck)
+	r.GET("/healthz", h.HealthCheck)
 }

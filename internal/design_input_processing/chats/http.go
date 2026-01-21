@@ -25,7 +25,7 @@ type createThreadReq struct {
 
 func (h *Handler) createThread(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
-	userID := auth.UserDBID(c)
+	userID := auth.UserFirebaseUID(c)
 	if publicID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
 		return
@@ -52,7 +52,7 @@ func (h *Handler) createThread(c *gin.Context) {
 
 func (h *Handler) listThreads(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
-	userID := auth.UserDBID(c)
+	userID := auth.UserFirebaseUID(c)
 
 	items, err := h.repo.ListThreads(c.Request.Context(), userID, publicID)
 	if err != nil {
@@ -84,7 +84,7 @@ type postMsgReq struct {
 func (h *Handler) postMessage(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
 	threadID := strings.TrimSpace(c.Param("thread_id"))
-	userID := auth.UserDBID(c)
+	userID := auth.UserFirebaseUID(c)
 
 	var req postMsgReq
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
@@ -92,7 +92,7 @@ func (h *Handler) postMessage(c *gin.Context) {
 		return
 	}
 
-	diagramVersionIDUsed, spec, err := h.repo.ResolveDiagramContext(c.Request.Context(), "", userID, publicID, threadID)
+	diagramVersionIDUsed, spec, err := h.repo.ResolveDiagramContext(c.Request.Context(), userID, publicID, threadID)
 	if err != nil {
 		if err == ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project/thread/diagram not found"})
@@ -103,7 +103,7 @@ func (h *Handler) postMessage(c *gin.Context) {
 	}
 
 	// history
-	roles, contents, err := h.repo.ListHistoryForUIGP(c.Request.Context(), "", threadID, 20)
+	roles, contents, err := h.repo.ListHistoryForUIGP(c.Request.Context(), userID, publicID, threadID, 20)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 		return
@@ -172,7 +172,7 @@ func (h *Handler) postMessage(c *gin.Context) {
 func (h *Handler) listMessages(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
 	threadID := strings.TrimSpace(c.Param("thread_id"))
-	userID := auth.UserDBID(c)
+	userID := auth.UserFirebaseUID(c)
 
 	items, err := h.repo.ListMessages(c.Request.Context(), userID, publicID, threadID, 50)
 	if err != nil {

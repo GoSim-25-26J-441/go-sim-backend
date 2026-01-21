@@ -34,9 +34,13 @@ func (h *handler) createVersion(c *gin.Context) {
 		return
 	}
 
-	userID := auth.UserDBID(c)
+	fuid := strings.TrimSpace(auth.UserFirebaseUID(c))
+	if fuid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
+		return
+	}
 
-	ver, err := h.repo.CreateVersion(c.Request.Context(), userID, publicID, CreateVersionInput{
+	ver, err := h.repo.CreateVersion(c.Request.Context(), fuid, publicID, CreateVersionInput{
 		Source:         strings.TrimSpace(req.Source),
 		DiagramJSON:    req.DiagramJSON,
 		ImageObjectKey: strings.TrimSpace(req.ImageObjectKey),
@@ -57,9 +61,18 @@ func (h *handler) createVersion(c *gin.Context) {
 
 func (h *handler) latest(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
-	userID := auth.UserDBID(c)
+	if publicID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
+		return
+	}
 
-	ver, err := h.repo.Latest(c.Request.Context(), userID, publicID)
+	fuid := strings.TrimSpace(auth.UserFirebaseUID(c))
+	if fuid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
+		return
+	}
+
+	ver, err := h.repo.Latest(c.Request.Context(), fuid, publicID)
 	if err != nil {
 		if err == ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "no diagram found"})

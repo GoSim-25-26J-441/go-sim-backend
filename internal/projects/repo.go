@@ -26,9 +26,12 @@ type Project struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func (r *Repo) Create(ctx context.Context, userDBID, name string, temporary bool) (*Project, error) {
+func (r *Repo) Create(ctx context.Context, userFirebaseUID, name string, temporary bool) (*Project, error) {
 	if name == "" {
 		return nil, fmt.Errorf("name required")
+	}
+	if userFirebaseUID == "" {
+		return nil, fmt.Errorf("user firebase uid required")
 	}
 
 	for i := 0; i < 5; i++ {
@@ -38,12 +41,12 @@ func (r *Repo) Create(ctx context.Context, userDBID, name string, temporary bool
 		}
 
 		const q = `
-insert into projects (public_id, user_id, name, is_temporary)
-values ($1, $2::uuid, $3, $4)
-returning public_id, name, is_temporary, created_at, updated_at;
+INSERT INTO projects (public_id, user_firebase_uid, name, is_temporary)
+VALUES ($1, $2, $3, $4)
+RETURNING public_id, name, is_temporary, created_at, updated_at;
 `
 		var p Project
-		err = r.db.QueryRow(ctx, q, publicID, userDBID, name, temporary).
+		err = r.db.QueryRow(ctx, q, publicID, userFirebaseUID, name, temporary).
 			Scan(&p.PublicID, &p.Name, &p.Temporary, &p.CreatedAt, &p.UpdatedAt)
 
 		if err == nil {
@@ -61,14 +64,14 @@ returning public_id, name, is_temporary, created_at, updated_at;
 	return nil, fmt.Errorf("failed to generate unique project id")
 }
 
-func (r *Repo) List(ctx context.Context, userDBID string) ([]Project, error) {
+func (r *Repo) List(ctx context.Context, userFirebaseUID string) ([]Project, error) {
 	const q = `
-select public_id, name, is_temporary, created_at, updated_at
-from projects
-where user_id = $1::uuid and deleted_at is null
-order by created_at desc;
+SELECT public_id, name, is_temporary, created_at, updated_at
+FROM projects
+WHERE user_firebase_uid = $1 AND deleted_at IS NULL
+ORDER BY created_at DESC;
 `
-	rows, err := r.db.Query(ctx, q, userDBID)
+	rows, err := r.db.Query(ctx, q, userFirebaseUID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,15 +88,15 @@ order by created_at desc;
 	return out, rows.Err()
 }
 
-func (r *Repo) Rename(ctx context.Context, userDBID, publicID, newName string) (*Project, error) {
+func (r *Repo) Rename(ctx context.Context, userFirebaseUID, publicID, newName string) (*Project, error) {
 	const q = `
-update projects
-set name = $3, updated_at = now()
-where user_id = $1::uuid and public_id = $2 and deleted_at is null
-returning public_id, name, is_temporary, created_at, updated_at;
+UPDATE projects
+SET name = $3, updated_at = now()
+WHERE user_firebase_uid = $1 AND public_id = $2 AND deleted_at IS NULL
+RETURNING public_id, name, is_temporary, created_at, updated_at;
 `
 	var p Project
-	err := r.db.QueryRow(ctx, q, userDBID, publicID, newName).
+	err := r.db.QueryRow(ctx, q, userFirebaseUID, publicID, newName).
 		Scan(&p.PublicID, &p.Name, &p.Temporary, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -101,13 +104,13 @@ returning public_id, name, is_temporary, created_at, updated_at;
 	return &p, nil
 }
 
-func (r *Repo) SoftDelete(ctx context.Context, userDBID, publicID string) (bool, error) {
+func (r *Repo) SoftDelete(ctx context.Context, userFirebaseUID, publicID string) (bool, error) {
 	const q = `
-update projects
-set deleted_at = now(), updated_at = now()
-where user_id = $1::uuid and public_id = $2 and deleted_at is null;
+UPDATE projects
+SET deleted_at = now(), updated_at = now()
+WHERE user_firebase_uid = $1 AND public_id = $2 AND deleted_at IS NULL;
 `
-	ct, err := r.db.Exec(ctx, q, userDBID, publicID)
+	ct, err := r.db.Exec(ctx, q, userFirebaseUID, publicID)
 	if err != nil {
 		return false, err
 	}

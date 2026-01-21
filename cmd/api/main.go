@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"time"
 
@@ -42,8 +43,6 @@ func main() {
 		log.Printf("RAG load: %v", err)
 	}
 
-	dsn := postgres.DSN(&cfg.Database)
-
 	// 1) Auth DB (sql.DB) - only if your auth module still uses database/sql
 	var authSQL *sql.DB
 	authSQL, err = postgres.NewConnection(&cfg.Database)
@@ -53,6 +52,8 @@ func main() {
 	defer authSQL.Close()
 
 	// 2) App DB (pgxpool) - projects/diagrams/chats/users
+	dsn := pgxDSN(&cfg.Database)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -78,7 +79,9 @@ func main() {
 	r.Use(cors.New(buildCORSConfig()))
 
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version, dbPool)
+
 	healthHandler.RegisterRoutes(r)
+	healthHandler.RegisterRoutes(r.Group("/api/v1"))
 
 	apiroutes.RegisterV1(r, apiroutes.V1Deps{
 		DBPool:   dbPool,
@@ -91,6 +94,13 @@ func main() {
 	if err := r.Run(":" + cfg.Server.Port); err != nil {
 		log.Fatal("Server failed to start:", err)
 	}
+}
+
+func pgxDSN(db *config.DatabaseConfig) string {
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		db.Host, db.Port, db.User, db.Password, db.Name,
+	)
 }
 
 func buildCORSConfig() cors.Config {

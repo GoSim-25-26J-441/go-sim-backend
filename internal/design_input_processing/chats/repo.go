@@ -19,20 +19,22 @@ type Repo struct {
 func NewRepo(db *pgxpool.Pool) *Repo { return &Repo{db: db} }
 
 type projectInfo struct {
-	ID                      string
+	PublicID                string
 	CurrentDiagramVersionID *string
 }
 
-func (r *Repo) getProject(ctx context.Context, userID, publicID string) (*projectInfo, error) {
+func (r *Repo) getProject(ctx context.Context, userFirebaseUID, publicID string) (*projectInfo, error) {
 	const q = `
 select
-  id::text,
-  case when current_diagram_version_id is null then null else current_diagram_version_id::text end
+  public_id,
+  current_diagram_version_id
 from projects
-where public_id=$1 and user_id=$2 and deleted_at is null
+where public_id=$1
+  and user_firebase_uid=$2
+  and deleted_at is null
 `
 	var p projectInfo
-	if err := r.db.QueryRow(ctx, q, publicID, userID).Scan(&p.ID, &p.CurrentDiagramVersionID); err != nil {
+	if err := r.db.QueryRow(ctx, q, publicID, userFirebaseUID).Scan(&p.PublicID, &p.CurrentDiagramVersionID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -41,92 +43,30 @@ where public_id=$1 and user_id=$2 and deleted_at is null
 	return &p, nil
 }
 
-func (r *Repo) CreateThread(ctx context.Context, userID, projectPublicID string, title *string, bindingMode string) (*Thread, error) {
-	if bindingMode == "" {
-		bindingMode = BindingFollowLatest
-	}
-
-	p, err := r.getProject(ctx, userID, projectPublicID)
-	if err != nil {
-		return nil, err
-	}
-
-	const q = `
-insert into chat_threads (project_id, title, binding_mode)
-values ($1, $2, $3)
-returning id::text, created_at
-`
-	var id string
-	var created time.Time
-	if err := r.db.QueryRow(ctx, q, p.ID, title, bindingMode).Scan(&id, &created); err != nil {
-		return nil, err
-	}
-
-	return &Thread{
-		ID:              id,
-		ProjectID:       p.ID,
-		ProjectPublicID: projectPublicID,
-		Title:           title,
-		BindingMode:     bindingMode,
-		CreatedAt:       created,
-	}, nil
-}
-
-func (r *Repo) ListThreads(ctx context.Context, userID, projectPublicID string) ([]Thread, error) {
-	p, err := r.getProject(ctx, userID, projectPublicID)
-	if err != nil {
-		return nil, err
-	}
-
-	const q = `
-select
-  id::text,
-  title,
-  binding_mode,
-  case when pinned_diagram_version_id is null then null else pinned_diagram_version_id::text end,
-  created_at
-from chat_threads
-where project_id=$1
-order by created_at desc
-`
-	rows, err := r.db.Query(ctx, q, p.ID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := []Thread{}
-	for rows.Next() {
-		var t Thread
-		t.ProjectID = p.ID
-		t.ProjectPublicID = projectPublicID
-		if err := rows.Scan(&t.ID, &t.Title, &t.BindingMode, &t.PinnedDiagramVersionID, &t.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, nil
-}
-
 type threadInfo struct {
 	ID                     string
-	ProjectID              string
+	ProjectPublicID        string
+	UserFirebaseUID        string
 	BindingMode            string
 	PinnedDiagramVersionID *string
 }
 
-func (r *Repo) getThread(ctx context.Context, projectID, threadID string) (*threadInfo, error) {
+func (r *Repo) getThread(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*threadInfo, error) {
 	const q = `
 select
-  id::text,
-  project_id::text,
+  id,
+  project_public_id,
+  user_firebase_uid,
   binding_mode,
-  case when pinned_diagram_version_id is null then null else pinned_diagram_version_id::text end
+  pinned_diagram_version_id
 from chat_threads
-where id=$1 and project_id=$2
+where id=$1
+  and project_public_id=$2
+  and user_firebase_uid=$3
 `
 	var t threadInfo
-	if err := r.db.QueryRow(ctx, q, threadID, projectID).Scan(&t.ID, &t.ProjectID, &t.BindingMode, &t.PinnedDiagramVersionID); err != nil {
+	if err := r.db.QueryRow(ctx, q, threadID, projectPublicID, userFirebaseUID).
+		Scan(&t.ID, &t.ProjectPublicID, &t.UserFirebaseUID, &t.BindingMode, &t.PinnedDiagramVersionID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -135,13 +75,82 @@ where id=$1 and project_id=$2
 	return &t, nil
 }
 
-func (r *Repo) ResolveDiagramContext(ctx context.Context, projectID, userID, projectPublicID, threadID string) (*string, json.RawMessage, error) {
-	p, err := r.getProject(ctx, userID, projectPublicID)
+func (r *Repo) CreateThread(ctx context.Context, userFirebaseUID, projectPublicID string, title *string, bindingMode string) (*Thread, error) {
+	if bindingMode == "" {
+		bindingMode = BindingFollowLatest
+	}
+
+	// ensure project belongs to user
+	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
+		return nil, err
+	}
+
+	id, err := newID("thr")
+	if err != nil {
+		return nil, err
+	}
+
+	const q = `
+insert into chat_threads (id, project_public_id, user_firebase_uid, title, binding_mode)
+values ($1, $2, $3, $4, $5)
+returning id, created_at
+`
+	var created time.Time
+	if err := r.db.QueryRow(ctx, q, id, projectPublicID, userFirebaseUID, title, bindingMode).Scan(&id, &created); err != nil {
+		return nil, err
+	}
+
+	return &Thread{
+		ID:              id,
+		ProjectPublicID: projectPublicID,
+		Title:           title,
+		BindingMode:     bindingMode,
+		CreatedAt:       created,
+	}, nil
+}
+
+func (r *Repo) ListThreads(ctx context.Context, userFirebaseUID, projectPublicID string) ([]Thread, error) {
+	// ensure project belongs to user
+	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
+		return nil, err
+	}
+
+	const q = `
+select
+  id,
+  title,
+  binding_mode,
+  pinned_diagram_version_id,
+  created_at
+from chat_threads
+where project_public_id=$1
+  and user_firebase_uid=$2
+order by created_at desc
+`
+	rows, err := r.db.Query(ctx, q, projectPublicID, userFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Thread{}
+	for rows.Next() {
+		var t Thread
+		t.ProjectPublicID = projectPublicID
+		if err := rows.Scan(&t.ID, &t.Title, &t.BindingMode, &t.PinnedDiagramVersionID, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) ResolveDiagramContext(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*string, json.RawMessage, error) {
+	p, err := r.getProject(ctx, userFirebaseUID, projectPublicID)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	t, err := r.getThread(ctx, p.ID, threadID)
+	t, err := r.getThread(ctx, userFirebaseUID, projectPublicID, threadID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -163,10 +172,11 @@ select
   coalesce(diagram_json, '{}'::jsonb)::text
 from diagram_versions
 where id=$1
+  and project_public_id=$2
+  and user_firebase_uid=$3
 `
-	var specText string
-	var diagramText string
-	if err := r.db.QueryRow(ctx, q, *use).Scan(&specText, &diagramText); err != nil {
+	var specText, diagramText string
+	if err := r.db.QueryRow(ctx, q, *use, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrNotFound
 		}
@@ -174,26 +184,33 @@ where id=$1
 	}
 
 	spec := json.RawMessage(specText)
-	// if spec_summary is empty object, use diagram_json for now
 	if len(spec) == 0 || string(spec) == "{}" {
 		spec = json.RawMessage(diagramText)
 	}
+
 	return use, spec, nil
 }
 
-func (r *Repo) ListHistoryForUIGP(ctx context.Context, projectID, threadID string, limit int) ([]string, []string, error) {
+func (r *Repo) ListHistoryForUIGP(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]string, []string, error) {
 	if limit <= 0 {
 		limit = 20
+	}
+
+	// ensure thread belongs to user/project
+	if _, err := r.getThread(ctx, userFirebaseUID, projectPublicID, threadID); err != nil {
+		return nil, nil, err
 	}
 
 	const q = `
 select role, content
 from chat_messages
-where thread_id=$1 and project_id=$2
+where thread_id=$1
+  and project_public_id=$2
+  and user_firebase_uid=$3
 order by created_at desc
-limit $3
+limit $4
 `
-	rows, err := r.db.Query(ctx, q, threadID, projectID, limit)
+	rows, err := r.db.Query(ctx, q, threadID, projectPublicID, userFirebaseUID, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -209,7 +226,7 @@ limit $3
 		roles = append(roles, role)
 		contents = append(contents, content)
 	}
-	return roles, contents, nil
+	return roles, contents, rows.Err()
 }
 
 type InsertAttachment struct {
@@ -221,18 +238,22 @@ type InsertAttachment struct {
 	Height    *int
 }
 
-func (r *Repo) InsertTurn(ctx context.Context, userID, projectPublicID, threadID string,
-	userContent string, assistantContent string, assistantSource *string, assistantRefs []string,
+func (r *Repo) InsertTurn(
+	ctx context.Context,
+	userFirebaseUID, projectPublicID, threadID string,
+	userContent string,
+	assistantContent string,
+	assistantSource *string,
+	assistantRefs []string,
 	diagramVersionIDUsed *string,
 	userAttachments []InsertAttachment,
 ) (*Message, *Message, error) {
 
-	p, err := r.getProject(ctx, userID, projectPublicID)
-	if err != nil {
+	// validate ownership
+	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
 		return nil, nil, err
 	}
-	_, err = r.getThread(ctx, p.ID, threadID)
-	if err != nil {
+	if _, err := r.getThread(ctx, userFirebaseUID, projectPublicID, threadID); err != nil {
 		return nil, nil, err
 	}
 
@@ -242,30 +263,48 @@ func (r *Repo) InsertTurn(ctx context.Context, userID, projectPublicID, threadID
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	userMsgID, err := newID("msg")
+	if err != nil {
+		return nil, nil, err
+	}
+
 	const insMsg = `
-insert into chat_messages (thread_id, project_id, role, content, diagram_version_id_used)
-values ($1, $2, $3, $4, $5)
-returning id::text, created_at
+insert into chat_messages
+(id, thread_id, project_public_id, user_firebase_uid, role, content, diagram_version_id_used)
+values ($1, $2, $3, $4, $5, $6, $7)
+returning id, created_at
 `
 	var userMsg Message
 	userMsg.ThreadID = threadID
-	userMsg.ProjectID = p.ID
+	userMsg.ProjectID = "" // not used in new schema
 	userMsg.Role = "user"
 	userMsg.Content = userContent
 	userMsg.DiagramVersionIDUsed = diagramVersionIDUsed
 
-	if err := tx.QueryRow(ctx, insMsg, threadID, p.ID, "user", userContent, diagramVersionIDUsed).Scan(&userMsg.ID, &userMsg.CreatedAt); err != nil {
+	if err := tx.QueryRow(ctx, insMsg,
+		userMsgID, threadID, projectPublicID, userFirebaseUID,
+		"user", userContent, diagramVersionIDUsed,
+	).Scan(&userMsg.ID, &userMsg.CreatedAt); err != nil {
 		return nil, nil, err
 	}
 
+	// attachments
 	if len(userAttachments) > 0 {
 		const insAtt = `
 insert into chat_message_attachments
-(message_id, kind, object_key, mime_type, file_name, file_size_bytes, width, height)
-values ($1, $2, $3, $4, $5, $6, $7, $8)
-returning id::text, created_at
+(id, message_id, kind, object_key, mime_type, file_name, file_size_bytes, width, height)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+returning id, created_at
 `
 		for _, a := range userAttachments {
+			if a.ObjectKey == "" {
+				continue
+			}
+			attID, err := newID("att")
+			if err != nil {
+				return nil, nil, err
+			}
+
 			kind := "image"
 			var att Attachment
 			att.Kind = kind
@@ -276,33 +315,42 @@ returning id::text, created_at
 			att.Width = a.Width
 			att.Height = a.Height
 
-			if err := tx.QueryRow(ctx, insAtt, userMsg.ID, kind, a.ObjectKey, a.MimeType, a.FileName, a.FileSize, a.Width, a.Height).
-				Scan(&att.ID, &att.CreatedAt); err != nil {
+			if err := tx.QueryRow(ctx, insAtt,
+				attID, userMsg.ID, kind, a.ObjectKey, a.MimeType, a.FileName, a.FileSize, a.Width, a.Height,
+			).Scan(&att.ID, &att.CreatedAt); err != nil {
 				return nil, nil, err
 			}
+
 			userMsg.Attachments = append(userMsg.Attachments, att)
 		}
 	}
 
+	// assistant message
+	asstMsgID, err := newID("msg")
+	if err != nil {
+		return nil, nil, err
+	}
+
 	refsJSON, _ := json.Marshal(assistantRefs)
-	refsStr := string(refsJSON)
 
 	const insAsst = `
-insert into chat_messages (thread_id, project_id, role, content, source, refs, diagram_version_id_used)
-values ($1, $2, $3, $4, $5, $6::jsonb, $7)
-returning id::text, created_at
+insert into chat_messages
+(id, thread_id, project_public_id, user_firebase_uid, role, content, source, refs, diagram_version_id_used)
+values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+returning id, created_at
 `
 	var asstMsg Message
 	asstMsg.ThreadID = threadID
-	asstMsg.ProjectID = p.ID
 	asstMsg.Role = "assistant"
 	asstMsg.Content = assistantContent
 	asstMsg.Source = assistantSource
 	asstMsg.Refs = assistantRefs
 	asstMsg.DiagramVersionIDUsed = diagramVersionIDUsed
 
-	if err := tx.QueryRow(ctx, insAsst, threadID, p.ID, "assistant", assistantContent, assistantSource, refsStr, diagramVersionIDUsed).
-		Scan(&asstMsg.ID, &asstMsg.CreatedAt); err != nil {
+	if err := tx.QueryRow(ctx, insAsst,
+		asstMsgID, threadID, projectPublicID, userFirebaseUID,
+		"assistant", assistantContent, assistantSource, string(refsJSON), diagramVersionIDUsed,
+	).Scan(&asstMsg.ID, &asstMsg.CreatedAt); err != nil {
 		return nil, nil, err
 	}
 
@@ -313,31 +361,28 @@ returning id::text, created_at
 	return &userMsg, &asstMsg, nil
 }
 
-func (r *Repo) ListMessages(ctx context.Context, userID, projectPublicID, threadID string, limit int) ([]Message, error) {
-	p, err := r.getProject(ctx, userID, projectPublicID)
-	if err != nil {
-		return nil, err
-	}
-	_, err = r.getThread(ctx, p.ID, threadID)
-	if err != nil {
-		return nil, err
-	}
+func (r *Repo) ListMessages(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
+	// validate ownership
+	if _, err := r.getThread(ctx, userFirebaseUID, projectPublicID, threadID); err != nil {
+		return nil, err
+	}
+
 	const q = `
 select
-  m.id::text,
-  m.thread_id::text,
+  m.id,
+  m.thread_id,
   m.role,
   m.content,
   m.source,
   coalesce(m.refs, '[]'::jsonb)::text,
-  case when m.diagram_version_id_used is null then null else m.diagram_version_id_used::text end,
+  m.diagram_version_id_used,
   m.created_at,
 
-  a.id::text,
+  a.id,
   a.kind,
   a.object_key,
   a.mime_type,
@@ -348,19 +393,18 @@ select
   a.created_at
 from chat_messages m
 left join chat_message_attachments a on a.message_id = m.id
-where m.thread_id=$1 and m.project_id=$2
+where m.thread_id=$1
+  and m.project_public_id=$2
+  and m.user_firebase_uid=$3
 order by m.created_at asc
-limit $3
+limit $4
 `
-	rows, err := r.db.Query(ctx, q, threadID, p.ID, limit)
+	rows, err := r.db.Query(ctx, q, threadID, projectPublicID, userFirebaseUID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	type rowMsg struct {
-		msg Message
-	}
 	byID := map[string]*Message{}
 	order := []string{}
 
@@ -398,7 +442,6 @@ limit $3
 			newM := &Message{
 				ID:                   mID,
 				ThreadID:             tID,
-				ProjectID:            p.ID,
 				Role:                 role,
 				Content:              content,
 				Source:               source,
