@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,11 +54,20 @@ func Fuse(c *gin.Context, upstreamURL string) {
 		return
 	}
 
-	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
+	if userID := c.GetHeader("X-User-Id"); userID != "" {
+		req.Header.Set("X-User-Id", userID)
+	}
+
+	client := &http.Client{
+		Timeout: 3 * time.Minute,
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
 		return
 	}
+
 	defer resp.Body.Close()
 
 	for k, v := range resp.Header {
@@ -69,32 +80,98 @@ func Fuse(c *gin.Context, upstreamURL string) {
 }
 
 func Export(c *gin.Context, upstreamURL string) {
-	id := c.Param("id")
-	url := upstreamURL + "/jobs/" + id + "/export"
-	if qs := c.Request.URL.RawQuery; qs != "" {
-		url += "?" + qs
+	jobID := c.Param("id")
+
+	// Resolve user ID (same pattern as chat / summaries)
+	userID := c.GetString("user_id")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+		if userID == "" {
+			userID = "demo-user"
+		}
 	}
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", url, nil)
+	// Read query from incoming request
+	format := c.Query("format")
+	if format == "" {
+		format = "json"
+	}
+	download := c.Query("download")
+	if download == "" {
+		download = "false"
+	}
+
+	// Build upstream URL safely
+	u, err := url.Parse(upstreamURL)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(502, gin.H{"ok": false, "error": "invalid upstream URL: " + err.Error()})
+		return
+	}
+	u.Path = u.Path + "/jobs/" + jobID + "/export"
+
+	q := u.Query()
+	q.Set("format", format)
+	q.Set("download", download)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		c.JSON(502, gin.H{"ok": false, "error": "build request: " + err.Error()})
 		return
 	}
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(502, gin.H{"ok": false, "error": "upstream export: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
-	for k, v := range resp.Header {
-		if len(v) > 0 {
-			c.Header(k, v[0])
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(502, gin.H{"ok": false, "error": "read upstream export: " + err.Error()})
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		for k, vs := range resp.Header {
+			if len(vs) > 0 {
+				c.Header(k, vs[0])
+			}
+		}
+		c.Status(resp.StatusCode)
+		_, _ = c.Writer.Write(body)
+		return
+	}
+
+	if format == "json" {
+		var spec map[string]any
+		if err := json.Unmarshal(body, &spec); err == nil {
+			signals := loadSignalsFromHistory(jobID, userID)
+
+			if len(signals) > 0 {
+				sizing := map[string]any{}
+				for k, v := range signals {
+					if v != 0 {
+						sizing[k] = v
+					}
+				}
+				spec["sizing"] = sizing
+
+				body, _ = json.MarshalIndent(spec, "", "  ")
+				resp.Header.Set("Content-Type", "application/json; charset=utf-8")
+			}
+		}
+	}
+
+	for k, vs := range resp.Header {
+		if len(vs) > 0 {
+			c.Header(k, vs[0])
 		}
 	}
 	c.Status(resp.StatusCode)
-	_, _ = io.Copy(c.Writer, resp.Body)
+	_, _ = c.Writer.Write(body)
 }
 
 func Report(c *gin.Context, upstreamURL string) {

@@ -24,9 +24,9 @@ type missing struct {
 }
 
 type chatReq struct {
-	Mode    string `json:"mode"`
-	Message string `json:"message"`
-	Stream  bool   `json:"stream"`
+	Message  string `json:"message"`
+	Mode     string `json:"mode,omitempty"`
+	ForceLLM bool   `json:"force_llm,omitempty"` // override to bypass RAG
 }
 
 type chatTurn struct {
@@ -54,10 +54,78 @@ var rxCPU = regexp.MustCompile(`(?i)\b(\d+)\s*(v?cpu|cores?)\b`)
 var rxPayload = regexp.MustCompile(`(?i)(\d+)\s*(kb|mb)\b`)
 var rxBurst = regexp.MustCompile(`(?i)\b(\d+)[x×]\b`)
 
-// --- Main Chat handler ---
+func looksLikeDefinition(q string) bool {
+	s := strings.ToLower(strings.TrimSpace(q))
+	defPhrases := []string{
+		"what is ", "what's ", "define ", "definition of ",
+		"explain ", "explain about ", "difference between",
+		"pros and cons", "advantages and disadvantages",
+	}
+	for _, p := range defPhrases {
+		if strings.HasPrefix(s, p) || strings.Contains(s, " "+p) {
+			return true
+		}
+	}
+	return false
+}
 
+func isDiagramQuestion(q string) bool {
+	s := strings.ToLower(q)
+
+	if strings.Contains(s, "diagram") ||
+		strings.Contains(s, "picture") ||
+		strings.Contains(s, "image") ||
+		strings.Contains(s, "drawing") {
+		return true
+	}
+
+	if strings.Contains(s, "what i upload") ||
+		strings.Contains(s, "what i uploaded") ||
+		strings.Contains(s, "in what i upload") ||
+		strings.Contains(s, "in what i uploaded") {
+		return true
+	}
+
+	if strings.Contains(s, "my services") ||
+		strings.Contains(s, "my edges") ||
+		strings.Contains(s, "services and edges") {
+		return true
+	}
+
+	return false
+}
+
+// Questions where RAG snippets (throughput formula / sizing cheat sheet) are useful
+func isRAGCandidate(q string) bool {
+	s := strings.ToLower(q)
+
+	ragKeywords := []string{
+		"throughput", "through put",
+		"concurrency",
+		"throughput formula", "sizing formula",
+		"back-of-the-envelope", "back of the envelope",
+		"capacity planning",
+		"cpu sizing", "cpu core", "cpu cores", "vcpu",
+		"headroom",
+		"autoscale", "auto scale",
+		"rate limit", "rate limiting",
+		"timeouts", "retries",
+		"rps @",
+		"p95", "p99",
+		"slo", "sla",
+		"sizing guide",
+	}
+
+	for _, kw := range ragKeywords {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// --- Main Chat handler ---
 func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
-	// 1) Parse JSON (robust)
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(400, gin.H{"ok": false, "error": "read body: " + err.Error()})
@@ -74,7 +142,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 	jobID := c.Param("id")
 	strict := strings.EqualFold(req.Mode, "design-guardrails")
 
-	// Resolve user id (for per-user chat logs)
 	userID := c.GetString("user_id")
 	if userID == "" {
 		userID = c.GetHeader("X-User-Id")
@@ -83,12 +150,10 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		userID = "demo-user"
 	}
 
-	// --- NEW: aggregate signals from history + this message ---
 	historySignals := loadSignalsFromHistory(jobID, userID)
 	thisSignals := extractSignals(req.Message)
 	signals := mergeSignals(historySignals, thisSignals)
 
-	// 2) Optional strict guardrails
 	if strict && !onTopic(req.Message) {
 		guardMsg := "Let’s keep it on software architecture (microservices, APIs, sizing, latency, etc.)."
 		appendChat(jobID, chatTurn{
@@ -107,7 +172,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// 3) Log the user message
 	appendChat(jobID, chatTurn{
 		Role:   "user",
 		Text:   req.Message,
@@ -115,11 +179,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		Source: "user",
 		UserID: userID,
 	})
-
-	// --- Sizing gate using RPS / latency / CPU / payload / burst signals ---
-
-	// Use aggregated signals (history + this message)
-	missing := findMissingSignals(signals)
 
 	lowerMsg := strings.ToLower(req.Message)
 	isSizing := strings.Contains(lowerMsg, "size") ||
@@ -129,13 +188,19 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		strings.Contains(lowerMsg, "rps") ||
 		strings.Contains(lowerMsg, "latency")
 
-	// If it's a sizing-style question and we DON'T yet have all signals → ask for them
+	isDef := looksLikeDefinition(req.Message)
+	isJob := isJobSpecific(req.Message)
+	isDiag := isDiagramQuestion(req.Message)
+	isSum := isSummaryQuestion(req.Message)
+	ragCandidate := isRAGCandidate(req.Message)
+
+	missing := findMissingSignals(signals)
 	if isSizing && len(missing) > 0 {
 		var b strings.Builder
 		b.WriteString("To size this accurately, I need:\n")
 		for i, m := range missing {
 			if i >= 3 {
-				break // keep prompt short
+				break
 			}
 			b.WriteString("- ")
 			b.WriteString(m.Q)
@@ -161,11 +226,17 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		return
 	}
 
-	// If it's a sizing Q and we ALREADY have all signals → skip RAG, go straight to LLM
 	skipRAG := isSizing && len(missing) == 0
 
-	// 4) Try RAG first (unless we intentionally skip for sizing-with-all-signals)
-	if !skipRAG {
+	tryRAG := ragCandidate &&
+		!skipRAG &&
+		!req.ForceLLM &&
+		!isDef &&
+		!isJob &&
+		!isDiag &&
+		!isSum
+
+	if tryRAG {
 		if ans, refs := ragAnswer(req.Message); ans != "" {
 			appendChat(jobID, chatTurn{
 				Role:   "assistant",
@@ -186,7 +257,6 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 		}
 	}
 
-	// 5) Fetch compact context for LLM
 	ig, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/intermediate", upstreamURL, jobID), 10*time.Second)
 	spec, _ := fetchJSON(fmt.Sprintf("%s/jobs/%s/export?format=json&download=false", upstreamURL, jobID), 10*time.Second)
 	features := compactContext(ig, spec, req.Message)
@@ -194,10 +264,8 @@ func Chat(c *gin.Context, upstreamURL, ollamaURL string) {
 
 	signalsJSON, _ := json.Marshal(signals)
 
-	// 6) Call local Ollama (non-streaming)
 	body := map[string]any{
 		"model":  "llama3:instruct",
-		"format": "json",
 		"stream": false,
 		"system": `You are a software architecture assistant.
 
@@ -209,21 +277,22 @@ You are given:
 Rules:
 - Always respect the protocol from the context (if it says gRPC, do NOT call it REST).
 - Do NOT invent extra services or components that are not in the context.
-- If there is only one or two services, describe it as a very small microservice-like setup that is effectively
-  monolithic for now, and explicitly say that it does NOT really benefit from microservice-style decomposition yet.
-- You may suggest how it could be evolved into a better microservice architecture (e.g., more domain-focused services,
-  clearer boundaries, separate datastores).
+- If there is only one or two services, describe it as a very small microservice-like setup
+  that is effectively monolithic for now, and explicitly say that it does NOT really
+  benefit from microservice-style decomposition yet.
+- You may suggest how it could be evolved into a better microservice architecture
+  (e.g., more domain-focused services, clearer boundaries, separate datastores).
 - Be concise, stay on topic.
 - When you are given numeric sizing signals such as rps_peak, rps_avg, latency_p95_ms,
   payload_kb, burst_factor, cpu_vcpu, you MUST produce a concrete sizing recommendation
   (e.g., instances, vCPU per instance, rough RAM per service) instead of saying that
   you need more information.
 
-Return JSON: {"answer": string}.`,
+Answer in plain English, not JSON.`,
 		"prompt": fmt.Sprintf(
-			"Context:\n%s\n\nSignals (JSON):\n%s\n\nQuestion:\n%s\n\nReturn only the JSON.",
+			"Context:\n%s\n\nSignals:\n%s\n\nQuestion:\n%s\n\nAnswer in plain English.",
 			features,
-			signalsJSON,
+			string(signalsJSON),
 			req.Message,
 		),
 		"options": map[string]any{
@@ -233,13 +302,13 @@ Return JSON: {"answer": string}.`,
 		},
 	}
 
-	respBytes, err := postJSON(ollamaURL+"/api/generate", body, 60*time.Second)
+	respBytes, err := postJSON(ollamaURL+"/api/generate", body, 3*time.Minute)
+
 	if err != nil {
 		c.JSON(502, gin.H{"ok": false, "error": "ollama: " + err.Error()})
 		return
 	}
 
-	// 7) Decode Ollama response
 	var gen struct {
 		Response string `json:"response"`
 	}
@@ -248,18 +317,7 @@ Return JSON: {"answer": string}.`,
 		return
 	}
 
-	answerText := ""
-	var out struct {
-		Answer string `json:"answer"`
-	}
-	if err := json.Unmarshal([]byte(gen.Response), &out); err == nil && out.Answer != "" {
-		answerText = out.Answer
-	} else {
-		answerText = gen.Response
-	}
-
-	// Fix protocol wording if needed
-	answerText = enforceProtocol(answerText, ig, spec)
+	answerText := strings.TrimSpace(gen.Response)
 
 	appendChat(jobID, chatTurn{
 		Role:   "assistant",
@@ -273,12 +331,11 @@ Return JSON: {"answer": string}.`,
 		"ok":      true,
 		"answer":  answerText,
 		"source":  "llm",
-		"signals": signals, // aggregated across history + this turn
+		"signals": signals,
 	})
 }
 
 // --- Helpers / utilities ---
-
 func isArchitectureQuestion(s string) bool {
 	keys := []string{"service", "api", "grpc", "rest", "queue", "topic", "database", "latency", "rps", "throughput", "cache", "retry", "circuit"}
 	for _, k := range keys {
@@ -318,19 +375,17 @@ func postJSON(url string, body any, to time.Duration) ([]byte, error) {
 }
 
 func compactContext(ig, spec map[string]any, msg string) string {
-	// 1) Prefer spec.services; fall back to IG nodes
+
 	services := tryArrayNames(spec, "services", "name")
 	if len(services) == 0 {
 		services = tryArrayNames(ig, "Nodes", "Label")
 	}
 
-	// 2) Prefer spec.dependencies; fall back to IG edges
 	edges := tryDeps(spec)
 	if len(edges) == 0 {
 		edges = tryEdges(ig)
 	}
 
-	// 3) Gaps from spec (e.g., RPS, protocol certainty, etc.)
 	gaps := tryGaps(spec)
 
 	var b strings.Builder
@@ -373,7 +428,6 @@ func enforceProtocol(answer string, ig, spec map[string]any) string {
 		return answer
 	}
 
-	// Collect protocols from spec.dependencies first, then IG edges
 	edges := tryDeps(spec)
 	if len(edges) == 0 {
 		edges = tryEdges(ig)
@@ -381,14 +435,13 @@ func enforceProtocol(answer string, ig, spec map[string]any) string {
 
 	protos := map[string]bool{}
 	for _, e := range edges {
-		p := strings.ToLower(e[2]) // e[2] is protocol
+		p := strings.ToLower(e[2])
 		if p == "" {
 			continue
 		}
 		protos[p] = true
 	}
 	if len(protos) != 1 {
-		// Multiple or none – don't try to "fix" text
 		return answer
 	}
 
@@ -430,7 +483,6 @@ func tryArrayNames(m map[string]any, key, sub string) []string {
 }
 
 func appendChat(jobID string, turn chatTurn) {
-	// chatBaseDir(userID) is defined elsewhere in the same package
 	baseDir := chatBaseDir(turn.UserID)
 
 	_ = os.MkdirAll(baseDir, 0o755)
@@ -459,7 +511,7 @@ func ListJobsForUser(userID string) ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		name := e.Name() // chat-<job>.jsonl
+		name := e.Name()
 		if !strings.HasPrefix(name, "chat-") || !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
@@ -469,7 +521,6 @@ func ListJobsForUser(userID string) ([]string, error) {
 	return jobIDs, nil
 }
 
-// intFromMap is used by summary code in the same package.
 func intFromMap(m map[string]any, key string) int {
 	if m == nil {
 		return 0
@@ -492,6 +543,16 @@ func ragAnswer(msg string) (string, []string) {
 		return "", nil
 	}
 
+	lower := strings.ToLower(msg)
+
+	// Only show the “sizing prompts / defaults & guardrails” docs if user explicitly
+	// asks for prompts or defaults.
+	allowMetaDocs := strings.Contains(lower, "sizing prompt") ||
+		strings.Contains(lower, "questions should i ask") ||
+		strings.Contains(lower, "what should i ask") ||
+		strings.Contains(lower, "defaults") ||
+		strings.Contains(lower, "guardrail")
+
 	var b strings.Builder
 	refs := make([]string, 0, 2)
 	used := 0
@@ -504,15 +565,21 @@ func ragAnswer(msg string) (string, []string) {
 			continue
 		}
 
+		base := r.ID
+		if slash := strings.LastIndexAny(base, `/\`); slash >= 0 {
+			base = base[slash+1:]
+		}
+
+		// 🚫 Skip these meta docs unless user explicitly asked
+		if !allowMetaDocs && (base == "sizing_prompts.md" || base == "defaults_guardrails.md") {
+			continue
+		}
+
 		b.WriteString(sn)
 		if !strings.HasSuffix(sn, "\n") {
 			b.WriteString("\n")
 		}
 
-		base := r.ID
-		if slash := strings.LastIndexAny(base, `/\`); slash >= 0 {
-			base = base[slash+1:]
-		}
 		refs = append(refs, base)
 
 		used++
@@ -523,6 +590,7 @@ func ragAnswer(msg string) (string, []string) {
 
 	ans := strings.TrimSpace(b.String())
 	if ans == "" {
+		// all hits filtered → let caller fall back to LLM
 		return "", refs
 	}
 	return ans, refs
@@ -537,24 +605,6 @@ func onTopic(msg string) bool {
 		}
 	}
 	return hits >= 1
-}
-
-func looksLikeTitle(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return true
-	}
-
-	// Consider only the first line
-	lines := strings.SplitN(s, "\n", 2)
-	first := strings.TrimSpace(lines[0])
-
-	// Very short, no sentence punctuation → looks like a heading such as "Sizing prompts..."
-	if len(first) < 25 && !strings.ContainsAny(first, ".!?") {
-		return true
-	}
-
-	return false
 }
 
 func tryGaps(m map[string]any) [][2]string {
@@ -572,7 +622,6 @@ func tryGaps(m map[string]any) [][2]string {
 	return out
 }
 
-// Each triple is: [from, to, protocol]
 func tryDeps(spec map[string]any) [][3]string {
 	arr, _ := spec["dependencies"].([]any)
 	out := make([][3]string, 0, len(arr))
@@ -580,7 +629,7 @@ func tryDeps(spec map[string]any) [][3]string {
 		if obj, ok := v.(map[string]any); ok {
 			from, _ := obj["from"].(string)
 			to, _ := obj["to"].(string)
-			kind, _ := obj["kind"].(string) // "grpc", "rest", "pubsub", etc.
+			kind, _ := obj["kind"].(string)
 			out = append(out, [3]string{from, to, kind})
 		}
 	}
@@ -602,7 +651,6 @@ func tryEdges(m map[string]any) [][3]string {
 }
 
 // --- Signals extraction helpers ---
-
 func atoiSafe(s string) int {
 	n, err := strconv.Atoi(s)
 	if err != nil {
@@ -615,7 +663,6 @@ func extractSignals(msg string) map[string]int {
 	out := map[string]int{}
 	l := strings.ToLower(msg)
 
-	// RPS: if we see one number → treat as peak; if two → [0]=peak, [1]=avg
 	rpsMatches := rxRPS.FindAllStringSubmatch(l, -1)
 	if len(rpsMatches) >= 1 {
 		out["rps_peak"] = atoiSafe(rpsMatches[0][1])
@@ -624,12 +671,10 @@ func extractSignals(msg string) map[string]int {
 		out["rps_avg"] = atoiSafe(rpsMatches[1][1])
 	}
 
-	// p95 latency (ms)
 	if m := rxP95ms.FindStringSubmatch(l); len(m) == 2 {
 		out["latency_p95_ms"] = atoiSafe(m[1])
 	}
 
-	// payload size → normalize to KB
 	if m := rxPayload.FindStringSubmatch(l); len(m) == 3 {
 		v := atoiSafe(m[1])
 		unit := strings.ToLower(m[2])
@@ -639,12 +684,10 @@ func extractSignals(msg string) map[string]int {
 		out["payload_kb"] = v
 	}
 
-	// burst factor (e.g. "2x")
 	if m := rxBurst.FindStringSubmatch(l); len(m) == 2 {
 		out["burst_factor"] = atoiSafe(m[1])
 	}
 
-	// CPU (vCPU or cores)
 	if m := rxCPU.FindStringSubmatch(l); len(m) >= 2 {
 		out["cpu_vcpu"] = atoiSafe(m[1])
 	}
@@ -652,7 +695,6 @@ func extractSignals(msg string) map[string]int {
 	return out
 }
 
-// NEW: merge history + current signals (current overrides history if non-zero)
 func mergeSignals(history, current map[string]int) map[string]int {
 	out := map[string]int{}
 	for k, v := range history {
@@ -666,7 +708,6 @@ func mergeSignals(history, current map[string]int) map[string]int {
 	return out
 }
 
-// NEW: load signals from previous user turns for this job
 func loadSignalsFromHistory(jobID, userID string) map[string]int {
 	agg := map[string]int{}
 
@@ -675,7 +716,6 @@ func loadSignalsFromHistory(jobID, userID string) map[string]int {
 
 	f, err := os.Open(fpath)
 	if err != nil {
-		// no history yet, that's fine
 		return agg
 	}
 	defer f.Close()
@@ -687,7 +727,6 @@ func loadSignalsFromHistory(jobID, userID string) map[string]int {
 			if err == io.EOF {
 				break
 			}
-			// on decode error, just return what we have so far
 			return agg
 		}
 		if t.Role != "user" {
@@ -703,7 +742,6 @@ func loadSignalsFromHistory(jobID, userID string) map[string]int {
 	return agg
 }
 
-// Build list of missing signals (for follow-up questions), based on aggregated signals
 func findMissingSignals(signals map[string]int) []missing {
 	m := []missing{}
 
@@ -723,4 +761,47 @@ func findMissingSignals(signals map[string]int) []missing {
 		m = append(m, missing{Key: "cpu_vcpu", Q: "Current/target CPU/RAM footprint per instance?"})
 	}
 	return m
+}
+
+func isJobSpecific(msg string) bool {
+	m := strings.ToLower(msg)
+	patterns := []string{
+		"my architecture",
+		"this architecture",
+		"my diagram",
+		"this diagram",
+		"what i upload",
+		"services and edges",
+		"in what i upload",
+	}
+	for _, p := range patterns {
+		if strings.Contains(m, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSummaryQuestion(q string) bool {
+	s := strings.ToLower(q)
+
+	summaryPhrases := []string{
+		"overall summary",
+		"summary of the system",
+		"summary of my system",
+		"final idea",
+		"overall idea",
+		"what do you think",
+		"your opinion",
+		"tell me about my system",
+		"explain my system",
+		"explain my chat",
+	}
+
+	for _, p := range summaryPhrases {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
 }
