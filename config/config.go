@@ -32,6 +32,11 @@ type UpstreamsConfig struct {
 	SimulationEngineURL string
 }
 
+type SimulationCallbacksConfig struct {
+	CallbackURL    string // URL for simulation engine to call back to
+	CallbackSecret string // Secret for authenticating callbacks (optional)
+}
+
 type LLMConfig struct {
 	OllamaURL string
 }
@@ -53,14 +58,15 @@ type RedisConfig struct {
 }
 
 type Config struct {
-	Server    ServerConfig
-	Database  DatabaseConfig
-	App       AppConfig
-	Upstreams UpstreamsConfig
-	LLM       LLMConfig
-	RAG       RAGConfig
-	Firebase  FirebaseConfig
-	Redis     RedisConfig
+	Server            ServerConfig
+	Database         DatabaseConfig
+	App              AppConfig
+	Upstreams        UpstreamsConfig
+	SimulationCallbacks SimulationCallbacksConfig
+	LLM              LLMConfig
+	RAG              RAGConfig
+	Firebase         FirebaseConfig
+	Redis            RedisConfig
 }
 
 func Load() (*Config, error) {
@@ -88,6 +94,10 @@ func Load() (*Config, error) {
 		Upstreams: UpstreamsConfig{
 			LLMSvcURL:           getEnv("LLM_SVC_URL", "http://localhost:8081"),
 			SimulationEngineURL: getEnv("SIMULATION_ENGINE_URL", "http://localhost:8082"),
+		},
+		SimulationCallbacks: SimulationCallbacksConfig{
+			CallbackURL:    getEnv("SIMULATION_CALLBACK_URL", ""),
+			CallbackSecret: getEnv("SIMULATION_CALLBACK_SECRET", ""),
 		},
 		LLM: LLMConfig{
 			OllamaURL: getEnv("OLLAMA_URL", "http://localhost:11434"),

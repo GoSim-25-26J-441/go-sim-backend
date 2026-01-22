@@ -27,8 +27,8 @@ func NewSimulationEngineClient(baseURL string) *SimulationEngineClient {
 
 // CreateRunRequest represents the request to create a run in the simulation engine
 type CreateRunRequest struct {
-	RunID string      `json:"run_id,omitempty"`
-	Input *RunInput   `json:"input"`
+	RunID string    `json:"run_id,omitempty"`
+	Input *RunInput `json:"input"`
 }
 
 // RunInput represents the input for a simulation run
@@ -173,3 +173,162 @@ func (c *SimulationEngineClient) StopRun(runID string) error {
 	return nil
 }
 
+// RunSummaryResponse represents the summary/aggregated statistics response from the simulation engine
+type RunSummaryResponse struct {
+	Summary struct {
+		RunID           string                 `json:"run_id"`
+		TotalRequests   int64                  `json:"total_requests,omitempty"`
+		TotalErrors     int64                  `json:"total_errors,omitempty"`
+		TotalDurationMs int64                  `json:"total_duration_ms,omitempty"`
+		Metrics         map[string]interface{} `json:"metrics,omitempty"`      // Aggregated metrics (percentiles, averages, etc.)
+		SummaryData     map[string]interface{} `json:"summary_data,omitempty"` // Additional summary information
+		CreatedAtUnixMs int64                  `json:"created_at_unix_ms,omitempty"`
+		StartedAtUnixMs int64                  `json:"started_at_unix_ms,omitempty"`
+		EndedAtUnixMs   int64                  `json:"ended_at_unix_ms,omitempty"`
+	} `json:"summary"`
+}
+
+// GetRunSummary retrieves aggregated summary statistics for a completed run
+// Expected endpoint: GET /v1/runs/{id}/summary
+func (c *SimulationEngineClient) GetRunSummary(engineRunID string) (*RunSummaryResponse, error) {
+	url := fmt.Sprintf("%s/v1/runs/%s/summary", c.baseURL, engineRunID)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var summaryResp RunSummaryResponse
+	if err := json.Unmarshal(body, &summaryResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal summary response: %w", err)
+	}
+
+	return &summaryResp, nil
+}
+
+// MetricDataPointResponse represents a single metric point from the simulation engine
+type MetricDataPointResponse struct {
+	TimestampMs int64                  `json:"timestamp_ms"`         // Unix timestamp in milliseconds
+	MetricType  string                 `json:"metric_type"`          // e.g., "request_latency_ms", "cpu_utilization"
+	MetricValue float64                `json:"metric_value"`         // Numeric value
+	ServiceID   string                 `json:"service_id,omitempty"` // Optional service identifier
+	NodeID      string                 `json:"node_id,omitempty"`    // Optional node identifier
+	Tags        map[string]interface{} `json:"tags,omitempty"`       // Additional metadata
+}
+
+// RunMetricsResponse represents the timeseries metrics response from the simulation engine
+type RunMetricsResponse struct {
+	Metrics []MetricDataPointResponse `json:"metrics"`
+	// Alternative structure if metrics are nested
+	Data struct {
+		Metrics []MetricDataPointResponse `json:"metrics"`
+	} `json:"data,omitempty"`
+}
+
+// GetRunMetrics retrieves timeseries metrics data for a completed run
+// Expected endpoint: GET /v1/runs/{id}/metrics
+// Optional query parameters: ?from_timestamp_ms={ts}&to_timestamp_ms={ts}&metric_type={type}
+func (c *SimulationEngineClient) GetRunMetrics(engineRunID string) ([]MetricDataPointResponse, error) {
+	url := fmt.Sprintf("%s/v1/runs/%s/metrics", c.baseURL, engineRunID)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var metricsResp RunMetricsResponse
+	if err := json.Unmarshal(body, &metricsResp); err != nil {
+		// Try alternative structure: metrics might be directly in array
+		var directMetrics []MetricDataPointResponse
+		if err2 := json.Unmarshal(body, &directMetrics); err2 == nil {
+			return directMetrics, nil
+		}
+		return nil, fmt.Errorf("failed to unmarshal metrics response: %w", err)
+	}
+
+	// Check if metrics are in nested structure
+	if len(metricsResp.Data.Metrics) > 0 {
+		return metricsResp.Data.Metrics, nil
+	}
+
+	return metricsResp.Metrics, nil
+}
+
+// GetRunMetricsWithFilters retrieves timeseries metrics with optional filters
+func (c *SimulationEngineClient) GetRunMetricsWithFilters(
+	engineRunID string,
+	fromTimestampMs *int64,
+	toTimestampMs *int64,
+	metricType string,
+) ([]MetricDataPointResponse, error) {
+	url := fmt.Sprintf("%s/v1/runs/%s/metrics", c.baseURL, engineRunID)
+
+	// Build query parameters
+	queryParams := make([]string, 0)
+	if fromTimestampMs != nil {
+		queryParams = append(queryParams, fmt.Sprintf("from_timestamp_ms=%d", *fromTimestampMs))
+	}
+	if toTimestampMs != nil {
+		queryParams = append(queryParams, fmt.Sprintf("to_timestamp_ms=%d", *toTimestampMs))
+	}
+	if metricType != "" {
+		queryParams = append(queryParams, fmt.Sprintf("metric_type=%s", metricType))
+	}
+
+	if len(queryParams) > 0 {
+		url += "?" + queryParams[0]
+		for i := 1; i < len(queryParams); i++ {
+			url += "&" + queryParams[i]
+		}
+	}
+
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var metricsResp RunMetricsResponse
+	if err := json.Unmarshal(body, &metricsResp); err != nil {
+		// Try alternative structure: metrics might be directly in array
+		var directMetrics []MetricDataPointResponse
+		if err2 := json.Unmarshal(body, &directMetrics); err2 == nil {
+			return directMetrics, nil
+		}
+		return nil, fmt.Errorf("failed to unmarshal metrics response: %w", err)
+	}
+
+	// Check if metrics are in nested structure
+	if len(metricsResp.Data.Metrics) > 0 {
+		return metricsResp.Data.Metrics, nil
+	}
+
+	return metricsResp.Metrics, nil
+}

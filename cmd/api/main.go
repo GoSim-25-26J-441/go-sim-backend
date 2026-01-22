@@ -118,11 +118,35 @@ func main() {
 
 		// Initialize simulation module
 		simRunRepo := simrepo.NewRunRepository(redisClient)
-		simService := simservice.NewSimulationService(simRunRepo)
-		simHandler := simhttp.New(simService, cfg.Upstreams.SimulationEngineURL)
+
+		// Initialize persistence repositories (PostgreSQL)
+		simSummaryRepo := simrepo.NewSummaryRepository(db)
+		simMetricsRepo := simrepo.NewMetricsTimeseriesRepository(db)
+
+		// Create engine client for fetching summary and metrics
+		httpEngineClient := simhttp.NewSimulationEngineClient(cfg.Upstreams.SimulationEngineURL)
+
+		// Create adapter to bridge HTTP client to service interface
+		engineClient := simhttp.NewEngineClientAdapter(httpEngineClient)
+
+		// Create service with persistence support
+		simService := simservice.NewSimulationServiceWithPersistence(
+			simRunRepo,
+			simSummaryRepo,
+			simMetricsRepo,
+			engineClient, // EngineClient interface
+		)
+
+		// Create handler with callback secret
+		simHandler := simhttp.New(simService, cfg.Upstreams.SimulationEngineURL, cfg.SimulationCallbacks.CallbackSecret)
 		simHandler.Register(simGroup)
 
+		// Register callback routes (no Firebase auth - called by simulation engine)
+		simEngineGroup := api.Group("/simulation-engine")
+		simHandler.RegisterEngineCallbackRoutes(simEngineGroup)
+
 		log.Printf("Simulation endpoints registered at /api/v1/simulation")
+		log.Printf("Simulation engine callback endpoints registered at /api/v1/simulation-engine (no auth required)")
 	} else {
 		log.Printf("Simulation endpoints disabled (Firebase not initialized)")
 	}

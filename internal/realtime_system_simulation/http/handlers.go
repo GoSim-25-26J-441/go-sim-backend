@@ -1,7 +1,10 @@
 package http
 
 import (
+	"context"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	"github.com/gin-gonic/gin"
@@ -188,6 +191,18 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		return
 	}
 
+	// Trigger persistence when run completes successfully
+	if body.Status != nil && *body.Status == domain.StatusCompleted && run.EngineRunID != "" {
+		go func() {
+			ctx := context.Background()
+			if err := h.simService.StoreRunSummaryAndMetrics(ctx, runID); err != nil {
+				log.Printf("Failed to persist summary and metrics for run_id=%s: %v", runID, err)
+			} else {
+				log.Printf("Successfully persisted summary and metrics for run_id=%s", runID)
+			}
+		}()
+	}
+
 	c.JSON(http.StatusOK, gin.H{"run": run})
 }
 
@@ -230,4 +245,77 @@ func (h *Handler) DeleteRun(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "run deleted successfully"})
+}
+
+// GetRunSummary retrieves the persisted summary for a completed run
+func (h *Handler) GetRunSummary(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	summary, err := h.simService.GetStoredSummary(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "summary not found for this run"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get summary"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"summary": summary})
+}
+
+// GetRunMetrics retrieves persisted timeseries metrics for a run
+func (h *Handler) GetRunMetrics(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	// Optional query parameters
+	metricType := c.Query("metric_type")
+	fromTimeStr := c.Query("from_time")
+	toTimeStr := c.Query("to_time")
+
+	ctx := c.Request.Context()
+
+	var metrics []domain.MetricDataPoint
+	var err error
+
+	// If time range is specified, use GetByRunIDAndTimeRange
+	if fromTimeStr != "" || toTimeStr != "" {
+		var fromTime, toTime *time.Time
+		if fromTimeStr != "" {
+			if t, err := time.Parse(time.RFC3339, fromTimeStr); err == nil {
+				fromTime = &t
+			}
+		}
+		if toTimeStr != "" {
+			if t, err := time.Parse(time.RFC3339, toTimeStr); err == nil {
+				toTime = &t
+			}
+		}
+		metrics, err = h.simService.GetStoredMetricsWithTimeRange(ctx, runID, fromTime, toTime, metricType)
+	} else if metricType != "" {
+		// Filter by metric type only
+		metrics, err = h.simService.GetStoredMetrics(ctx, runID, metricType)
+	} else {
+		// Get all metrics
+		metrics, err = h.simService.GetStoredMetrics(ctx, runID, "")
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get metrics"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"run_id":  runID,
+		"metrics": metrics,
+		"count":   len(metrics),
+	})
 }
