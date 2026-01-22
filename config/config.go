@@ -28,7 +28,8 @@ type AppConfig struct {
 }
 
 type UpstreamsConfig struct {
-	LLMSvcURL string
+	LLMSvcURL           string
+	SimulationEngineURL string
 }
 
 type LLMConfig struct {
@@ -44,6 +45,22 @@ type FirebaseConfig struct {
 	ProjectID       string // Firebase project ID (optional, can be in credentials)
 }
 
+type RedisConfig struct {
+	Host     string
+	Port     int
+	Password string
+	DB       int // Database number (0-15)
+}
+
+type SimulationCallbacksConfig struct {
+	// CallbackURL is the full URL that the simulation engine should call when a run changes terminal state.
+	// Example: http://localhost:8000/api/v1/simulation-engine/runs/callback
+	CallbackURL string
+	// CallbackSecret is a shared secret to authenticate callbacks from the simulation engine.
+	// The engine should set header: X-Simulation-Callback-Secret: <secret>
+	CallbackSecret string
+}
+
 type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
@@ -52,6 +69,8 @@ type Config struct {
 	LLM       LLMConfig
 	RAG       RAGConfig
 	Firebase  FirebaseConfig
+	Redis     RedisConfig
+	SimulationCallbacks SimulationCallbacksConfig
 }
 
 func Load() (*Config, error) {
@@ -77,7 +96,8 @@ func Load() (*Config, error) {
 			Version:     getEnv("APP_VERSION", "1.0.0"),
 		},
 		Upstreams: UpstreamsConfig{
-			LLMSvcURL: getEnv("LLM_SVC_URL", "http://localhost:8081"),
+			LLMSvcURL:           getEnv("LLM_SVC_URL", "http://localhost:8081"),
+			SimulationEngineURL: getEnv("SIMULATION_ENGINE_URL", "http://localhost:8082"),
 		},
 		LLM: LLMConfig{
 			OllamaURL: getEnv("OLLAMA_URL", "http://localhost:11434"),
@@ -88,6 +108,16 @@ func Load() (*Config, error) {
 		Firebase: FirebaseConfig{
 			CredentialsPath: getEnv("FIREBASE_CREDENTIALS_PATH", ""),
 			ProjectID:       getEnv("FIREBASE_PROJECT_ID", ""),
+		},
+		Redis: RedisConfig{
+			Host:     getEnv("REDIS_HOST", "localhost"),
+			Port:     getEnvAsInt("REDIS_PORT", 6379),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       getEnvAsInt("REDIS_DB", 0),
+		},
+		SimulationCallbacks: SimulationCallbacksConfig{
+			CallbackURL:    getEnv("SIMULATION_CALLBACK_URL", ""),
+			CallbackSecret: getEnv("SIMULATION_CALLBACK_SECRET", ""),
 		},
 	}
 
