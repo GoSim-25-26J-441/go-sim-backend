@@ -116,31 +116,27 @@ func main() {
 		authHandler := authhttp.New(authService)
 
 		// Apply Firebase Auth middleware to auth routes
-		if fbClient, ok := authClient.(*auth.Client); ok {
-			authGroup.Use(authmiddleware.FirebaseAuthMiddleware(fbClient))
-			authHandler.Register(authGroup)
-		}
+		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+		authHandler.Register(authGroup)
 
 		log.Printf("Auth endpoints registered at /api/v1/auth")
 	}
 
 	// Projects module (from temp branch - new feature)
 	if authClient != nil {
-		if fbClient, ok := authClient.(*auth.Client); ok {
-			projectsGroup := api.Group("/projects")
-			projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(fbClient))
+		projectsGroup := api.Group("/projects")
+		projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
-			projectRepo := projects.NewRepo(db)
-			projects.Register(projectsGroup, projectRepo)
+		projectRepo := projects.NewRepo(db)
+		projects.Register(projectsGroup, projectRepo)
 
-			// Design Input Processing project routes (chats, diagrams)
-			diproutes.RegisterProjectRoutes(projectsGroup, diproutes.ProjectDeps{
-				DB:   db,
-				UIGP: dipllm.NewUIGP(),
-			})
+		// Design Input Processing project routes (chats, diagrams)
+		diproutes.RegisterProjectRoutes(projectsGroup, diproutes.ProjectDeps{
+			DB:   db,
+			UIGP: dipllm.NewUIGP(),
+		})
 
-			log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
-		}
+		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
 	}
 
 	// Initialize simulation module (required for both user routes and callback routes)
@@ -163,16 +159,14 @@ func main() {
 
 	// Simulation routes (user-facing endpoints - require Firebase auth if Firebase is initialized)
 	if authClient != nil {
-		if fbClient, ok := authClient.(*auth.Client); ok {
-			simGroup := api.Group("/simulation")
+		simGroup := api.Group("/simulation")
 
-			// Apply Firebase Auth middleware to simulation routes (for user access)
-			simGroup.Use(authmiddleware.FirebaseAuthMiddleware(fbClient))
+		// Apply Firebase Auth middleware to simulation routes (for user access)
+		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
-			simHandler.Register(simGroup)
+		simHandler.Register(simGroup)
 
-			log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
-		}
+		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
 	} else {
 		log.Printf("Simulation user endpoints disabled (Firebase not initialized)")
 	}
