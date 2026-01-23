@@ -1,10 +1,11 @@
 package http
 
-import (
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http/handlers"
-	"github.com/gin-gonic/gin"
-)
+import "github.com/gin-gonic/gin"
 
 func (h *Handler) health(c *gin.Context) {
-	handlers.Health(c, h.UpstreamURL)
+	c.JSON(200, gin.H{
+		"ok":        true,
+		"component": "design-input-processing",
+		"upstream":  h.UpstreamURL,
+	})
 }
