@@ -2,21 +2,19 @@ package chats
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrNotFound = errors.New("not found")
 
 type Repo struct {
-	db *pgxpool.Pool
+	db *sql.DB
 }
 
-func NewRepo(db *pgxpool.Pool) *Repo { return &Repo{db: db} }
+func NewRepo(db *sql.DB) *Repo { return &Repo{db: db} }
 
 type projectInfo struct {
 	PublicID                string
@@ -34,8 +32,8 @@ where public_id=$1
   and deleted_at is null
 `
 	var p projectInfo
-	if err := r.db.QueryRow(ctx, q, publicID, userFirebaseUID).Scan(&p.PublicID, &p.CurrentDiagramVersionID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if err := r.db.QueryRowContext(ctx, q, publicID, userFirebaseUID).Scan(&p.PublicID, &p.CurrentDiagramVersionID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -65,9 +63,9 @@ where id=$1
   and user_firebase_uid=$3
 `
 	var t threadInfo
-	if err := r.db.QueryRow(ctx, q, threadID, projectPublicID, userFirebaseUID).
+	if err := r.db.QueryRowContext(ctx, q, threadID, projectPublicID, userFirebaseUID).
 		Scan(&t.ID, &t.ProjectPublicID, &t.UserFirebaseUID, &t.BindingMode, &t.PinnedDiagramVersionID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -96,7 +94,7 @@ values ($1, $2, $3, $4, $5)
 returning id, created_at
 `
 	var created time.Time
-	if err := r.db.QueryRow(ctx, q, id, projectPublicID, userFirebaseUID, title, bindingMode).Scan(&id, &created); err != nil {
+	if err := r.db.QueryRowContext(ctx, q, id, projectPublicID, userFirebaseUID, title, bindingMode).Scan(&id, &created); err != nil {
 		return nil, err
 	}
 
@@ -127,7 +125,7 @@ where project_public_id=$1
   and user_firebase_uid=$2
 order by created_at desc
 `
-	rows, err := r.db.Query(ctx, q, projectPublicID, userFirebaseUID)
+	rows, err := r.db.QueryContext(ctx, q, projectPublicID, userFirebaseUID)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +140,10 @@ order by created_at desc
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *Repo) ResolveDiagramContext(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*string, json.RawMessage, error) {
@@ -176,8 +177,8 @@ where id=$1
   and user_firebase_uid=$3
 `
 	var specText, diagramText string
-	if err := r.db.QueryRow(ctx, q, *use, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if err := r.db.QueryRowContext(ctx, q, *use, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, ErrNotFound
 		}
 		return nil, nil, err
@@ -210,7 +211,7 @@ where thread_id=$1
 order by created_at desc
 limit $4
 `
-	rows, err := r.db.Query(ctx, q, threadID, projectPublicID, userFirebaseUID, limit)
+	rows, err := r.db.QueryContext(ctx, q, threadID, projectPublicID, userFirebaseUID, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -226,7 +227,10 @@ limit $4
 		roles = append(roles, role)
 		contents = append(contents, content)
 	}
-	return roles, contents, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return roles, contents, nil
 }
 
 type InsertAttachment struct {
@@ -257,11 +261,11 @@ func (r *Repo) InsertTurn(
 		return nil, nil, err
 	}
 
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
 	userMsgID, err := newID("msg")
 	if err != nil {
@@ -281,7 +285,7 @@ returning id, created_at
 	userMsg.Content = userContent
 	userMsg.DiagramVersionIDUsed = diagramVersionIDUsed
 
-	if err := tx.QueryRow(ctx, insMsg,
+	if err := tx.QueryRowContext(ctx, insMsg,
 		userMsgID, threadID, projectPublicID, userFirebaseUID,
 		"user", userContent, diagramVersionIDUsed,
 	).Scan(&userMsg.ID, &userMsg.CreatedAt); err != nil {
@@ -315,7 +319,7 @@ returning id, created_at
 			att.Width = a.Width
 			att.Height = a.Height
 
-			if err := tx.QueryRow(ctx, insAtt,
+			if err := tx.QueryRowContext(ctx, insAtt,
 				attID, userMsg.ID, kind, a.ObjectKey, a.MimeType, a.FileName, a.FileSize, a.Width, a.Height,
 			).Scan(&att.ID, &att.CreatedAt); err != nil {
 				return nil, nil, err
@@ -347,14 +351,14 @@ returning id, created_at
 	asstMsg.Refs = assistantRefs
 	asstMsg.DiagramVersionIDUsed = diagramVersionIDUsed
 
-	if err := tx.QueryRow(ctx, insAsst,
+	if err := tx.QueryRowContext(ctx, insAsst,
 		asstMsgID, threadID, projectPublicID, userFirebaseUID,
 		"assistant", assistantContent, assistantSource, string(refsJSON), diagramVersionIDUsed,
 	).Scan(&asstMsg.ID, &asstMsg.CreatedAt); err != nil {
 		return nil, nil, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
 
@@ -399,7 +403,7 @@ where m.thread_id=$1
 order by m.created_at asc
 limit $4
 `
-	rows, err := r.db.Query(ctx, q, threadID, projectPublicID, userFirebaseUID, limit)
+	rows, err := r.db.QueryContext(ctx, q, threadID, projectPublicID, userFirebaseUID, limit)
 	if err != nil {
 		return nil, err
 	}

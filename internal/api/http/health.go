@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 )
 
 type HealthResponse struct {
@@ -20,10 +20,10 @@ type HealthResponse struct {
 type HealthHandler struct {
 	serviceName string
 	version     string
-	db          *pgxpool.Pool
+	db          *sql.DB
 }
 
-func NewHealthHandler(serviceName, version string, db *pgxpool.Pool) *HealthHandler {
+func NewHealthHandler(serviceName, version string, db *sql.DB) *HealthHandler {
 	return &HealthHandler{
 		serviceName: serviceName,
 		version:     version,
@@ -37,7 +37,7 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 		pingCtx, cancel := context.WithTimeout(c.Request.Context(), 1*time.Second)
 		defer cancel()
 
-		if err := h.db.Ping(pingCtx); err != nil {
+		if err := h.db.PingContext(pingCtx); err != nil {
 			dbStatus = "down"
 		} else {
 			dbStatus = "up"

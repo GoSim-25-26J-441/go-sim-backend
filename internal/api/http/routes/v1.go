@@ -14,43 +14,39 @@ import (
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/users"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type V1Deps struct {
-	DBPool   *pgxpool.Pool
-	AuthSQL  *sql.DB
+	DB      *sql.DB
 	Firebase *fbauth.Client
 
 	UIGP *dipllm.UIGPClient
 }
 
-func RegisterV1(r *gin.Engine, dep V1Deps) {
-	api := r.Group("/api/v1")
+func RegisterV1(api *gin.RouterGroup, dep V1Deps) {
 
-	if dep.Firebase != nil && dep.AuthSQL != nil {
+	if dep.Firebase != nil && dep.DB != nil {
 		authGroup := api.Group("/auth")
 		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(dep.Firebase))
 
-		repo := authrepo.NewUserRepository(dep.AuthSQL)
+		repo := authrepo.NewUserRepository(dep.DB)
 		svc := authservice.NewAuthService(repo)
 		h := authhttp.New(svc)
 		h.Register(authGroup)
 	}
 
 	protected := api.Group("")
-	userRepo := users.NewRepo(dep.DBPool)
+	userRepo := authrepo.NewUserRepository(dep.DB)
 	protected.Use(auth.WithUser(userRepo))
 
 	projectsGroup := protected.Group("/projects")
-	projectRepo := projects.NewRepo(dep.DBPool)
+	projectRepo := projects.NewRepo(dep.DB)
 	projects.Register(projectsGroup, projectRepo)
 
 	diproutes.RegisterProjectRoutes(projectsGroup, diproutes.ProjectDeps{
-		DB:   dep.DBPool,
+		DB:   dep.DB,
 		UIGP: dep.UIGP,
 	})
 }

@@ -1,16 +1,17 @@
 package routes
 
 import (
+	"database/sql"
+
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats"
 	dipdiagrams "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams"
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ProjectDeps struct {
-	DB   *pgxpool.Pool
+	DB   *sql.DB
 	UIGP *dipllm.UIGPClient
 }
 

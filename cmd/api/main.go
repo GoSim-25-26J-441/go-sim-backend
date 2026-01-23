@@ -1,18 +1,13 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"fmt"
 	"log"
-	"time"
 
 	"firebase.google.com/go/v4/auth"
 	"github.com/joho/godotenv"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
@@ -23,9 +18,9 @@ import (
 	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
 	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
 	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
-	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
-	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
+	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/_legacy_http"
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
+	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
@@ -61,17 +56,7 @@ func main() {
 	defer db.Close()
 	log.Printf("Database connection established")
 
-	// TODO: Remove pgxpool after converting projects/chats/diagrams to database/sql
-	// Temporary: App DB (pgxpool) - projects/diagrams/chats/users (will be refactored)
-	dsn := pgxDSN(&cfg.Database)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	dbPool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		log.Fatalf("pgx connect: %v", err)
-	}
-	defer dbPool.Close()
-	log.Printf("PostgreSQL pool connection established (temporary - will be refactored)")
+	// Single database connection for all modules
 
 	// Initialize Redis connection
 	redisClient, err := redisstorage.NewConnection(&cfg.Redis)
@@ -106,7 +91,7 @@ func main() {
 	corsConfig.MaxAge = 12 * 60 * 60 // 12 hours
 	router.Use(cors.New(corsConfig))
 
-	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
+	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version, db)
 	healthHandler.RegisterRoutes(router)
 	healthHandler.RegisterRoutes(router.Group("/api/v1"))
 
@@ -138,8 +123,7 @@ func main() {
 	// TODO: Refactor - Remove centralized routes, use module-specific Register() methods
 	// Temporary: Centralized route registration (will be refactored to match dev pattern)
 	apiroutes.RegisterV1(api, apiroutes.V1Deps{
-		DBPool:   dbPool,
-		AuthSQL:  db,
+		DB:       db,
 		Firebase: authClient,
 		UIGP:     dipllm.NewUIGP(),
 	})
@@ -183,11 +167,4 @@ func main() {
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
 		log.Fatal("Server failed to start:", err)
 	}
-}
-
-func pgxDSN(db *config.DatabaseConfig) string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		db.Host, db.Port, db.User, db.Password, db.Name,
-	)
 }

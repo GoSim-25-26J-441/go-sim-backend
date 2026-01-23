@@ -3,23 +3,21 @@ package diagrams
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrNotFound = errors.New("not found")
 
 type Repo struct {
-	db *pgxpool.Pool
+	db *sql.DB
 }
 
-func NewRepo(db *pgxpool.Pool) *Repo {
+func NewRepo(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -63,14 +61,14 @@ func (r *Repo) CreateVersion(ctx context.Context, userFirebaseUID, projectPublic
 		return nil, err
 	}
 
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
 	var ok string
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRowContext(ctx, `
 select public_id
 from projects
 where public_id = $1
@@ -79,14 +77,14 @@ where public_id = $1
 for update
 `, projectPublicID, userFirebaseUID).Scan(&ok)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 
 	var next int
-	if err := tx.QueryRow(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 select coalesce(max(version_number), 0) + 1
 from diagram_versions
 where project_public_id = $1
@@ -112,7 +110,7 @@ where project_public_id = $1
 	ver.DiagramJSON = in.DiagramJSON
 	ver.SpecSummary = in.SpecSummary
 
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRowContext(ctx, `
 insert into diagram_versions (
   id, project_public_id, user_firebase_uid,
   version_number, source, diagram_json, image_object_key, spec_summary, hash, created_by
@@ -139,7 +137,7 @@ returning created_at
 		return nil, err
 	}
 
-	_, err = tx.Exec(ctx, `
+	_, err = tx.ExecContext(ctx, `
 update projects
 set current_diagram_version_id = $1,
     updated_at = now()
@@ -151,7 +149,7 @@ where public_id = $2
 		return nil, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
@@ -167,7 +165,7 @@ func (r *Repo) Latest(ctx context.Context, userFirebaseUID, projectPublicID stri
 	}
 
 	var ok string
-	err := r.db.QueryRow(ctx, `
+	err := r.db.QueryRowContext(ctx, `
 select public_id
 from projects
 where public_id = $1
@@ -175,7 +173,7 @@ where public_id = $1
   and deleted_at is null
 `, projectPublicID, userFirebaseUID).Scan(&ok)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -188,7 +186,7 @@ where public_id = $1
 	var diagramText string
 	var specText string
 
-	err = r.db.QueryRow(ctx, `
+	err = r.db.QueryRowContext(ctx, `
 select id, version_number, source,
        coalesce(hash,''), coalesce(image_object_key,''),
        diagram_json::text,
@@ -206,7 +204,7 @@ limit 1
 		&ver.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err

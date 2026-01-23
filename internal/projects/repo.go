@@ -2,19 +2,19 @@ package projects
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/lib/pq"
 )
 
 type Repo struct {
-	db *pgxpool.Pool
+	db *sql.DB
 }
 
-func NewRepo(db *pgxpool.Pool) *Repo {
+func NewRepo(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -46,7 +46,7 @@ VALUES ($1, $2, $3, $4)
 RETURNING public_id, name, is_temporary, created_at, updated_at;
 `
 		var p Project
-		err = r.db.QueryRow(ctx, q, publicID, userFirebaseUID, name, temporary).
+		err = r.db.QueryRowContext(ctx, q, publicID, userFirebaseUID, name, temporary).
 			Scan(&p.PublicID, &p.Name, &p.Temporary, &p.CreatedAt, &p.UpdatedAt)
 
 		if err == nil {
@@ -54,7 +54,7 @@ RETURNING public_id, name, is_temporary, created_at, updated_at;
 		}
 
 		// unique violation on public_id → retry
-		var pgErr *pgconn.PgError
+		var pgErr *pq.Error
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			continue
 		}
@@ -71,7 +71,7 @@ FROM projects
 WHERE user_firebase_uid = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC;
 `
-	rows, err := r.db.Query(ctx, q, userFirebaseUID)
+	rows, err := r.db.QueryContext(ctx, q, userFirebaseUID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,10 @@ ORDER BY created_at DESC;
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *Repo) Rename(ctx context.Context, userFirebaseUID, publicID, newName string) (*Project, error) {
@@ -96,7 +99,7 @@ WHERE user_firebase_uid = $1 AND public_id = $2 AND deleted_at IS NULL
 RETURNING public_id, name, is_temporary, created_at, updated_at;
 `
 	var p Project
-	err := r.db.QueryRow(ctx, q, userFirebaseUID, publicID, newName).
+	err := r.db.QueryRowContext(ctx, q, userFirebaseUID, publicID, newName).
 		Scan(&p.PublicID, &p.Name, &p.Temporary, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -110,9 +113,13 @@ UPDATE projects
 SET deleted_at = now(), updated_at = now()
 WHERE user_firebase_uid = $1 AND public_id = $2 AND deleted_at IS NULL;
 `
-	ct, err := r.db.Exec(ctx, q, userFirebaseUID, publicID)
+	result, err := r.db.ExecContext(ctx, q, userFirebaseUID, publicID)
 	if err != nil {
 		return false, err
 	}
-	return ct.RowsAffected() > 0, nil
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
