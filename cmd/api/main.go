@@ -11,7 +11,6 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
-	apiroutes "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/routes"
 
 	authpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"
@@ -27,6 +26,10 @@ import (
 	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
+	
+	// Projects module (from temp branch)
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
+	diproutes "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/api/http/routes"
 )
 
 const serviceName = "go-sim-backend"
@@ -67,7 +70,7 @@ func main() {
 	log.Printf("Redis connection established")
 
 	// Initialize Firebase Auth (optional - only if credentials are provided)
-	var authClient *auth.Client
+	var authClient interface{}
 	if cfg.Firebase.CredentialsPath != "" {
 		fbAuth, err := authpkg.InitializeFirebase(&cfg.Firebase)
 		if err != nil {
@@ -91,9 +94,8 @@ func main() {
 	corsConfig.MaxAge = 12 * 60 * 60 // 12 hours
 	router.Use(cors.New(corsConfig))
 
-	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version, db)
+	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
 	healthHandler.RegisterRoutes(router)
-	healthHandler.RegisterRoutes(router.Group("/api/v1"))
 
 	api := router.Group("/api/v1")
 
@@ -114,19 +116,32 @@ func main() {
 		authHandler := authhttp.New(authService)
 
 		// Apply Firebase Auth middleware to auth routes
-		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient))
-		authHandler.Register(authGroup)
+		if fbClient, ok := authClient.(*auth.Client); ok {
+			authGroup.Use(authmiddleware.FirebaseAuthMiddleware(fbClient))
+			authHandler.Register(authGroup)
+		}
 
 		log.Printf("Auth endpoints registered at /api/v1/auth")
 	}
 
-	// TODO: Refactor - Remove centralized routes, use module-specific Register() methods
-	// Temporary: Centralized route registration (will be refactored to match dev pattern)
-	apiroutes.RegisterV1(api, apiroutes.V1Deps{
-		DB:       db,
-		Firebase: authClient,
-		UIGP:     dipllm.NewUIGP(),
-	})
+	// Projects module (from temp branch - new feature)
+	if authClient != nil {
+		if fbClient, ok := authClient.(*auth.Client); ok {
+			projectsGroup := api.Group("/projects")
+			projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(fbClient))
+			
+			projectRepo := projects.NewRepo(db)
+			projects.Register(projectsGroup, projectRepo)
+
+			// Design Input Processing project routes (chats, diagrams)
+			diproutes.RegisterProjectRoutes(projectsGroup, diproutes.ProjectDeps{
+				DB:   db,
+				UIGP: dipllm.NewUIGP(),
+			})
+
+			log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
+		}
+	}
 
 	// Initialize simulation module (required for both user routes and callback routes)
 	simRunRepo := simrepo.NewRunRepository(redisClient)
@@ -148,14 +163,16 @@ func main() {
 
 	// Simulation routes (user-facing endpoints - require Firebase auth if Firebase is initialized)
 	if authClient != nil {
-		simGroup := api.Group("/simulation")
+		if fbClient, ok := authClient.(*auth.Client); ok {
+			simGroup := api.Group("/simulation")
 
-		// Apply Firebase Auth middleware to simulation routes (for user access)
-		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient))
+			// Apply Firebase Auth middleware to simulation routes (for user access)
+			simGroup.Use(authmiddleware.FirebaseAuthMiddleware(fbClient))
 
-		simHandler.Register(simGroup)
+			simHandler.Register(simGroup)
 
-		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
+			log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
+		}
 	} else {
 		log.Printf("Simulation user endpoints disabled (Firebase not initialized)")
 	}
