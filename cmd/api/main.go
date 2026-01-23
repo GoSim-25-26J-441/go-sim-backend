@@ -28,8 +28,9 @@ import (
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 
 	// Projects module (from temp branch)
-	diproutes "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/api/http/routes"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
+	dipchats "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats"
+	dipdiagrams "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams"
 )
 
 const serviceName = "go-sim-backend"
@@ -127,14 +128,18 @@ func main() {
 		projectsGroup := api.Group("/projects")
 		projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
+		// Initialize projects module
 		projectRepo := projects.NewRepo(db)
 		projects.Register(projectsGroup, projectRepo)
 
-		// Design Input Processing project routes (chats, diagrams)
-		diproutes.RegisterProjectRoutes(projectsGroup, diproutes.ProjectDeps{
-			DB:   db,
-			UIGP: dipllm.NewUIGP(),
-		})
+		// Initialize diagrams module
+		diagramsRepo := dipdiagrams.NewRepo(db)
+		dipdiagrams.RegisterProjectRoutes(projectsGroup, diagramsRepo)
+
+		// Initialize chats module
+		chatRepo := dipchats.NewRepo(db)
+		chatHandler := dipchats.NewHandler(chatRepo, dipllm.NewUIGP())
+		dipchats.RegisterProjectRoutes(projectsGroup, chatHandler)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
 	}
