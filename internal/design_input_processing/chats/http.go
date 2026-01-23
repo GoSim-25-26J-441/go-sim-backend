@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
 	"github.com/gin-gonic/gin"
 )

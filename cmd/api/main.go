@@ -17,7 +17,7 @@ import (
 	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
 	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
 	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
-	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/_legacy_http"
+	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
 	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
@@ -28,9 +28,9 @@ import (
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 
 	// Projects module (from temp branch)
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
 	dipchats "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats"
 	dipdiagrams "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
 )
 
 const serviceName = "go-sim-backend"
