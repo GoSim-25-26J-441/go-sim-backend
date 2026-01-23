@@ -26,10 +26,10 @@ import (
 	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
-	
+
 	// Projects module (from temp branch)
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
 	diproutes "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/api/http/routes"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
 )
 
 const serviceName = "go-sim-backend"
@@ -129,7 +129,7 @@ func main() {
 		if fbClient, ok := authClient.(*auth.Client); ok {
 			projectsGroup := api.Group("/projects")
 			projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(fbClient))
-			
+
 			projectRepo := projects.NewRepo(db)
 			projects.Register(projectsGroup, projectRepo)
 

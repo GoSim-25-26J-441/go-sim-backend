@@ -25,7 +25,7 @@ type createThreadReq struct {
 
 func (h *Handler) createThread(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 	if publicID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
 		return
@@ -52,7 +52,7 @@ func (h *Handler) createThread(c *gin.Context) {
 
 func (h *Handler) listThreads(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 
 	items, err := h.repo.ListThreads(c.Request.Context(), userID, publicID)
 	if err != nil {
@@ -84,7 +84,7 @@ type postMsgReq struct {
 func (h *Handler) postMessage(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
 	threadID := strings.TrimSpace(c.Param("thread_id"))
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 
 	var req postMsgReq
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
@@ -172,7 +172,7 @@ func (h *Handler) postMessage(c *gin.Context) {
 func (h *Handler) listMessages(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
 	threadID := strings.TrimSpace(c.Param("thread_id"))
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 
 	items, err := h.repo.ListMessages(c.Request.Context(), userID, publicID, threadID, 50)
 	if err != nil {

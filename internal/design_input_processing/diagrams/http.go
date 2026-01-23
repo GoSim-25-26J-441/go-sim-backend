@@ -34,7 +34,7 @@ func (h *handler) createVersion(c *gin.Context) {
 		return
 	}
 
-	fuid := strings.TrimSpace(auth.UserFirebaseUID(c))
+	fuid := strings.TrimSpace(c.GetString("firebase_uid"))
 	if fuid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
 		return
@@ -66,7 +66,7 @@ func (h *handler) latest(c *gin.Context) {
 		return
 	}
 
-	fuid := strings.TrimSpace(auth.UserFirebaseUID(c))
+	fuid := strings.TrimSpace(c.GetString("firebase_uid"))
 	if fuid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
 		return

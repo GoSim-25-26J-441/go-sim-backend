@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,7 +32,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 	p, err := h.repo.Create(c.Request.Context(), userID, strings.TrimSpace(req.Name), req.IsTemporary)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
@@ -44,7 +43,7 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) list(c *gin.Context) {
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 	items, err := h.repo.List(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
@@ -66,7 +65,7 @@ func (h *Handler) rename(c *gin.Context) {
 		return
 	}
 
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 	p, err := h.repo.Rename(c.Request.Context(), userID, publicID, strings.TrimSpace(req.Name))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
@@ -78,7 +77,7 @@ func (h *Handler) rename(c *gin.Context) {
 
 func (h *Handler) delete(c *gin.Context) {
 	publicID := c.Param("public_id")
-	userID := auth.UserFirebaseUID(c)
+	userID := c.GetString("firebase_uid")
 
 	ok, err := h.repo.SoftDelete(c.Request.Context(), userID, publicID)
 	if err != nil {
