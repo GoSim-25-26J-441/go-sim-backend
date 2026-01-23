@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	"github.com/gin-gonic/gin"
 )
 
