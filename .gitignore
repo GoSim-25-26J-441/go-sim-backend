@@ -46,6 +46,7 @@ Thumbs.db
 /bin/
 /dist/
 
+/out/
 # job data (never commit)
 /projects/*
 !/projects/.gitkeep
