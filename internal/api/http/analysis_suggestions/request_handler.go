@@ -2,12 +2,12 @@ package analysis_suggestions
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type RequestResponseRow struct {
@@ -20,11 +20,11 @@ type RequestResponseRow struct {
 }
 
 type RequestHandler struct {
-	pool *pgxpool.Pool
+	db *sql.DB
 }
 
-func NewRequestHandler(pool *pgxpool.Pool) *RequestHandler {
-	return &RequestHandler{pool: pool}
+func NewRequestHandler(db *sql.DB) *RequestHandler {
+	return &RequestHandler{db: db}
 }
 
 func (h *RequestHandler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -48,7 +48,7 @@ WHERE user_id = $1
 ORDER BY created_at DESC
 `
 
-	rows, err := h.pool.Query(ctx, sql, userID)
+	rows, err := h.db.QueryContext(ctx, sql, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed: " + err.Error()})
 		return

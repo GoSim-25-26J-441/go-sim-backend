@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -11,8 +12,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Rule struct {
@@ -68,7 +67,7 @@ type CandidateScore struct {
 
 type Engine struct {
 	rules []Rule
-	pool  *pgxpool.Pool
+	db    *sql.DB
 }
 
 type RequestResponse struct {
@@ -81,7 +80,7 @@ type RequestResponse struct {
 	Response []CandidateScore `json:"response"`
 }
 
-func NewEngineFromFile(path string, pool *pgxpool.Pool) (*Engine, error) {
+func NewEngineFromFile(path string, db *sql.DB) (*Engine, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -90,7 +89,7 @@ func NewEngineFromFile(path string, pool *pgxpool.Pool) (*Engine, error) {
 	if err := json.Unmarshal(b, &rules); err != nil {
 		return nil, err
 	}
-	return &Engine{rules: rules, pool: pool}, nil
+	return &Engine{rules: rules, db: db}, nil
 }
 
 func (e *Engine) EvaluateCandidates(design DesignInput, candidates []Candidate) ([]CandidateScore, error) {
@@ -126,8 +125,8 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 	}
 	best := out[0]
 	id := ""
-	if e.pool != nil {
-		id, err = saveRequestResponseToDB(ctx, e.pool, userID, design, simulation, candidates, out, best)
+	if e.db != nil {
+		id, err = saveRequestResponseToDB(ctx, e.db, userID, design, simulation, candidates, out, best)
 		if err == nil {
 			return out, id, nil
 		}
@@ -160,7 +159,7 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 	return out, path, nil
 }
 
-func saveRequestResponseToDB(ctx context.Context, pool *pgxpool.Pool, userID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
+func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
 	reqObj := struct {
 		Design     DesignInput     `json:"design"`
 		Simulation SimulationInput `json:"simulation"`
@@ -189,7 +188,7 @@ VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, now())
 RETURNING id;
 `
 	var id string
-	err = pool.QueryRow(ctx, sql, userID, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id)
+	err = db.QueryRowContext(ctx, sql, userID, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("db insert failed: %v", err)
 	}

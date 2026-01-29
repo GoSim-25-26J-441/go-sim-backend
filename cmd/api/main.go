@@ -90,24 +90,6 @@ func main() {
 	scheduler := cronjob.NewScheduler()
 	scheduler.Start()
 
-	api := router.Group("/api")
-	{
-		fetchHandler := as.NewFetchHandler()
-		fetchHandler.RegisterRoutes(api)
-
-		importHandler := as.NewImportHandler()
-		importHandler.RegisterRoutes(api)
-
-		suggestHandler := as.NewSuggestHandler("internal/analysis_suggestions/rules/rules.json", pool)
-		suggestHandler.RegisterRoutes(api)
-
-		costHandler := as.NewCostHandler(pool)
-		costHandler.RegisterRoutes(api)
-
-		reqHandler := as.NewRequestHandler(pool)
-		reqHandler.RegisterRoutes(api)
-	}
-
 	api := router.Group("/api/v1")
 
 	// Design Input Processing routes
@@ -163,6 +145,25 @@ func main() {
 		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
 	} else {
 		log.Printf("Simulation user endpoints disabled (Firebase not initialized)")
+	}
+
+	// Analysis Suggestions routes
+	analysisGroup := api.Group("/analysis-suggestions")
+	{
+		fetchHandler := as.NewFetchHandler()
+		fetchHandler.RegisterRoutes(analysisGroup)
+
+		importHandler := as.NewImportHandler()
+		importHandler.RegisterRoutes(analysisGroup)
+
+		suggestHandler := as.NewSuggestHandler("internal/analysis_suggestions/rules/rules.json", db)
+		suggestHandler.RegisterRoutes(analysisGroup)
+
+		costHandler := as.NewCostHandler(db)
+		costHandler.RegisterRoutes(analysisGroup)
+
+		reqHandler := as.NewRequestHandler(db)
+		reqHandler.RegisterRoutes(analysisGroup)
 	}
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)

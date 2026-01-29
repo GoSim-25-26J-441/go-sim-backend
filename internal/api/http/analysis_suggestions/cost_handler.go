@@ -2,6 +2,7 @@ package analysis_suggestions
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	cc "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/costcal"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/rules"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type CostResponse struct {
@@ -22,9 +22,9 @@ type CostResponse struct {
 	StoredAt         string                            `json:"stored_at,omitempty"`
 }
 
-type CostHandler struct{ pool *pgxpool.Pool }
+type CostHandler struct{ db *sql.DB }
 
-func NewCostHandler(pool *pgxpool.Pool) *CostHandler { return &CostHandler{pool: pool} }
+func NewCostHandler(db *sql.DB) *CostHandler { return &CostHandler{db: db} }
 
 func (h *CostHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/cost/:id", h.HandleCost)
@@ -37,7 +37,7 @@ func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 	provider := strings.ToLower(c.Param("provider"))
 	ctx, cancel := context.WithTimeout(c, 10*time.Second)
 	defer cancel()
-	pool := h.pool
+	db := h.db
 
 	table := map[string]string{
 		"aws":   "aws_compute_prices",
@@ -50,7 +50,7 @@ func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 		return
 	}
 
-	rows, err := pool.Query(ctx, `SELECT DISTINCT region FROM `+table+` WHERE region IS NOT NULL ORDER BY region`)
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT region FROM `+table+` WHERE region IS NOT NULL ORDER BY region`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch regions"})
 		return
@@ -78,12 +78,12 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 	id := c.Param("id")
 	ctx, cancel := context.WithTimeout(c, 15*time.Second)
 	defer cancel()
-	pool := h.pool
+	db := h.db
 
 	var bestJSON, reqJSON []byte
 	var created time.Time
 
-	err := pool.QueryRow(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT best_candidate::text, request::text, created_at 
 		FROM request_responses WHERE id=$1
 	`, id).Scan(&bestJSON, &reqJSON, &created)
@@ -116,7 +116,7 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 
 	clusterCosts, err := cc.CalculateClusterCosts(
 		ctx,
-		pool,
+		db,
 		bestCS,
 		req.Simulation.Nodes,
 		filterRegion,
@@ -152,13 +152,13 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c, 15*time.Second)
 	defer cancel()
-	pool := h.pool
+	db := h.db
 
 	// Read best_candidate JSON
 	var bestJSON, reqJSON []byte
 	var created time.Time
 
-	err := pool.QueryRow(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT best_candidate::text, request::text, created_at 
 		FROM request_responses WHERE id=$1
 	`, id).Scan(&bestJSON, &reqJSON, &created)
@@ -189,7 +189,7 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 	// Calculate cluster costs for specific provider and region
 	clusterCosts, err := cc.CalculateClusterCostsForProvider(
 		ctx,
-		pool,
+		db,
 		provider,
 		bestCS,
 		req.Simulation.Nodes,

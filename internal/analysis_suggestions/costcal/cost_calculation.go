@@ -2,6 +2,7 @@ package costcal
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -9,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/rules"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type PurchaseOption struct {
@@ -68,7 +68,7 @@ func round(v float64, places int) float64 {
 }
 
 // VM MATCH
-func CalculateCostsForBestCandidate(ctx context.Context, pool *pgxpool.Pool, best rules.CandidateScore) (map[string]CostResult, error) {
+func CalculateCostsForBestCandidate(ctx context.Context, db *sql.DB, best rules.CandidateScore) (map[string]CostResult, error) {
 	results := make(map[string]CostResult)
 
 	vcpu := best.Candidate.Spec.VCPU
@@ -86,7 +86,7 @@ func CalculateCostsForBestCandidate(ctx context.Context, pool *pgxpool.Pool, bes
 
 	// Loop through each provider and calculate costs
 	for _, p := range providers {
-		cr, err := calcForProvider(ctx, pool, p.Name, p.Table, vcpu, mem)
+		cr, err := calcForProvider(ctx, db, p.Name, p.Table, vcpu, mem)
 		if err != nil {
 			results[p.Name] = CostResult{
 				Provider: p.Name,
@@ -101,7 +101,7 @@ func CalculateCostsForBestCandidate(ctx context.Context, pool *pgxpool.Pool, bes
 }
 
 // Calculate costs for a specific provider and region
-func CalculateCostsForProviderInRegion(ctx context.Context, pool *pgxpool.Pool, provider string, best rules.CandidateScore, region string) (CostResult, error) {
+func CalculateCostsForProviderInRegion(ctx context.Context, db *sql.DB, provider string, best rules.CandidateScore, region string) (CostResult, error) {
 	vcpu := best.Candidate.Spec.VCPU
 	mem := best.Candidate.Spec.MemoryGB
 
@@ -115,18 +115,18 @@ func CalculateCostsForProviderInRegion(ctx context.Context, pool *pgxpool.Pool, 
 		return CostResult{Provider: provider}, fmt.Errorf("unknown provider: %s", provider)
 	}
 
-	return calcForProviderInRegion(ctx, pool, provider, table, vcpu, mem, region)
+	return calcForProviderInRegion(ctx, db, provider, table, vcpu, mem, region)
 }
 
 // CONTROL PLANE
-func GetControlPlanePrice(ctx context.Context, pool *pgxpool.Pool, provider string) (tier string, price float64, err error) {
+func GetControlPlanePrice(ctx context.Context, db *sql.DB, provider string) (tier string, price float64, err error) {
 	service := map[string]string{
 		"aws":   "eks",
 		"azure": "aks",
 		"gcp":   "gke",
 	}[provider]
 
-	err = pool.QueryRow(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT tier, price_per_hour
 		FROM k8s_control_plane_prices
 		WHERE provider = $1 AND service = $2
@@ -140,7 +140,7 @@ func GetControlPlanePrice(ctx context.Context, pool *pgxpool.Pool, provider stri
 // CLUSTER COST - Main function
 func CalculateClusterCosts(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db *sql.DB,
 	best rules.CandidateScore,
 	nodeCount int,
 	region string,
@@ -148,7 +148,7 @@ func CalculateClusterCosts(
 	providerRegionOverride string,
 ) (map[string][]ClusterCostResult, error) {
 
-	perNodeCosts, err := CalculateCostsForBestCandidate(ctx, pool, best)
+	perNodeCosts, err := CalculateCostsForBestCandidate(ctx, db, best)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func CalculateClusterCosts(
 		nodeCost := perNodeCosts[provider]
 		list := []ClusterCostResult{}
 
-		cpTier, cpHour, _ := GetControlPlanePrice(ctx, pool, provider)
+		cpTier, cpHour, _ := GetControlPlanePrice(ctx, db, provider)
 		cpMonth := cpHour * HoursPerMonth()
 
 		if !nodeCost.FoundMatches {
@@ -168,7 +168,7 @@ func CalculateClusterCosts(
 		}
 
 		if provider == providerRegionOverride && region != "" {
-			recalculatedCost, err := CalculateCostsForProviderInRegion(ctx, pool, provider, best, region)
+			recalculatedCost, err := CalculateCostsForProviderInRegion(ctx, db, provider, best, region)
 			if err == nil && recalculatedCost.FoundMatches {
 				nodeCost = recalculatedCost
 			}
@@ -238,7 +238,7 @@ func CalculateClusterCosts(
 // Get cluster costs for a specific provider only
 func CalculateClusterCostsForProvider(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db *sql.DB,
 	provider string,
 	best rules.CandidateScore,
 	nodeCount int,
@@ -249,7 +249,7 @@ func CalculateClusterCostsForProvider(
 	list := []ClusterCostResult{}
 
 	// Calculate node costs for the specific provider and region
-	nodeCost, err := CalculateCostsForProviderInRegion(ctx, pool, provider, best, region)
+	nodeCost, err := CalculateCostsForProviderInRegion(ctx, db, provider, best, region)
 	if err != nil {
 		return list, err
 	}
@@ -259,7 +259,7 @@ func CalculateClusterCostsForProvider(
 	}
 
 	// Get control plane price
-	cpTier, cpHour, err := GetControlPlanePrice(ctx, pool, provider)
+	cpTier, cpHour, err := GetControlPlanePrice(ctx, db, provider)
 	if err != nil {
 		return list, err
 	}
@@ -339,10 +339,10 @@ type priceRow struct {
 }
 
 // MATCH functions
-func calcForProvider(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64) (CostResult, error) {
+func calcForProvider(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64) (CostResult, error) {
 	cr := CostResult{Provider: provider}
 
-	exactMatches, err := findExactMatches(ctx, pool, provider, table, vcpu, mem)
+	exactMatches, err := findExactMatches(ctx, db, provider, table, vcpu, mem)
 	if err != nil {
 		return cr, fmt.Errorf("finding exact matches failed: %w", err)
 	}
@@ -351,7 +351,7 @@ func calcForProvider(ctx context.Context, pool *pgxpool.Pool, provider, table st
 		return processExactMatches(exactMatches, provider, vcpu, mem), nil
 	}
 
-	nearestMatches, err := findNearestMatches(ctx, pool, provider, table, vcpu, mem)
+	nearestMatches, err := findNearestMatches(ctx, db, provider, table, vcpu, mem)
 	if err != nil {
 		return cr, fmt.Errorf("finding nearest matches failed: %w", err)
 	}
@@ -367,10 +367,10 @@ func calcForProvider(ctx context.Context, pool *pgxpool.Pool, provider, table st
 }
 
 // Calculate for specific provider and region
-func calcForProviderInRegion(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64, region string) (CostResult, error) {
+func calcForProviderInRegion(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64, region string) (CostResult, error) {
 	cr := CostResult{Provider: provider}
 
-	exactMatches, err := findExactMatchesInRegion(ctx, pool, provider, table, vcpu, mem, region)
+	exactMatches, err := findExactMatchesInRegion(ctx, db, provider, table, vcpu, mem, region)
 	if err != nil {
 		return cr, fmt.Errorf("finding exact matches in region failed: %w", err)
 	}
@@ -381,7 +381,7 @@ func calcForProviderInRegion(ctx context.Context, pool *pgxpool.Pool, provider, 
 		return result, nil
 	}
 
-	nearestMatches, err := findNearestMatchesInRegion(ctx, pool, provider, table, vcpu, mem, region)
+	nearestMatches, err := findNearestMatchesInRegion(ctx, db, provider, table, vcpu, mem, region)
 	if err != nil {
 		return cr, fmt.Errorf("finding nearest matches in region failed: %w", err)
 	}
@@ -398,7 +398,7 @@ func calcForProviderInRegion(ctx context.Context, pool *pgxpool.Pool, provider, 
 	return cr, nil
 }
 
-func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64) ([]priceRow, error) {
+func findExactMatches(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64) ([]priceRow, error) {
 	query := ""
 
 	switch provider {
@@ -438,7 +438,7 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
 
-	rows, err := pool.Query(ctx, query, vcpu, mem)
+	rows, err := db.QueryContext(ctx, query, vcpu, mem)
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
@@ -462,7 +462,7 @@ func findExactMatches(ctx context.Context, pool *pgxpool.Pool, provider, table s
 }
 
 // Find exact matches in specific region
-func findExactMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64, region string) ([]priceRow, error) {
+func findExactMatchesInRegion(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64, region string) ([]priceRow, error) {
 	query := ""
 
 	switch provider {
@@ -505,7 +505,7 @@ func findExactMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider,
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
 
-	rows, err := pool.Query(ctx, query, vcpu, mem, region)
+	rows, err := db.QueryContext(ctx, query, vcpu, mem, region)
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
@@ -528,7 +528,7 @@ func findExactMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider,
 	return matches, nil
 }
 
-func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64) ([]priceRow, error) {
+func findNearestMatches(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64) ([]priceRow, error) {
 	query := ""
 
 	switch provider {
@@ -571,7 +571,7 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
 
-	rows, err := pool.Query(ctx, query, vcpu, mem)
+	rows, err := db.QueryContext(ctx, query, vcpu, mem)
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +595,7 @@ func findNearestMatches(ctx context.Context, pool *pgxpool.Pool, provider, table
 }
 
 // Find nearest matches in specific region
-func findNearestMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provider, table string, vcpu int, mem float64, region string) ([]priceRow, error) {
+func findNearestMatchesInRegion(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64, region string) ([]priceRow, error) {
 	query := ""
 
 	switch provider {
@@ -641,7 +641,7 @@ func findNearestMatchesInRegion(ctx context.Context, pool *pgxpool.Pool, provide
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
 
-	rows, err := pool.Query(ctx, query, vcpu, mem, region)
+	rows, err := db.QueryContext(ctx, query, vcpu, mem, region)
 	if err != nil {
 		return nil, err
 	}
