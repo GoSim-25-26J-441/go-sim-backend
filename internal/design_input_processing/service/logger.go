@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"log"
+
+	apimiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/middleware"
 )
 
 // Logger provides structured logging for services
@@ -12,10 +14,10 @@ type Logger struct {
 
 // NewLogger creates a logger with request context
 func NewLogger(ctx context.Context) *Logger {
-	// Try to get request ID from context (set by middleware)
-	requestID := "unknown"
-	if rid, ok := ctx.Value("request_id").(string); ok && rid != "" {
-		requestID = rid
+	// Get request ID from context (set by RequestIDMiddleware)
+	requestID := apimiddleware.GetRequestID(ctx)
+	if requestID == "" {
+		requestID = "unknown"
 	}
 	return &Logger{requestID: requestID}
 }

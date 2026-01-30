@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"log"
@@ -10,11 +11,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// requestIDKey is the key used to store request ID in context
+type requestIDKey struct{}
+
 // RequestIDMiddleware ensures every request has a stable request ID.
 // - Reads X-Request-Id header if present
 // - Otherwise generates a new one
-// - Stores it in context as "request_id"
+// - Stores it in both Gin context and standard context as "request_id"
 // - Echoes it back in response header X-Request-Id
+// - Logs request details (method, path, status, latency)
 func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rid := c.GetHeader("X-Request-Id")
@@ -22,7 +27,14 @@ func RequestIDMiddleware() gin.HandlerFunc {
 			rid = newRequestID()
 		}
 
+		// Store in Gin context (for handlers that use c.GetString)
 		c.Set("request_id", rid)
+		
+		// Store in standard context (for services that use context.Context)
+		ctx := context.WithValue(c.Request.Context(), requestIDKey{}, rid)
+		c.Request = c.Request.WithContext(ctx)
+		
+		// Set response header
 		c.Writer.Header().Set("X-Request-Id", rid)
 
 		start := time.Now()
@@ -39,6 +51,14 @@ func RequestIDMiddleware() gin.HandlerFunc {
 			latency,
 		)
 	}
+}
+
+// GetRequestID extracts the request ID from a standard context
+func GetRequestID(ctx context.Context) string {
+	if rid, ok := ctx.Value(requestIDKey{}).(string); ok {
+		return rid
+	}
+	return ""
 }
 
 func newRequestID() string {

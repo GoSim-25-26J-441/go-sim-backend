@@ -12,6 +12,7 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
 
+	apimiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/middleware"
 	authpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"
 	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
@@ -19,7 +20,6 @@ import (
 	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
 	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
-	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
@@ -104,7 +104,7 @@ func main() {
 	if authClient != nil {
 		dip := api.Group("/design-input")
 		dip.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
-		dip.Use(dipmiddleware.RequestIDMiddleware())
+		dip.Use(apimiddleware.RequestIDMiddleware())
 		dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
 		dipHandler.Register(dip)
 		log.Printf("Design Input Processing endpoints registered at /api/v1/design-input (Firebase auth required)")
