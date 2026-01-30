@@ -1,62 +1,38 @@
-package diagrams
+package repository
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"time"
-)
 
-var ErrNotFound = errors.New("not found")
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/domain"
+)
 
 type Repo struct {
 	db *sql.DB
 }
 
-func NewRepo(db *sql.DB) *Repo {
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
-type CreateVersionInput struct {
-	Source         string
-	DiagramJSON    json.RawMessage
-	ImageObjectKey string
-	SpecSummary    json.RawMessage
-	Hash           string
-}
-
-type DiagramVersion struct {
-	ID              string          `json:"id"`
-	ProjectPublicID string          `json:"project_public_id"`
-	UserFirebaseUID string          `json:"user_firebase_uid"`
-	VersionNumber   int             `json:"version_number"`
-	Source          string          `json:"source"`
-	Hash            string          `json:"hash,omitempty"`
-	ImageObjectKey  string          `json:"image_object_key,omitempty"`
-	DiagramJSON     json.RawMessage `json:"diagram_json,omitempty"`
-	SpecSummary     json.RawMessage `json:"spec_summary,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-}
-
-func (r *Repo) CreateVersion(ctx context.Context, userFirebaseUID, projectPublicID string, in CreateVersionInput) (*DiagramVersion, error) {
-	if stringsTrim(userFirebaseUID) == "" {
+func (r *Repo) CreateVersion(ctx context.Context, userFirebaseUID, projectPublicID string, in domain.CreateVersionInput) (*domain.DiagramVersion, error) {
+	if domain.StringsTrim(userFirebaseUID) == "" {
 		return nil, fmt.Errorf("user firebase uid required")
 	}
-	if stringsTrim(projectPublicID) == "" {
+	if domain.StringsTrim(projectPublicID) == "" {
 		return nil, fmt.Errorf("project public_id required")
 	}
 	if len(in.DiagramJSON) == 0 {
 		return nil, fmt.Errorf("diagram_json required")
 	}
-	if stringsTrim(in.Source) == "" {
+	if domain.StringsTrim(in.Source) == "" {
 		in.Source = "canvas_json"
 	}
 
-	id, err := newTextID("dver")
+	id, err := domain.NewTextID("dver")
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +54,7 @@ for update
 `, projectPublicID, userFirebaseUID).Scan(&ok)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, domain.ErrNotFound
 		}
 		return nil, err
 	}
@@ -99,7 +75,7 @@ where project_public_id = $1
 		specText = string(in.SpecSummary)
 	}
 
-	var ver DiagramVersion
+	var ver domain.DiagramVersion
 	ver.ID = id
 	ver.ProjectPublicID = projectPublicID
 	ver.UserFirebaseUID = userFirebaseUID
@@ -156,11 +132,11 @@ where public_id = $2
 	return &ver, nil
 }
 
-func (r *Repo) Latest(ctx context.Context, userFirebaseUID, projectPublicID string) (*DiagramVersion, error) {
-	if stringsTrim(userFirebaseUID) == "" {
+func (r *Repo) Latest(ctx context.Context, userFirebaseUID, projectPublicID string) (*domain.DiagramVersion, error) {
+	if domain.StringsTrim(userFirebaseUID) == "" {
 		return nil, fmt.Errorf("user firebase uid required")
 	}
-	if stringsTrim(projectPublicID) == "" {
+	if domain.StringsTrim(projectPublicID) == "" {
 		return nil, fmt.Errorf("project public_id required")
 	}
 
@@ -174,12 +150,12 @@ where public_id = $1
 `, projectPublicID, userFirebaseUID).Scan(&ok)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, domain.ErrNotFound
 		}
 		return nil, err
 	}
 
-	var ver DiagramVersion
+	var ver domain.DiagramVersion
 	ver.ProjectPublicID = projectPublicID
 	ver.UserFirebaseUID = userFirebaseUID
 
@@ -205,7 +181,7 @@ limit 1
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, domain.ErrNotFound
 		}
 		return nil, err
 	}
@@ -218,34 +194,4 @@ limit 1
 	}
 
 	return &ver, nil
-}
-
-func stringsTrim(s string) string {
-	for len(s) > 0 && (s[0] == ' ' || s[0] == '\n' || s[0] == '\t' || s[0] == '\r') {
-		s = s[1:]
-	}
-	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\n' || s[len(s)-1] == '\t' || s[len(s)-1] == '\r') {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
-func newTextID(prefix string) (string, error) {
-	a, err := randInt(10000, 99999)
-	if err != nil {
-		return "", err
-	}
-	b, err := randInt(1000, 9999)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s-%05d-%04d", prefix, a, b), nil
-}
-
-func randInt(min, max int64) (int64, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(max-min+1))
-	if err != nil {
-		return 0, err
-	}
-	return min + n.Int64(), nil
 }

@@ -1,16 +1,13 @@
-package diagrams
+package http
 
 import (
 	"encoding/json"
 	"net/http"
 	"strings"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/domain"
 	"github.com/gin-gonic/gin"
 )
-
-type handler struct {
-	repo *Repo
-}
 
 type createReq struct {
 	Source         string          `json:"source,omitempty"`
@@ -20,7 +17,7 @@ type createReq struct {
 	Hash           string          `json:"hash,omitempty"`
 }
 
-func (h *handler) createVersion(c *gin.Context) {
+func (h *Handler) createVersion(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
 	if publicID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
@@ -39,7 +36,7 @@ func (h *handler) createVersion(c *gin.Context) {
 		return
 	}
 
-	ver, err := h.repo.CreateVersion(c.Request.Context(), fuid, publicID, CreateVersionInput{
+	ver, err := h.repo.CreateVersion(c.Request.Context(), fuid, publicID, domain.CreateVersionInput{
 		Source:         strings.TrimSpace(req.Source),
 		DiagramJSON:    req.DiagramJSON,
 		ImageObjectKey: strings.TrimSpace(req.ImageObjectKey),
@@ -47,7 +44,7 @@ func (h *handler) createVersion(c *gin.Context) {
 		Hash:           strings.TrimSpace(req.Hash),
 	})
 	if err != nil {
-		if err == ErrNotFound {
+		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
 			return
 		}
@@ -58,7 +55,7 @@ func (h *handler) createVersion(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"ok": true, "diagram_version": ver})
 }
 
-func (h *handler) latest(c *gin.Context) {
+func (h *Handler) latest(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
 	if publicID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
@@ -73,7 +70,7 @@ func (h *handler) latest(c *gin.Context) {
 
 	ver, err := h.repo.Latest(c.Request.Context(), fuid, publicID)
 	if err != nil {
-		if err == ErrNotFound {
+		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "no diagram found"})
 			return
 		}

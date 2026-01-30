@@ -1,21 +1,14 @@
-package chats
+package http
 
 import (
 	"net/http"
 	"strings"
 
 	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/repository"
 	"github.com/gin-gonic/gin"
 )
-
-type Handler struct {
-	repo *Repo
-	uigp *dipllm.UIGPClient
-}
-
-func NewHandler(repo *Repo, uigp *dipllm.UIGPClient) *Handler {
-	return &Handler{repo: repo, uigp: uigp}
-}
 
 type createThreadReq struct {
 	Title       *string `json:"title"`
@@ -38,7 +31,7 @@ func (h *Handler) createThread(c *gin.Context) {
 
 	t, err := h.repo.CreateThread(c.Request.Context(), userID, publicID, req.Title, req.BindingMode)
 	if err != nil {
-		if err == ErrNotFound {
+		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
 			return
 		}
@@ -55,7 +48,7 @@ func (h *Handler) listThreads(c *gin.Context) {
 
 	items, err := h.repo.ListThreads(c.Request.Context(), userID, publicID)
 	if err != nil {
-		if err == ErrNotFound {
+		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
 			return
 		}
@@ -93,7 +86,7 @@ func (h *Handler) postMessage(c *gin.Context) {
 
 	diagramVersionIDUsed, spec, err := h.repo.ResolveDiagramContext(c.Request.Context(), userID, publicID, threadID)
 	if err != nil {
-		if err == ErrNotFound {
+		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project/thread/diagram not found"})
 			return
 		}
@@ -126,12 +119,12 @@ func (h *Handler) postMessage(c *gin.Context) {
 	}
 
 	// map attachments
-	atts := make([]InsertAttachment, 0, len(req.Attachments))
+	atts := make([]repository.InsertAttachment, 0, len(req.Attachments))
 	for _, a := range req.Attachments {
 		if strings.TrimSpace(a.ObjectKey) == "" {
 			continue
 		}
-		atts = append(atts, InsertAttachment{
+		atts = append(atts, repository.InsertAttachment{
 			ObjectKey: strings.TrimSpace(a.ObjectKey),
 			MimeType:  a.MimeType,
 			FileName:  a.FileName,
@@ -175,7 +168,7 @@ func (h *Handler) listMessages(c *gin.Context) {
 
 	items, err := h.repo.ListMessages(c.Request.Context(), userID, publicID, threadID, 50)
 	if err != nil {
-		if err == ErrNotFound {
+		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project/thread not found"})
 			return
 		}

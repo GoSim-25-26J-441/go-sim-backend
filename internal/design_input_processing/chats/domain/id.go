@@ -1,4 +1,4 @@
-package chats
+package domain
 
 import (
 	"crypto/rand"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-func newID(prefix string) (string, error) {
+func NewID(prefix string) (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err

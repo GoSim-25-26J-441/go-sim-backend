@@ -1,4 +1,4 @@
-package projects
+package http
 
 import (
 	"net/http"
@@ -6,19 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-type Handler struct {
-	repo *Repo
-}
-
-func Register(rg *gin.RouterGroup, repo *Repo) {
-	h := &Handler{repo: repo}
-
-	rg.POST("", h.create)
-	rg.GET("", h.list)
-	rg.PATCH("/:public_id", h.rename)
-	rg.DELETE("/:public_id", h.delete)
-}
 
 type createReq struct {
 	Name        string `json:"name"`
@@ -91,3 +78,4 @@ func (h *Handler) delete(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
+

@@ -1,4 +1,4 @@
-package chats
+package domain
 
 import "time"
 

@@ -1,32 +1,27 @@
-package projects
+package repository
 
 import (
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/lib/pq"
+
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
 )
 
+// Repo provides persistence operations for projects.
 type Repo struct {
 	db *sql.DB
 }
 
-func NewRepo(db *sql.DB) *Repo {
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
-type Project struct {
-	PublicID  string    `json:"public_id"`
-	Name      string    `json:"name"`
-	Temporary bool      `json:"is_temporary"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-func (r *Repo) Create(ctx context.Context, userFirebaseUID, name string, temporary bool) (*Project, error) {
+// Create inserts a new project for the given user.
+func (r *Repo) Create(ctx context.Context, userFirebaseUID, name string, temporary bool) (*domain.Project, error) {
 	if name == "" {
 		return nil, fmt.Errorf("name required")
 	}
@@ -35,7 +30,7 @@ func (r *Repo) Create(ctx context.Context, userFirebaseUID, name string, tempora
 	}
 
 	for i := 0; i < 5; i++ {
-		publicID, err := NewPublicID("archfind")
+		publicID, err := domain.NewPublicID("archfind")
 		if err != nil {
 			return nil, err
 		}
@@ -45,7 +40,7 @@ INSERT INTO projects (public_id, user_firebase_uid, name, is_temporary)
 VALUES ($1, $2, $3, $4)
 RETURNING public_id, name, is_temporary, created_at, updated_at;
 `
-		var p Project
+		var p domain.Project
 		err = r.db.QueryRowContext(ctx, q, publicID, userFirebaseUID, name, temporary).
 			Scan(&p.PublicID, &p.Name, &p.Temporary, &p.CreatedAt, &p.UpdatedAt)
 
@@ -64,7 +59,8 @@ RETURNING public_id, name, is_temporary, created_at, updated_at;
 	return nil, fmt.Errorf("failed to generate unique project id")
 }
 
-func (r *Repo) List(ctx context.Context, userFirebaseUID string) ([]Project, error) {
+// List returns all non-deleted projects for the given user.
+func (r *Repo) List(ctx context.Context, userFirebaseUID string) ([]domain.Project, error) {
 	const q = `
 SELECT public_id, name, is_temporary, created_at, updated_at
 FROM projects
@@ -77,9 +73,9 @@ ORDER BY created_at DESC;
 	}
 	defer rows.Close()
 
-	out := make([]Project, 0, 16)
+	out := make([]domain.Project, 0, 16)
 	for rows.Next() {
-		var p Project
+		var p domain.Project
 		if err := rows.Scan(&p.PublicID, &p.Name, &p.Temporary, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -91,14 +87,15 @@ ORDER BY created_at DESC;
 	return out, nil
 }
 
-func (r *Repo) Rename(ctx context.Context, userFirebaseUID, publicID, newName string) (*Project, error) {
+// Rename updates the project's name.
+func (r *Repo) Rename(ctx context.Context, userFirebaseUID, publicID, newName string) (*domain.Project, error) {
 	const q = `
 UPDATE projects
 SET name = $3, updated_at = now()
 WHERE user_firebase_uid = $1 AND public_id = $2 AND deleted_at IS NULL
 RETURNING public_id, name, is_temporary, created_at, updated_at;
 `
-	var p Project
+	var p domain.Project
 	err := r.db.QueryRowContext(ctx, q, userFirebaseUID, publicID, newName).
 		Scan(&p.PublicID, &p.Name, &p.Temporary, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
@@ -107,6 +104,7 @@ RETURNING public_id, name, is_temporary, created_at, updated_at;
 	return &p, nil
 }
 
+// SoftDelete marks a project as deleted (soft delete).
 func (r *Repo) SoftDelete(ctx context.Context, userFirebaseUID, publicID string) (bool, error) {
 	const q = `
 UPDATE projects

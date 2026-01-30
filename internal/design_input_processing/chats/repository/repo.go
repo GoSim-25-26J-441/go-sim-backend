@@ -1,4 +1,4 @@
-package chats
+package repository
 
 import (
 	"context"
@@ -6,15 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
-)
 
-var ErrNotFound = errors.New("not found")
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/domain"
+)
 
 type Repo struct {
 	db *sql.DB
 }
 
-func NewRepo(db *sql.DB) *Repo { return &Repo{db: db} }
+func New(db *sql.DB) *Repo {
+	return &Repo{db: db}
+}
 
 type projectInfo struct {
 	PublicID                string
@@ -34,7 +36,7 @@ where public_id=$1
 	var p projectInfo
 	if err := r.db.QueryRowContext(ctx, q, publicID, userFirebaseUID).Scan(&p.PublicID, &p.CurrentDiagramVersionID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, domain.ErrNotFound
 		}
 		return nil, err
 	}
@@ -66,16 +68,16 @@ where id=$1
 	if err := r.db.QueryRowContext(ctx, q, threadID, projectPublicID, userFirebaseUID).
 		Scan(&t.ID, &t.ProjectPublicID, &t.UserFirebaseUID, &t.BindingMode, &t.PinnedDiagramVersionID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, domain.ErrNotFound
 		}
 		return nil, err
 	}
 	return &t, nil
 }
 
-func (r *Repo) CreateThread(ctx context.Context, userFirebaseUID, projectPublicID string, title *string, bindingMode string) (*Thread, error) {
+func (r *Repo) CreateThread(ctx context.Context, userFirebaseUID, projectPublicID string, title *string, bindingMode string) (*domain.Thread, error) {
 	if bindingMode == "" {
-		bindingMode = BindingFollowLatest
+		bindingMode = domain.BindingFollowLatest
 	}
 
 	// ensure project belongs to user
@@ -83,7 +85,7 @@ func (r *Repo) CreateThread(ctx context.Context, userFirebaseUID, projectPublicI
 		return nil, err
 	}
 
-	id, err := newID("thr")
+	id, err := domain.NewID("thr")
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +100,7 @@ returning id, created_at
 		return nil, err
 	}
 
-	return &Thread{
+	return &domain.Thread{
 		ID:              id,
 		ProjectPublicID: projectPublicID,
 		Title:           title,
@@ -107,7 +109,7 @@ returning id, created_at
 	}, nil
 }
 
-func (r *Repo) ListThreads(ctx context.Context, userFirebaseUID, projectPublicID string) ([]Thread, error) {
+func (r *Repo) ListThreads(ctx context.Context, userFirebaseUID, projectPublicID string) ([]domain.Thread, error) {
 	// ensure project belongs to user
 	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
 		return nil, err
@@ -131,9 +133,9 @@ order by created_at desc
 	}
 	defer rows.Close()
 
-	out := []Thread{}
+	out := []domain.Thread{}
 	for rows.Next() {
-		var t Thread
+		var t domain.Thread
 		t.ProjectPublicID = projectPublicID
 		if err := rows.Scan(&t.ID, &t.Title, &t.BindingMode, &t.PinnedDiagramVersionID, &t.CreatedAt); err != nil {
 			return nil, err
@@ -157,7 +159,7 @@ func (r *Repo) ResolveDiagramContext(ctx context.Context, userFirebaseUID, proje
 	}
 
 	var use *string
-	if t.BindingMode == BindingPinned {
+	if t.BindingMode == domain.BindingPinned {
 		use = t.PinnedDiagramVersionID
 	} else {
 		use = p.CurrentDiagramVersionID
@@ -179,7 +181,7 @@ where id=$1
 	var specText, diagramText string
 	if err := r.db.QueryRowContext(ctx, q, *use, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, ErrNotFound
+			return nil, nil, domain.ErrNotFound
 		}
 		return nil, nil, err
 	}
@@ -251,7 +253,7 @@ func (r *Repo) InsertTurn(
 	assistantRefs []string,
 	diagramVersionIDUsed *string,
 	userAttachments []InsertAttachment,
-) (*Message, *Message, error) {
+) (*domain.Message, *domain.Message, error) {
 
 	// validate ownership
 	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
@@ -267,7 +269,7 @@ func (r *Repo) InsertTurn(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	userMsgID, err := newID("msg")
+	userMsgID, err := domain.NewID("msg")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -278,7 +280,7 @@ insert into chat_messages
 values ($1, $2, $3, $4, $5, $6, $7)
 returning id, created_at
 `
-	var userMsg Message
+	var userMsg domain.Message
 	userMsg.ThreadID = threadID
 	userMsg.ProjectID = "" // not used in new schema
 	userMsg.Role = "user"
@@ -304,13 +306,13 @@ returning id, created_at
 			if a.ObjectKey == "" {
 				continue
 			}
-			attID, err := newID("att")
+			attID, err := domain.NewID("att")
 			if err != nil {
 				return nil, nil, err
 			}
 
 			kind := "image"
-			var att Attachment
+			var att domain.Attachment
 			att.Kind = kind
 			att.ObjectKey = a.ObjectKey
 			att.MimeType = a.MimeType
@@ -330,7 +332,7 @@ returning id, created_at
 	}
 
 	// assistant message
-	asstMsgID, err := newID("msg")
+	asstMsgID, err := domain.NewID("msg")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -343,7 +345,7 @@ insert into chat_messages
 values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
 returning id, created_at
 `
-	var asstMsg Message
+	var asstMsg domain.Message
 	asstMsg.ThreadID = threadID
 	asstMsg.Role = "assistant"
 	asstMsg.Content = assistantContent
@@ -365,7 +367,7 @@ returning id, created_at
 	return &userMsg, &asstMsg, nil
 }
 
-func (r *Repo) ListMessages(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]Message, error) {
+func (r *Repo) ListMessages(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]domain.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -409,7 +411,7 @@ limit $4
 	}
 	defer rows.Close()
 
-	byID := map[string]*Message{}
+	byID := map[string]*domain.Message{}
 	order := []string{}
 
 	for rows.Next() {
@@ -443,7 +445,7 @@ limit $4
 			var refs []string
 			_ = json.Unmarshal([]byte(refsText), &refs)
 
-			newM := &Message{
+			newM := &domain.Message{
 				ID:                   mID,
 				ThreadID:             tID,
 				Role:                 role,
@@ -452,7 +454,7 @@ limit $4
 				Refs:                 refs,
 				DiagramVersionIDUsed: dvUsed,
 				CreatedAt:            created,
-				Attachments:          []Attachment{},
+				Attachments:          []domain.Attachment{},
 			}
 			byID[mID] = newM
 			order = append(order, mID)
@@ -460,7 +462,7 @@ limit $4
 		}
 
 		if aID != nil && aKey != nil && aCreated != nil && aKind != nil {
-			m.Attachments = append(m.Attachments, Attachment{
+			m.Attachments = append(m.Attachments, domain.Attachment{
 				ID:            *aID,
 				Kind:          *aKind,
 				ObjectKey:     *aKey,
@@ -474,7 +476,7 @@ limit $4
 		}
 	}
 
-	out := make([]Message, 0, len(order))
+	out := make([]domain.Message, 0, len(order))
 	for _, id := range order {
 		out = append(out, *byID[id])
 	}

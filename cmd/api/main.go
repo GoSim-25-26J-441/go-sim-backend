@@ -28,9 +28,12 @@ import (
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 
 	// Projects module (from temp branch)
-	dipchats "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats"
-	dipdiagrams "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams"
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects"
+	dipchatshttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/http"
+	dipchatsrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/repository"
+	dipdiagramshttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/http"
+	dipdiagramsrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/repository"
+	projecthttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/http"
+	projectrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/repository"
 )
 
 const serviceName = "go-sim-backend"
@@ -129,17 +132,19 @@ func main() {
 		projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
 		// Initialize projects module
-		projectRepo := projects.NewRepo(db)
-		projects.Register(projectsGroup, projectRepo)
+		projectRepo := projectrepo.New(db)
+		projectHandler := projecthttp.New(projectRepo)
+		projectHandler.Register(projectsGroup)
 
 		// Initialize diagrams module
-		diagramsRepo := dipdiagrams.NewRepo(db)
-		dipdiagrams.RegisterProjectRoutes(projectsGroup, diagramsRepo)
+		diagramsRepo := dipdiagramsrepo.New(db)
+		diagramsHandler := dipdiagramshttp.New(diagramsRepo)
+		diagramsHandler.Register(projectsGroup)
 
 		// Initialize chats module
-		chatRepo := dipchats.NewRepo(db)
-		chatHandler := dipchats.NewHandler(chatRepo, dipllm.NewUIGP())
-		dipchats.RegisterProjectRoutes(projectsGroup, chatHandler)
+		chatRepo := dipchatsrepo.New(db)
+		chatHandler := dipchatshttp.New(chatRepo, dipllm.NewUIGP())
+		chatHandler.Register(projectsGroup)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
 	}
