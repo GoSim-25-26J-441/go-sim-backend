@@ -103,12 +103,17 @@ func main() {
 
 	api := router.Group("/api/v1")
 
-	// Design Input Processing routes
-	dip := api.Group("/design-input")
-	dip.Use(dipmiddleware.APIKeyMiddleware())
-	dip.Use(dipmiddleware.RequestIDMiddleware())
-	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
-	dipHandler.Register(dip)
+	// Design Input Processing routes (require Firebase auth if available)
+	if authClient != nil {
+		dip := api.Group("/design-input")
+		dip.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+		dip.Use(dipmiddleware.RequestIDMiddleware())
+		dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
+		dipHandler.Register(dip)
+		log.Printf("Design Input Processing endpoints registered at /api/v1/design-input (Firebase auth required)")
+	} else {
+		log.Printf("Design Input Processing endpoints disabled (Firebase not initialized)")
+	}
 
 	// Auth routes (only if Firebase is initialized)
 	if authClient != nil {

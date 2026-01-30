@@ -16,11 +16,6 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	jobGroup.GET("/export", h.export)
 	jobGroup.GET("/report", h.report)
 	jobGroup.GET("/graphviz", h.graphviz)
-	// jobGroup.POST("/chat", h.chat)
-
-	// jobGroup.GET("/chat/stream", h.chatStream)
-	// jobGroup.GET("/chat/history", h.chatHistory)
-	// jobGroup.DELETE("/chat/history", h.chatClear)
 
 	rg.GET("/rag/search", h.ragSearch)
 	rg.POST("/rag/reload", h.ragReload)

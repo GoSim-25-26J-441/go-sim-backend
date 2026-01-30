@@ -2,93 +2,48 @@ package http
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/service"
 )
-
-type JobSummary struct {
-	ID           string `json:"id"`
-	Services     int    `json:"services"`
-	Dependencies int    `json:"dependencies"`
-	Gaps         int    `json:"gaps"`
-}
 
 func (h *Handler) intermediate(c *gin.Context) {
 	id := c.Param("id")
-	url := h.UpstreamURL + "/jobs/" + id + "/intermediate"
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", url, nil)
+	resp, err := h.upstreamClient.GetIntermediate(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
-	for k, v := range resp.Header {
-		if len(v) > 0 {
-			c.Header(k, v[0])
-		}
-	}
-	c.Status(resp.StatusCode)
-	_, _ = io.Copy(c.Writer, resp.Body)
+	proxyResponse(c, resp)
 }
 
 func (h *Handler) fuse(c *gin.Context) {
 	id := c.Param("id")
-	url := h.UpstreamURL + "/jobs/" + id + "/fuse"
+	userID := c.GetString("firebase_uid")
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", url, nil)
+	resp, err := h.upstreamClient.Fuse(c.Request.Context(), id, userID)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
 		return
 	}
-
-	if userID := c.GetHeader("X-User-Id"); userID != "" {
-		req.Header.Set("X-User-Id", userID)
-	}
-
-	client := &http.Client{
-		Timeout: 3 * time.Minute,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-
 	defer resp.Body.Close()
 
-	for k, v := range resp.Header {
-		if len(v) > 0 {
-			c.Header(k, v[0])
-		}
-	}
-	c.Status(resp.StatusCode)
-	_, _ = io.Copy(c.Writer, resp.Body)
+	proxyResponse(c, resp)
 }
 
 func (h *Handler) export(c *gin.Context) {
 	jobID := c.Param("id")
 
-	// Resolve user ID (same pattern as chat / summaries)
-	userID := c.GetString("user_id")
+	// Get user ID from Firebase auth context
+	userID := c.GetString("firebase_uid")
 	if userID == "" {
-		userID = c.GetHeader("X-User-Id")
-		if userID == "" {
-			userID = "demo-user"
-		}
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "user not authenticated"})
+		return
 	}
 
 	// Read query from incoming request
@@ -101,54 +56,34 @@ func (h *Handler) export(c *gin.Context) {
 		download = "false"
 	}
 
-	// Build upstream URL safely
-	u, err := url.Parse(h.UpstreamURL)
-	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": "invalid upstream URL: " + err.Error()})
-		return
-	}
-	u.Path = u.Path + "/jobs/" + jobID + "/export"
-
-	q := u.Query()
-	q.Set("format", format)
-	q.Set("download", download)
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, u.String(), nil)
-	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": "build request: " + err.Error()})
-		return
+	opts := service.ExportOptions{
+		Format:   format,
+		Download: download,
 	}
 
-	client := &http.Client{Timeout: 90 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.upstreamClient.Export(c.Request.Context(), jobID, opts)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": "upstream export: " + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": "read upstream export: " + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": "read response: " + err.Error()})
 		return
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		for k, vs := range resp.Header {
-			if len(vs) > 0 {
-				c.Header(k, vs[0])
-			}
-		}
-		c.Status(resp.StatusCode)
-		_, _ = c.Writer.Write(body)
+		proxyResponseWithBody(c, resp, body)
 		return
 	}
 
+	// Enhance JSON export with signals if format is json
 	if format == "json" {
 		var spec map[string]any
 		if err := json.Unmarshal(body, &spec); err == nil {
-			signals := h.loadSignalsFromHistory(jobID, userID)
+			signals := h.signalService.LoadSignalsFromHistory(jobID, userID)
 
 			if len(signals) > 0 {
 				sizing := map[string]any{}
@@ -165,128 +100,50 @@ func (h *Handler) export(c *gin.Context) {
 		}
 	}
 
-	for k, vs := range resp.Header {
-		if len(vs) > 0 {
-			c.Header(k, vs[0])
-		}
-	}
-	c.Status(resp.StatusCode)
-	_, _ = c.Writer.Write(body)
+	proxyResponseWithBody(c, resp, body)
 }
 
 func (h *Handler) report(c *gin.Context) {
 	id := c.Param("id")
-	url := h.UpstreamURL + "/jobs/" + id + "/report"
-	if qs := c.Request.URL.RawQuery; qs != "" {
-		url += "?" + qs
-	}
+	query := c.Request.URL.RawQuery
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", url, nil)
+	resp, err := h.upstreamClient.GetReport(c.Request.Context(), id, query)
 	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		c.JSON(502, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
-	for k, v := range resp.Header {
-		if len(v) > 0 {
-			c.Header(k, v[0])
-		}
-	}
-	c.Status(resp.StatusCode)
-	_, _ = io.Copy(c.Writer, resp.Body)
+	proxyResponse(c, resp)
 }
 
 func (h *Handler) listJobsForUser(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := c.GetString("firebase_uid")
 	if userID == "" {
-		userID = c.GetHeader("X-User-Id")
-		if userID == "" {
-			userID = "demo-user"
-		}
-	}
-
-	ids, err := listJobIDsForUser(userID)
-	if err != nil {
-		c.JSON(500, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "user not authenticated"})
 		return
 	}
-	c.JSON(200, gin.H{"ok": true, "jobs": ids})
+
+	ids, err := h.jobService.ListJobIDs(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "jobs": ids})
 }
 
 func (h *Handler) listJobsSummary(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := c.GetString("firebase_uid")
 	if userID == "" {
-		userID = c.GetHeader("X-User-Id")
-		if userID == "" {
-			userID = "demo-user"
-		}
-	}
-
-	summaries, err := h.jobSummariesForUser(userID)
-	if err != nil {
-		c.JSON(500, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "user not authenticated"})
 		return
 	}
 
-	c.JSON(200, gin.H{"ok": true, "jobs": summaries})
-}
-
-func (h *Handler) summarizeJob(id string, ig, report map[string]any) JobSummary {
-	js := JobSummary{ID: id}
-
-	// 1) Prefer the report counts if present
-	if countsRaw, ok := report["counts"].(map[string]any); ok {
-		if v, ok := countsRaw["services"].(float64); ok {
-			js.Services = int(v)
-		}
-		if v, ok := countsRaw["dependencies"].(float64); ok {
-			js.Dependencies = int(v)
-		}
-		if v, ok := countsRaw["gaps"].(float64); ok {
-			js.Gaps = int(v)
-		}
-		return js
-	}
-
-	// 2) Fallback to intermediate graph if report not available
-	if nodes, ok := ig["Nodes"].([]any); ok {
-		js.Services = len(nodes)
-	}
-	if edges, ok := ig["Edges"].([]any); ok {
-		js.Dependencies = len(edges)
-	}
-
-	// we don't have gaps here, so leave 0
-	return js
-}
-
-func (h *Handler) jobSummariesForUser(userID string) ([]JobSummary, error) {
-	ids, err := listJobIDsForUser(userID)
+	summaries, err := h.jobService.GetJobSummaries(c.Request.Context(), userID)
 	if err != nil {
-		return nil, err
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
 	}
 
-	out := make([]JobSummary, 0, len(ids))
-
-	for _, id := range ids {
-		ig, _ := h.fetchJSON(
-			fmt.Sprintf("%s/jobs/%s/intermediate", h.UpstreamURL, id),
-			5*time.Second,
-		)
-		report, _ := h.fetchJSON(
-			fmt.Sprintf("%s/jobs/%s/report", h.UpstreamURL, id),
-			5*time.Second,
-		)
-
-		out = append(out, h.summarizeJob(id, ig, report))
-	}
-
-	return out, nil
+	c.JSON(http.StatusOK, gin.H{"ok": true, "jobs": summaries})
 }

@@ -6,6 +6,6 @@ func (h *Handler) health(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"ok":        true,
 		"component": "design-input-processing",
-		"upstream":  h.UpstreamURL,
+		"upstream":  h.upstreamURL,
 	})
 }
