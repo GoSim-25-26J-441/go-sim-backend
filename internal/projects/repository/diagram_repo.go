@@ -6,33 +6,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/utils"
 )
 
-type Repo struct {
+// DiagramRepository provides persistence operations for diagrams
+type DiagramRepository struct {
 	db *sql.DB
 }
 
-func New(db *sql.DB) *Repo {
-	return &Repo{db: db}
+// NewDiagramRepository creates a new diagram repository
+func NewDiagramRepository(db *sql.DB) *DiagramRepository {
+	return &DiagramRepository{db: db}
 }
 
-func (r *Repo) CreateVersion(ctx context.Context, userFirebaseUID, projectPublicID string, in domain.CreateVersionInput) (*domain.DiagramVersion, error) {
-	if domain.StringsTrim(userFirebaseUID) == "" {
+func (r *DiagramRepository) CreateVersion(ctx context.Context, userFirebaseUID, projectPublicID string, in domain.CreateVersionInput) (*domain.DiagramVersion, error) {
+	if strings.TrimSpace(userFirebaseUID) == "" {
 		return nil, fmt.Errorf("user firebase uid required")
 	}
-	if domain.StringsTrim(projectPublicID) == "" {
+	if strings.TrimSpace(projectPublicID) == "" {
 		return nil, fmt.Errorf("project public_id required")
 	}
 	if len(in.DiagramJSON) == 0 {
 		return nil, fmt.Errorf("diagram_json required")
 	}
-	if domain.StringsTrim(in.Source) == "" {
+	if strings.TrimSpace(in.Source) == "" {
 		in.Source = "canvas_json"
 	}
 
-	id, err := domain.NewTextID("dver")
+	id, err := utils.NewTextID("dver")
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +136,11 @@ where public_id = $2
 	return &ver, nil
 }
 
-func (r *Repo) Latest(ctx context.Context, userFirebaseUID, projectPublicID string) (*domain.DiagramVersion, error) {
-	if domain.StringsTrim(userFirebaseUID) == "" {
+func (r *DiagramRepository) Latest(ctx context.Context, userFirebaseUID, projectPublicID string) (*domain.DiagramVersion, error) {
+	if strings.TrimSpace(userFirebaseUID) == "" {
 		return nil, fmt.Errorf("user firebase uid required")
 	}
-	if domain.StringsTrim(projectPublicID) == "" {
+	if strings.TrimSpace(projectPublicID) == "" {
 		return nil, fmt.Errorf("project public_id required")
 	}
 

@@ -7,15 +7,18 @@ import (
 	"errors"
 	"time"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/utils"
 )
 
-type Repo struct {
+// ChatRepository provides persistence operations for chats
+type ChatRepository struct {
 	db *sql.DB
 }
 
-func New(db *sql.DB) *Repo {
-	return &Repo{db: db}
+// NewChatRepository creates a new chat repository
+func NewChatRepository(db *sql.DB) *ChatRepository {
+	return &ChatRepository{db: db}
 }
 
 type projectInfo struct {
@@ -23,7 +26,7 @@ type projectInfo struct {
 	CurrentDiagramVersionID *string
 }
 
-func (r *Repo) getProject(ctx context.Context, userFirebaseUID, publicID string) (*projectInfo, error) {
+func (r *ChatRepository) getProject(ctx context.Context, userFirebaseUID, publicID string) (*projectInfo, error) {
 	const q = `
 select
   public_id,
@@ -51,7 +54,7 @@ type threadInfo struct {
 	PinnedDiagramVersionID *string
 }
 
-func (r *Repo) getThread(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*threadInfo, error) {
+func (r *ChatRepository) getThread(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*threadInfo, error) {
 	const q = `
 select
   id,
@@ -75,7 +78,7 @@ where id=$1
 	return &t, nil
 }
 
-func (r *Repo) CreateThread(ctx context.Context, userFirebaseUID, projectPublicID string, title *string, bindingMode string) (*domain.Thread, error) {
+func (r *ChatRepository) CreateThread(ctx context.Context, userFirebaseUID, projectPublicID string, title *string, bindingMode string) (*domain.Thread, error) {
 	if bindingMode == "" {
 		bindingMode = domain.BindingFollowLatest
 	}
@@ -85,7 +88,7 @@ func (r *Repo) CreateThread(ctx context.Context, userFirebaseUID, projectPublicI
 		return nil, err
 	}
 
-	id, err := domain.NewID("thr")
+	id, err := utils.NewID("thr")
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +112,7 @@ returning id, created_at
 	}, nil
 }
 
-func (r *Repo) ListThreads(ctx context.Context, userFirebaseUID, projectPublicID string) ([]domain.Thread, error) {
+func (r *ChatRepository) ListThreads(ctx context.Context, userFirebaseUID, projectPublicID string) ([]domain.Thread, error) {
 	// ensure project belongs to user
 	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
 		return nil, err
@@ -148,7 +151,7 @@ order by created_at desc
 	return out, nil
 }
 
-func (r *Repo) ResolveDiagramContext(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*string, json.RawMessage, error) {
+func (r *ChatRepository) ResolveDiagramContext(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*string, json.RawMessage, error) {
 	p, err := r.getProject(ctx, userFirebaseUID, projectPublicID)
 	if err != nil {
 		return nil, nil, err
@@ -194,7 +197,7 @@ where id=$1
 	return use, spec, nil
 }
 
-func (r *Repo) ListHistoryForUIGP(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]string, []string, error) {
+func (r *ChatRepository) ListHistoryForUIGP(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]string, []string, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -244,7 +247,7 @@ type InsertAttachment struct {
 	Height    *int
 }
 
-func (r *Repo) InsertTurn(
+func (r *ChatRepository) InsertTurn(
 	ctx context.Context,
 	userFirebaseUID, projectPublicID, threadID string,
 	userContent string,
@@ -269,7 +272,7 @@ func (r *Repo) InsertTurn(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	userMsgID, err := domain.NewID("msg")
+	userMsgID, err := utils.NewID("msg")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -306,7 +309,7 @@ returning id, created_at
 			if a.ObjectKey == "" {
 				continue
 			}
-			attID, err := domain.NewID("att")
+			attID, err := utils.NewID("att")
 			if err != nil {
 				return nil, nil, err
 			}
@@ -332,7 +335,7 @@ returning id, created_at
 	}
 
 	// assistant message
-	asstMsgID, err := domain.NewID("msg")
+	asstMsgID, err := utils.NewID("msg")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -367,7 +370,7 @@ returning id, created_at
 	return &userMsg, &asstMsg, nil
 }
 
-func (r *Repo) ListMessages(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]domain.Message, error) {
+func (r *ChatRepository) ListMessages(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]domain.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}

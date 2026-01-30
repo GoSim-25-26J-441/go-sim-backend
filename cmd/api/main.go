@@ -28,12 +28,9 @@ import (
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 
 	// Projects module (from temp branch)
-	dipchatshttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/http"
-	dipchatsrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/repository"
-	dipdiagramshttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/http"
-	dipdiagramsrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/repository"
 	projecthttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/http"
 	projectrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/repository"
+	projectservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/service"
 )
 
 const serviceName = "go-sim-backend"
@@ -136,20 +133,17 @@ func main() {
 		projectsGroup := api.Group("/projects")
 		projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
-		// Initialize projects module
-		projectRepo := projectrepo.New(db)
-		projectHandler := projecthttp.New(projectRepo)
+		// Initialize projects module (includes chats and diagrams)
+		projectRepo := projectrepo.NewProjectRepository(db)
+		chatRepo := projectrepo.NewChatRepository(db)
+		diagramRepo := projectrepo.NewDiagramRepository(db)
+
+		projectService := projectservice.NewProjectService(projectRepo)
+		chatService := projectservice.NewChatService(chatRepo, dipllm.NewUIGP())
+		diagramService := projectservice.NewDiagramService(diagramRepo)
+
+		projectHandler := projecthttp.New(projectService, chatService, diagramService)
 		projectHandler.Register(projectsGroup)
-
-		// Initialize diagrams module
-		diagramsRepo := dipdiagramsrepo.New(db)
-		diagramsHandler := dipdiagramshttp.New(diagramsRepo)
-		diagramsHandler.Register(projectsGroup)
-
-		// Initialize chats module
-		chatRepo := dipchatsrepo.New(db)
-		chatHandler := dipchatshttp.New(chatRepo, dipllm.NewUIGP())
-		chatHandler.Register(projectsGroup)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
 	}

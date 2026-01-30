@@ -4,9 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/domain"
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/chats/repository"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,7 +28,7 @@ func (h *Handler) createThread(c *gin.Context) {
 		return
 	}
 
-	t, err := h.repo.CreateThread(c.Request.Context(), userID, publicID, req.Title, req.BindingMode)
+	t, err := h.chatService.CreateThread(c.Request.Context(), userID, publicID, req.Title, req.BindingMode)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
@@ -46,7 +45,7 @@ func (h *Handler) listThreads(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))
 	userID := c.GetString("firebase_uid")
 
-	items, err := h.repo.ListThreads(c.Request.Context(), userID, publicID)
+	items, err := h.chatService.ListThreads(c.Request.Context(), userID, publicID)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
@@ -84,48 +83,11 @@ func (h *Handler) postMessage(c *gin.Context) {
 		return
 	}
 
-	diagramVersionIDUsed, spec, err := h.repo.ResolveDiagramContext(c.Request.Context(), userID, publicID, threadID)
-	if err != nil {
-		if err == domain.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project/thread/diagram not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-
-	// history
-	roles, contents, err := h.repo.ListHistoryForUIGP(c.Request.Context(), userID, publicID, threadID, 20)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-
-	// reverse to chronological
-	history := make([]dipllm.ChatMessage, 0, len(roles))
-	for i := len(roles) - 1; i >= 0; i-- {
-		history = append(history, dipllm.ChatMessage{Role: roles[i], Content: contents[i]})
-	}
-
-	out, err := h.uigp.Chat(c.Request.Context(), dipllm.ChatRequest{
-		SpecSummary: spec,
-		History:     history,
-		Message:     req.Message,
-		Mode:        req.Mode,
-	})
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-
-	// map attachments
-	atts := make([]repository.InsertAttachment, 0, len(req.Attachments))
+	// Map request attachments
+	attachments := make([]service.AttachmentInput, 0, len(req.Attachments))
 	for _, a := range req.Attachments {
-		if strings.TrimSpace(a.ObjectKey) == "" {
-			continue
-		}
-		atts = append(atts, repository.InsertAttachment{
-			ObjectKey: strings.TrimSpace(a.ObjectKey),
+		attachments = append(attachments, service.AttachmentInput{
+			ObjectKey: a.ObjectKey,
 			MimeType:  a.MimeType,
 			FileName:  a.FileName,
 			FileSize:  a.FileSize,
@@ -134,30 +96,31 @@ func (h *Handler) postMessage(c *gin.Context) {
 		})
 	}
 
-	source := out.Source
-	uMsg, aMsg, err := h.repo.InsertTurn(
-		c.Request.Context(),
-		userID, publicID, threadID,
-		req.Message,
-		out.Answer,
-		&source,
-		out.Refs,
-		diagramVersionIDUsed,
-		atts,
-	)
+	serviceReq := service.PostMessageRequest{
+		Message:     req.Message,
+		Mode:        req.Mode,
+		ForceLLM:    req.ForceLLM,
+		Attachments: attachments,
+	}
+
+	resp, err := h.chatService.PostMessage(c.Request.Context(), userID, publicID, threadID, serviceReq)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		if err == domain.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project/thread/diagram not found"})
+			return
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"ok":                      true,
-		"answer":                  out.Answer,
-		"source":                  out.Source,
-		"refs":                    out.Refs,
-		"diagram_version_id_used": diagramVersionIDUsed,
-		"user_message":            uMsg,
-		"assistant_message":       aMsg,
+		"answer":                  resp.Answer,
+		"source":                  resp.Source,
+		"refs":                    resp.Refs,
+		"diagram_version_id_used": resp.DiagramVersionIDUsed,
+		"user_message":            resp.UserMessage,
+		"assistant_message":       resp.AssistantMessage,
 	})
 }
 
@@ -166,7 +129,7 @@ func (h *Handler) listMessages(c *gin.Context) {
 	threadID := strings.TrimSpace(c.Param("thread_id"))
 	userID := c.GetString("firebase_uid")
 
-	items, err := h.repo.ListMessages(c.Request.Context(), userID, publicID, threadID, 50)
+	items, err := h.chatService.ListMessages(c.Request.Context(), userID, publicID, threadID, 50)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project/thread not found"})

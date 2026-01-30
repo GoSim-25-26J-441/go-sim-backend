@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/diagrams/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
 	"github.com/gin-gonic/gin"
 )
 
-type createReq struct {
+type createDiagramReq struct {
 	Source         string          `json:"source,omitempty"`
 	DiagramJSON    json.RawMessage `json:"diagram_json"`
 	ImageObjectKey string          `json:"image_object_key,omitempty"`
@@ -24,7 +24,7 @@ func (h *Handler) createVersion(c *gin.Context) {
 		return
 	}
 
-	var req createReq
+	var req createDiagramReq
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.DiagramJSON) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid body"})
 		return
@@ -36,7 +36,7 @@ func (h *Handler) createVersion(c *gin.Context) {
 		return
 	}
 
-	ver, err := h.repo.CreateVersion(c.Request.Context(), fuid, publicID, domain.CreateVersionInput{
+	ver, err := h.diagramService.CreateVersion(c.Request.Context(), fuid, publicID, domain.CreateVersionInput{
 		Source:         strings.TrimSpace(req.Source),
 		DiagramJSON:    req.DiagramJSON,
 		ImageObjectKey: strings.TrimSpace(req.ImageObjectKey),
@@ -68,7 +68,7 @@ func (h *Handler) latest(c *gin.Context) {
 		return
 	}
 
-	ver, err := h.repo.Latest(c.Request.Context(), fuid, publicID)
+	ver, err := h.diagramService.GetLatest(c.Request.Context(), fuid, publicID)
 	if err != nil {
 		if err == domain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "no diagram found"})

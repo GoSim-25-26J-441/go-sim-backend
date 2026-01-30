@@ -17,15 +17,20 @@ HTTP Request → Handler → Service Layer → Upstream Client → External Serv
 ### Component Structure
 
 ```
-internal/design_input_processing/
-├── http/          # HTTP handlers (thin layer, delegates to services)
-├── service/       # Business logic and upstream communication
-├── chats/         # Chat module (domain/repository/http)
-├── diagrams/      # Diagram module (domain/repository/http)
-├── graph/         # Graph utilities (DOT generation, Neo4j TODO)
-├── llm/           # LLM client (UIGP)
-├── middleware/    # Request ID, Firebase auth
-└── rag/           # RAG search functionality
+internal/
+├── design_input_processing/
+│   ├── http/          # HTTP handlers (thin layer, delegates to services)
+│   ├── service/       # Business logic and upstream communication
+│   ├── graph/         # Graph utilities (DOT generation, Neo4j TODO)
+│   ├── llm/           # LLM client (UIGP)
+│   ├── middleware/    # Request ID, Firebase auth
+│   └── rag/           # RAG search functionality
+└── projects/
+    ├── chats/         # Chat module (domain/repository/service/http)
+    ├── diagrams/      # Diagram module (domain/repository/service/http)
+    ├── domain/        # Project domain models
+    ├── http/          # Project HTTP handlers
+    └── repository/    # Project repository
 ```
 
 ## Service Layer
@@ -148,11 +153,12 @@ Defined in `service/constants.go`:
 
 ### Chats Module
 
-**Location:** `internal/design_input_processing/chats/`
+**Location:** `internal/projects/chats/`
 
 **Structure:**
 - `domain/` - Models, errors, IDs
 - `repository/` - Database operations
+- `service/` - Business logic (LLM integration, message processing)
 - `http/` - HTTP handlers
 
 **Routes:**
@@ -169,11 +175,12 @@ Defined in `service/constants.go`:
 
 ### Diagrams Module
 
-**Location:** `internal/design_input_processing/diagrams/`
+**Location:** `internal/projects/diagrams/`
 
 **Structure:**
 - `domain/` - Models, errors, IDs
 - `repository/` - Database operations
+- `service/` - Business logic (LLM integration, message processing)
 - `http/` - HTTP handlers
 
 **Purpose:** Manages diagram versions for projects.

@@ -31,13 +31,13 @@ type Attachment struct {
 
 type Message struct {
 	ID                   string       `json:"id"`
-	ThreadID             string       `json:"thread_id"`
-	ProjectID            string       `json:"project_id,omitempty"`
-	Role                 string       `json:"role"`
-	Content              string       `json:"content"`
-	Source               *string      `json:"source,omitempty"`
-	Refs                 []string     `json:"refs,omitempty"`
-	DiagramVersionIDUsed *string      `json:"diagram_version_id_used,omitempty"`
-	CreatedAt            time.Time    `json:"created_at"`
-	Attachments          []Attachment `json:"attachments,omitempty"`
+	ThreadID             string        `json:"thread_id"`
+	ProjectID            string        `json:"project_id,omitempty"`
+	Role                 string        `json:"role"`
+	Content              string        `json:"content"`
+	Source               *string       `json:"source,omitempty"`
+	Refs                 []string      `json:"refs,omitempty"`
+	DiagramVersionIDUsed *string       `json:"diagram_version_id_used,omitempty"`
+	CreatedAt            time.Time     `json:"created_at"`
+	Attachments          []Attachment  `json:"attachments,omitempty"`
 }
