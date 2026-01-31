@@ -1,0 +1,218 @@
+{
+  "graph": {
+    "nodes": {
+      "DATABASE:database": {
+        "id": "DATABASE:database",
+        "name": "database",
+        "kind": "DATABASE"
+      },
+      "SERVICE:orders": {
+        "id": "SERVICE:orders",
+        "name": "orders",
+        "kind": "SERVICE"
+      },
+      "SERVICE:payments": {
+        "id": "SERVICE:payments",
+        "name": "payments",
+        "kind": "SERVICE"
+      },
+      "SERVICE:restaurants": {
+        "id": "SERVICE:restaurants",
+        "name": "restaurants",
+        "kind": "SERVICE"
+      },
+      "SERVICE:user": {
+        "id": "SERVICE:user",
+        "name": "user",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web page": {
+        "id": "SERVICE:web page",
+        "name": "web page",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:user",
+        "to": "SERVICE:web page",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:web page",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web page",
+        "to": "SERVICE:restaurants",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web page",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "DATABASE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "DATABASE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:payments",
+        "to": "DATABASE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/runs/8fc0860f40e2de1b/graph.dot",
+  "svg_path": "/app/out/runs/8fc0860f40e2de1b/graph.svg",
+  "detections": [
+    {
+      "kind": "cycles",
+      "severity": "HIGH",
+      "title": "Cyclic dependency",
+      "summary": "A loop of service dependencies was detected",
+      "nodes": [
+        "SERVICE:orders",
+        "SERVICE:restaurants",
+        "SERVICE:web page"
+      ],
+      "edges": [],
+      "evidence": {
+        "cycle_size": 3
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:web page"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 4,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "reverse_dependency",
+      "severity": "HIGH",
+      "title": "Reverse dependency (backend → UI)",
+      "summary": "Backend service depends on the UI/frontend layer",
+      "nodes": [
+        "SERVICE:user",
+        "SERVICE:web page"
+      ],
+      "edges": [],
+      "evidence": {
+        "from": "SERVICE:user",
+        "to": "SERVICE:web page"
+      }
+    },
+    {
+      "kind": "reverse_dependency",
+      "severity": "HIGH",
+      "title": "Reverse dependency (backend → UI)",
+      "summary": "Backend service depends on the UI/frontend layer",
+      "nodes": [
+        "SERVICE:orders",
+        "SERVICE:web page"
+      ],
+      "edges": [],
+      "evidence": {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:web page"
+      }
+    },
+    {
+      "kind": "sync_call_chain",
+      "severity": "MEDIUM",
+      "title": "Sync call chain",
+      "summary": "Long synchronous dependency chain can amplify latency/failure impact",
+      "nodes": [
+        "SERVICE:user",
+        "SERVICE:web page",
+        "SERVICE:restaurants",
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "edges": 4,
+        "min_edges": 4
+      }
+    },
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:web page",
+        "SERVICE:restaurants",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 2,
+        "targets": 2,
+        "ui": "SERVICE:web page"
+      }
+    }
+  ]
+}

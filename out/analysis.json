@@ -1,130 +1,136 @@
 {
   "graph": {
     "nodes": {
-      "DATABASE:payments-db": {
-        "id": "DATABASE:payments-db",
-        "name": "payments-db",
-        "kind": "DATABASE",
-        "attrs": {
-          "owner": "payment-service"
-        }
+      "DATABASE:database": {
+        "id": "DATABASE:database",
+        "name": "database",
+        "kind": "DATABASE"
       },
-      "DATABASE:users-db": {
-        "id": "DATABASE:users-db",
-        "name": "users-db",
-        "kind": "DATABASE",
-        "attrs": {
-          "owner": "auth-service"
-        }
-      },
-      "SERVICE:api-gateway": {
-        "id": "SERVICE:api-gateway",
-        "name": "api-gateway",
+      "SERVICE:bff": {
+        "id": "SERVICE:bff",
+        "name": "bff",
         "kind": "SERVICE"
       },
-      "SERVICE:auth-service": {
-        "id": "SERVICE:auth-service",
-        "name": "auth-service",
+      "SERVICE:orders": {
+        "id": "SERVICE:orders",
+        "name": "orders",
         "kind": "SERVICE"
       },
-      "SERVICE:billing-service": {
-        "id": "SERVICE:billing-service",
-        "name": "billing-service",
+      "SERVICE:payments": {
+        "id": "SERVICE:payments",
+        "name": "payments",
         "kind": "SERVICE"
       },
-      "SERVICE:payment-service": {
-        "id": "SERVICE:payment-service",
-        "name": "payment-service",
+      "SERVICE:restaurants": {
+        "id": "SERVICE:restaurants",
+        "name": "restaurants",
         "kind": "SERVICE"
       },
-      "SERVICE:user-service": {
-        "id": "SERVICE:user-service",
-        "name": "user-service",
+      "SERVICE:user": {
+        "id": "SERVICE:user",
+        "name": "user",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web page": {
+        "id": "SERVICE:web page",
+        "name": "web page",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web page_split": {
+        "id": "SERVICE:web page_split",
+        "name": "web page_split",
         "kind": "SERVICE"
       }
     },
     "edges": [
       {
-        "from": "SERVICE:api-gateway",
-        "to": "SERVICE:user-service",
+        "from": "SERVICE:web page_split",
+        "to": "SERVICE:payments",
         "kind": "CALLS",
         "attrs": {
-          "count": 1,
-          "endpoints": [
-            "GET /users/:id"
-          ],
-          "per_item": false,
-          "rate_per_min": 600
+          "dep_kind": "rest",
+          "sync": true
         }
       },
       {
-        "from": "SERVICE:api-gateway",
-        "to": "SERVICE:billing-service",
+        "from": "SERVICE:orders",
+        "to": "DATABASE:database",
         "kind": "CALLS",
         "attrs": {
-          "count": 1,
-          "endpoints": [
-            "POST /bill"
-          ],
-          "per_item": false,
-          "rate_per_min": 300
+          "dep_kind": "rest",
+          "sync": true
         }
       },
       {
-        "from": "SERVICE:user-service",
-        "to": "SERVICE:auth-service",
+        "from": "SERVICE:restaurants",
+        "to": "DATABASE:database",
         "kind": "CALLS",
         "attrs": {
-          "count": 1,
-          "endpoints": [
-            "POST /verify"
-          ],
-          "per_item": false,
-          "rate_per_min": 600
+          "dep_kind": "rest",
+          "sync": true
         }
       },
       {
-        "from": "SERVICE:user-service",
-        "to": "DATABASE:users-db",
-        "kind": "READS"
-      },
-      {
-        "from": "SERVICE:auth-service",
-        "to": "DATABASE:users-db",
-        "kind": "READS"
-      },
-      {
-        "from": "SERVICE:auth-service",
-        "to": "DATABASE:users-db",
-        "kind": "WRITES",
-        "attrs": {
-          "owner": true
-        }
-      },
-      {
-        "from": "SERVICE:billing-service",
-        "to": "SERVICE:payment-service",
+        "from": "SERVICE:payments",
+        "to": "DATABASE:database",
         "kind": "CALLS",
         "attrs": {
-          "count": 1,
-          "endpoints": [
-            "POST /charge"
-          ],
-          "per_item": false,
-          "rate_per_min": 500
+          "dep_kind": "rest",
+          "sync": true
         }
       },
       {
-        "from": "SERVICE:billing-service",
-        "to": "DATABASE:payments-db",
-        "kind": "READS"
+        "from": "SERVICE:restaurants",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
       },
       {
-        "from": "SERVICE:payment-service",
-        "to": "DATABASE:payments-db",
-        "kind": "WRITES",
+        "from": "SERVICE:orders",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
         "attrs": {
-          "owner": true
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web page",
+        "to": "SERVICE:web page_split",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web page",
+        "to": "SERVICE:bff",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:restaurants",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
         }
       }
     ]
@@ -133,105 +139,39 @@
   "svg_path": "/app/out/graph.svg",
   "detections": [
     {
-      "kind": "chatty_calls",
+      "kind": "sync_call_chain",
       "severity": "MEDIUM",
-      "title": "Chatty call",
-      "summary": "High-frequency or per-item chattiness between services",
+      "title": "Sync call chain",
+      "summary": "Long synchronous dependency chain can amplify latency/failure impact",
       "nodes": [
-        "SERVICE:api-gateway",
-        "SERVICE:user-service"
+        "SERVICE:web page",
+        "SERVICE:bff",
+        "SERVICE:restaurants",
+        "SERVICE:orders",
+        "SERVICE:payments"
       ],
-      "edges": [
-        0
-      ],
+      "edges": [],
       "evidence": {
-        "per_item": false,
-        "rate_per_min": 600
+        "edges": 4,
+        "min_edges": 4
       }
     },
     {
-      "kind": "chatty_calls",
+      "kind": "ui_orchestrator",
       "severity": "MEDIUM",
-      "title": "Chatty call",
-      "summary": "High-frequency or per-item chattiness between services",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
       "nodes": [
-        "SERVICE:api-gateway",
-        "SERVICE:billing-service"
+        "SERVICE:web page",
+        "SERVICE:web page_split",
+        "SERVICE:bff"
       ],
-      "edges": [
-        1
-      ],
+      "edges": [],
       "evidence": {
-        "per_item": false,
-        "rate_per_min": 300
-      }
-    },
-    {
-      "kind": "chatty_calls",
-      "severity": "MEDIUM",
-      "title": "Chatty call",
-      "summary": "High-frequency or per-item chattiness between services",
-      "nodes": [
-        "SERVICE:user-service",
-        "SERVICE:auth-service"
-      ],
-      "edges": [
-        2
-      ],
-      "evidence": {
-        "per_item": false,
-        "rate_per_min": 600
-      }
-    },
-    {
-      "kind": "chatty_calls",
-      "severity": "MEDIUM",
-      "title": "Chatty call",
-      "summary": "High-frequency or per-item chattiness between services",
-      "nodes": [
-        "SERVICE:billing-service",
-        "SERVICE:payment-service"
-      ],
-      "edges": [
-        6
-      ],
-      "evidence": {
-        "per_item": false,
-        "rate_per_min": 500
-      }
-    },
-    {
-      "kind": "cross_db_read",
-      "severity": "MEDIUM",
-      "title": "Cross-DB read",
-      "summary": "Service reads DB owned by another service",
-      "nodes": [
-        "SERVICE:user-service",
-        "DATABASE:users-db"
-      ],
-      "edges": [
-        3
-      ],
-      "evidence": {
-        "owner": "auth-service",
-        "reader": "user-service"
-      }
-    },
-    {
-      "kind": "cross_db_read",
-      "severity": "MEDIUM",
-      "title": "Cross-DB read",
-      "summary": "Service reads DB owned by another service",
-      "nodes": [
-        "SERVICE:billing-service",
-        "DATABASE:payments-db"
-      ],
-      "edges": [
-        7
-      ],
-      "evidence": {
-        "owner": "payment-service",
-        "reader": "billing-service"
+        "min_out": 2,
+        "sync_targets": 2,
+        "targets": 2,
+        "ui": "SERVICE:web page"
       }
     }
   ]

@@ -53,8 +53,9 @@ func (sharedDatabase) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Dete
 		if findDepIndex(spec, c, db) < 0 {
 			continue
 		}
-		newDB := uniqueServiceName(spec, strings.ToLower(strings.TrimSpace(c))+"-db")
-		ensureService(spec, newDB)
+
+		newDB := uniqueServiceName(spec, strings.ToLower(strings.TrimSpace(cleanRef(c)))+"-db")
+		ensureDatabase(spec, newDB)
 
 		if ok, note := retargetDependency(spec, c, db, newDB); ok {
 			changed = true
@@ -63,7 +64,7 @@ func (sharedDatabase) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Dete
 	}
 
 	if changed {
-		notes = append(notes, fmt.Sprintf("Split shared DB %s into per-service DB nodes.", db))
+		notes = append(notes, fmt.Sprintf("Split shared DB %s into per-service DB nodes.", cleanRef(db)))
 	}
 	return changed, notes
 }

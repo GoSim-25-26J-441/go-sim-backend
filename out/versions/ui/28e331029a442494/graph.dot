@@ -1,0 +1,13 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:ui" [label="ui", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:orders" [label="orders", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:payments" [label="payments", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:bff" [label="bff", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:payments" -> "SERVICE:orders" [label="CALLS [rest] (async)", tooltip="edge#0"];
+  "SERVICE:ui" -> "SERVICE:bff" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:bff" -> "SERVICE:orders" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:bff" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+}

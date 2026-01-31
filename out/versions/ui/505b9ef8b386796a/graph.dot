@@ -1,0 +1,23 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:user" [label="user", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web page" [label="web page", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:orders" [label="orders", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:restaurants" [label="restaurants", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:payments" [label="payments", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:database" [label="database", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:web page_split" [label="web page_split", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:bff" [label="bff", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web page_split" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:orders" -> "DATABASE:database" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:restaurants" -> "DATABASE:database" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:payments" -> "DATABASE:database" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:restaurants" -> "SERVICE:orders" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:orders" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+  "SERVICE:web page" -> "SERVICE:web page_split" [label="CALLS [rest] (sync)", tooltip="edge#6"];
+  "SERVICE:web page" -> "SERVICE:bff" [label="CALLS [rest] (sync)", tooltip="edge#7"];
+  "SERVICE:bff" -> "SERVICE:restaurants" [label="CALLS [rest] (sync)", tooltip="edge#8"];
+  "SERVICE:bff" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#9"];
+}

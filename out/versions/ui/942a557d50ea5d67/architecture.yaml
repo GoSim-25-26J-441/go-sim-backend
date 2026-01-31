@@ -1,0 +1,76 @@
+__note: LLM unavailable, returned mock spec
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 200
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: web page_split
+      kind: rest
+      sync: true
+      to: payments
+    - from: orders
+      kind: rest
+      sync: true
+      to: database
+    - from: restaurants
+      kind: rest
+      sync: true
+      to: database
+    - from: payments
+      kind: rest
+      sync: true
+      to: database
+    - from: restaurants
+      kind: rest
+      sync: true
+      to: orders
+    - from: orders
+      kind: rest
+      sync: true
+      to: payments
+    - from: bff
+      kind: rest
+      to: restaurants
+    - from: bff
+      kind: rest
+      sync: true
+      to: payments
+    - from: web page
+      kind: rest
+      sync: true
+      to: bff-1
+    - from: bff-1
+      kind: rest
+      sync: true
+      to: bff
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: mock
+    schemaVersion: 0.1.0
+services:
+    - name: user
+      type: service
+    - name: web page
+      type: service
+    - name: orders
+      type: service
+    - name: restaurants
+      type: service
+    - name: payments
+      type: service
+    - name: database
+      type: service
+    - name: web page_split
+      type: service
+    - name: bff
+      type: service
+    - name: bff-1
+      type: service
+topics: []
+trace: []

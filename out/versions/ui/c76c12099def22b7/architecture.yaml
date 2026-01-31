@@ -1,0 +1,93 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 200
+dependencies:
+    - from: user
+      to: web page
+      kind: rest
+      sync: true
+    - from: orders
+      to: web page
+      kind: rest
+      sync: true
+    - from: web page
+      to: restaurants
+      kind: rest
+      sync: true
+    - from: web page
+      to: payments
+      kind: rest
+      sync: true
+    - from: orders
+      to: database
+      kind: rest
+      sync: true
+    - from: restaurants
+      to: database
+      kind: rest
+      sync: true
+    - from: payments
+      to: database
+      kind: rest
+      sync: true
+    - from: restaurants
+      to: orders
+      kind: rest
+      sync: true
+    - from: orders
+      to: payments
+      kind: rest
+      sync: true
+    - from: restaurants
+      to: new-database
+      kind: rest
+      sync: true
+    - from: restaurants
+      to: new-database2
+      kind: rest
+      sync: true
+    - from: database
+      to: payments
+      kind: rest
+      sync: true
+    - from: payments
+      to: new-database2
+      kind: rest
+      sync: true
+    - from: SERVICE:web page
+      to: bff
+      kind: rest
+      sync: true
+    - from: bff
+      to: SERVICE:restaurants
+      kind: rest
+      sync: true
+    - from: bff
+      to: SERVICE:payments
+      kind: rest
+      sync: true
+metadata:
+    generator: ui
+    schemaVersion: 0.1.0
+services:
+    - name: database
+      type: service
+    - name: orders
+      type: service
+    - name: payments
+      type: service
+    - name: restaurants
+      type: service
+    - name: user
+      type: service
+    - name: web page
+      type: service
+    - name: new-database
+      type: database
+    - name: new-database2
+      type: database
+    - name: bff
+      type: service

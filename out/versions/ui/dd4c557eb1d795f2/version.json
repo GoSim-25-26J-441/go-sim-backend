@@ -1,0 +1,8 @@
+{
+  "job_id": "ui",
+  "version_id": "dd4c557eb1d795f2",
+  "label": "auto_fix",
+  "dir": "/app/out/versions/ui/dd4c557eb1d795f2",
+  "yaml_path": "/app/out/versions/ui/dd4c557eb1d795f2/architecture.yaml",
+  "created_at": "2026-01-13T00:17:54.803181142Z"
+}

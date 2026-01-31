@@ -16,7 +16,7 @@ func (godService) Kind() domain.AntiPatternKind { return domain.APGodService }
 func (godService) Suggest(g *domain.Graph, det domain.Detection) suggestion.Suggestion {
 	main := ""
 	if len(det.Nodes) > 0 {
-		main = det.Nodes[0]
+		main = cleanRef(det.Nodes[0])
 	}
 
 	title := "Split god service"
@@ -37,14 +37,14 @@ func (godService) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detectio
 	if spec == nil || len(det.Nodes) < 1 {
 		return false, nil
 	}
-	main := det.Nodes[0]
+	main := cleanRef(det.Nodes[0])
 
 	var outIdx []int
 	for i := range spec.Dependencies {
 		if spec.Dependencies[i].From == "" || spec.Dependencies[i].To == "" {
 			continue
 		}
-		if stringsEqualFold(spec.Dependencies[i].From, main) {
+		if strings.EqualFold(cleanRef(spec.Dependencies[i].From), main) {
 			outIdx = append(outIdx, i)
 		}
 	}
@@ -80,16 +80,6 @@ func (godService) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detectio
 	}
 
 	return true, notes
-}
-
-func stringsEqualFold(a, b string) bool {
-	if a == b {
-		return true
-	}
-	if len(a) != len(b) {
-		return strings.EqualFold(a, b)
-	}
-	return strings.EqualFold(a, b)
 }
 
 func init() { suggestion.Register(godService{}) }

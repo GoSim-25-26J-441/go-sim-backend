@@ -1,0 +1,106 @@
+graph:
+    nodes:
+        SERVICE:bff:
+            id: SERVICE:bff
+            name: bff
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders:
+            id: SERVICE:orders
+            name: orders
+            kind: SERVICE
+            attrs: {}
+        SERVICE:payments:
+            id: SERVICE:payments
+            name: payments
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ui:
+            id: SERVICE:ui
+            name: ui
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:payments
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: false
+        - from: SERVICE:ui
+          to: SERVICE:bff
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:payments
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:bff:
+            - from: SERVICE:bff
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:payments:
+            - from: SERVICE:payments
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+        SERVICE:ui:
+            - from: SERVICE:ui
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        SERVICE:bff:
+            - from: SERVICE:ui
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:payments
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+            - from: SERVICE:bff
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:payments:
+            - from: SERVICE:bff
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/versions/ui/28e331029a442494/graph.dot
+svg_path: /app/out/versions/ui/28e331029a442494/graph.svg
+detections: []

@@ -1,0 +1,47 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 120
+dependencies:
+    - from: ui
+      to: orders
+      kind: rest
+      sync: true
+    - from: ui
+      to: payments
+      kind: rest
+      sync: true
+    - from: orders
+      to: payments
+      kind: rest
+      sync: true
+    - from: payments
+      to: orders
+      kind: rest
+      sync: true
+    - from: SERVICE:ui
+      to: bff
+      kind: rest
+      sync: true
+    - from: bff
+      to: SERVICE:orders
+      kind: rest
+      sync: true
+    - from: bff
+      to: SERVICE:payments
+      kind: rest
+      sync: true
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: ui
+      type: service
+    - name: orders
+      type: service
+    - name: payments
+      type: service
+    - name: bff
+      type: service

@@ -1,0 +1,268 @@
+graph:
+    nodes:
+        DATABASE:database:
+            id: DATABASE:database
+            name: database
+            kind: DATABASE
+            attrs: {}
+        SERVICE:bff:
+            id: SERVICE:bff
+            name: bff
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders:
+            id: SERVICE:orders
+            name: orders
+            kind: SERVICE
+            attrs: {}
+        SERVICE:payments:
+            id: SERVICE:payments
+            name: payments
+            kind: SERVICE
+            attrs: {}
+        SERVICE:restaurants:
+            id: SERVICE:restaurants
+            name: restaurants
+            kind: SERVICE
+            attrs: {}
+        SERVICE:user:
+            id: SERVICE:user
+            name: user
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web page:
+            id: SERVICE:web page
+            name: web page
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web page_split:
+            id: SERVICE:web page_split
+            name: web page_split
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:web page_split
+          to: SERVICE:payments
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders
+          to: DATABASE:database
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:restaurants
+          to: DATABASE:database
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:payments
+          to: DATABASE:database
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:restaurants
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders
+          to: SERVICE:payments
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web page
+          to: SERVICE:web page_split
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web page
+          to: SERVICE:bff
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:restaurants
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:payments
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:bff:
+            - from: SERVICE:bff
+              to: SERVICE:restaurants
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:orders
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:orders
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:payments:
+            - from: SERVICE:payments
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:restaurants:
+            - from: SERVICE:restaurants
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:restaurants
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web page:
+            - from: SERVICE:web page
+              to: SERVICE:web page_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:web page
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web page_split:
+            - from: SERVICE:web page_split
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:database:
+            - from: SERVICE:orders
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:restaurants
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:payments
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff:
+            - from: SERVICE:web page
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:restaurants
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:payments:
+            - from: SERVICE:web page_split
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:orders
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:restaurants:
+            - from: SERVICE:bff
+              to: SERVICE:restaurants
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web page_split:
+            - from: SERVICE:web page
+              to: SERVICE:web page_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/versions/ui/505b9ef8b386796a/graph.dot
+svg_path: /app/out/versions/ui/505b9ef8b386796a/graph.svg
+detections:
+    - kind: sync_call_chain
+      severity: MEDIUM
+      title: Sync call chain
+      summary: Long synchronous dependency chain can amplify latency/failure impact
+      nodes:
+        - SERVICE:web page
+        - SERVICE:bff
+        - SERVICE:restaurants
+        - SERVICE:orders
+        - SERVICE:payments
+      edges: []
+      evidence:
+        edges: 4
+        min_edges: 4
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:web page
+        - SERVICE:web page_split
+        - SERVICE:bff
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 2
+        targets: 2
+        ui: SERVICE:web page

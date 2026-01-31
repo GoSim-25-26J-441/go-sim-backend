@@ -1,0 +1,12 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:web" [label="web", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:auth" [label="auth", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:catalog" [label="catalog", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:database" [label="database", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:web" -> "SERVICE:auth" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:web" -> "SERVICE:catalog" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:catalog" -> "DATABASE:database" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+}

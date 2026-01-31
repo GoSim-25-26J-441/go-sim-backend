@@ -3,14 +3,16 @@ package suggestion
 import (
 	"sort"
 
+	specpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/spec"
+
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/parser"
 )
 
 type Suggestion struct {
-	Kind           domain.AntiPatternKind `json:"kind" yaml:"kind"`
-	Title          string                 `json:"title" yaml:"title"`
-	Bullets        []string               `json:"bullets" yaml:"bullets"`
+	Kind    domain.AntiPatternKind `json:"kind" yaml:"kind"`
+	Title   string                 `json:"title" yaml:"title"`
+	Bullets []string               `json:"bullets" yaml:"bullets"`
 
 	AutoFixApplied bool     `json:"auto_fix_applied" yaml:"auto_fix_applied"`
 	AutoFixNotes   []string `json:"auto_fix_notes,omitempty" yaml:"auto_fix_notes,omitempty"`
@@ -83,9 +85,13 @@ func BuildSuggestions(g *domain.Graph, dets []domain.Detection) []Suggestion {
 	return out
 }
 
-
 func ApplyFixesYAMLBytes(yamlBytes []byte, g *domain.Graph, dets []domain.Detection) ([]byte, []Suggestion, error) {
-	spec, err := parser.ParseYAMLBytes(yamlBytes)
+	origRaw, err := specpkg.UnmarshalMap(yamlBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	specStruct, err := parser.ParseYAMLBytes(yamlBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -102,7 +108,7 @@ func ApplyFixesYAMLBytes(yamlBytes []byte, g *domain.Graph, dets []domain.Detect
 		if s == nil {
 			continue
 		}
-		changed, notes := s.Apply(spec, g, d)
+		changed, notes := s.Apply(specStruct, g, d)
 		if changed {
 			ss := s.Suggest(g, d)
 			ss.AutoFixApplied = true
@@ -111,9 +117,23 @@ func ApplyFixesYAMLBytes(yamlBytes []byte, g *domain.Graph, dets []domain.Detect
 		}
 	}
 
-	b, err := marshalSpec(spec)
+	fixedBytes, err := marshalSpec(specStruct)
 	if err != nil {
 		return nil, nil, err
 	}
-	return b, applied, nil
+	fixedRaw, err := specpkg.UnmarshalMap(fixedBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	specpkg.Sanitize(fixedRaw)
+
+	merged := specpkg.Merge(origRaw, fixedRaw)
+
+	out, err := specpkg.MarshalMap(merged)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return out, applied, nil
 }
