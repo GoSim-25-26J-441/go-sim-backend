@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -29,6 +30,7 @@ func NewRequestHandler(db *sql.DB) *RequestHandler {
 
 func (h *RequestHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/requests/user/:user_id", h.GetRequestsByUser)
+	rg.GET("/requests/:id", h.GetRequestByID)
 }
 
 func (h *RequestHandler) GetRequestsByUser(c *gin.Context) {
@@ -84,4 +86,41 @@ ORDER BY created_at DESC
 		"count":   len(out),
 		"rows":    out,
 	})
+}
+
+func (h *RequestHandler) GetRequestByID(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	query := `
+SELECT id, user_id, request, response, best_candidate, created_at
+FROM request_responses
+WHERE id = $1
+`
+	var r RequestResponseRow
+	var requestBytes []byte
+	var responseBytes []byte
+	var bestBytes []byte
+
+	err := h.db.QueryRowContext(ctx, query, id).Scan(&r.ID, &r.UserID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed: " + err.Error()})
+		return
+	}
+
+	r.Request = json.RawMessage(requestBytes)
+	r.Response = json.RawMessage(responseBytes)
+	r.BestCandidate = json.RawMessage(bestBytes)
+
+	c.JSON(http.StatusOK, r)
 }
