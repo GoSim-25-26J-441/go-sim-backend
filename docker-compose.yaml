@@ -1,4 +1,30 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gosim-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gosim
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: gosim-redis
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   neo4j:
     image: neo4j:5.25
     container_name: neo4j
@@ -13,10 +39,21 @@ services:
     container_name: amg-apd
     env_file: .env
     ports: ["8080:8080"]
-    depends_on: [neo4j]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_started
+    environment:
+      DB_HOST: postgres
+      DB_PASSWORD: postgres
+      REDIS_HOST: redis
     volumes:
       - ./samples:/app/samples:ro
       - ./out:/app/out
 
 volumes:
+  postgres_data:
   neo4j_data:

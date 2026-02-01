@@ -1,7 +1,7 @@
 digraph G {
   rankdir=LR;
   node [shape=box, style=rounded];
-  labelloc="t"; label="test"; fontname="Helvetica";
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
   "SERVICE:ui" [label="ui", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
   "SERVICE:orders" [label="orders", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
   "SERVICE:payments" [label="payments", shape=box,style="rounded,filled",fillcolor="#eef6ff"];

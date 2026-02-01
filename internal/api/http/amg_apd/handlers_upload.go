@@ -13,6 +13,20 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/utils"
 )
 
+func getIncomingDir() string {
+	if d := os.Getenv("AMG_APD_INCOMING_DIR"); d != "" {
+		return d
+	}
+	return "/app/incoming"
+}
+
+func getOutDir() string {
+	if d := os.Getenv("AMG_APD_OUT_DIR"); d != "" {
+		return d
+	}
+	return "/app/out"
+}
+
 type analyzeRawReq struct {
 	YAML   string `json:"yaml"`
 	Title  string `json:"title"`
@@ -30,14 +44,15 @@ func AnalyzeRaw(c *gin.Context) {
 		return
 	}
 	if req.OutDir == "" {
-		req.OutDir = "/app/out"
+		req.OutDir = getOutDir()
 	}
 	if req.Title == "" {
 		req.Title = "Uploaded"
 	}
 
-	_ = os.MkdirAll("/app/incoming", 0o755)
-	tmp := filepath.Join("/app/incoming", utils.NewID()+".yaml")
+	incoming := getIncomingDir()
+	_ = os.MkdirAll(incoming, 0o755)
+	tmp := filepath.Join(incoming, utils.NewID()+".yaml")
 	if err := os.WriteFile(tmp, []byte(req.YAML), 0o644); err != nil {
 		c.String(http.StatusInternalServerError, fmt.Sprintf("write tmp failed: %v", err))
 		return
@@ -60,7 +75,7 @@ func AnalyzeUpload(c *gin.Context) {
 		return
 	}
 
-	outDir := c.DefaultPostForm("out_dir", "/app/out")
+	outDir := c.DefaultPostForm("out_dir", getOutDir())
 
 	title := c.PostForm("title")
 	if title == "" {
@@ -71,12 +86,13 @@ func AnalyzeUpload(c *gin.Context) {
 		}
 	}
 
-	_ = os.MkdirAll("/app/incoming", 0o755)
+	incoming := getIncomingDir()
+	_ = os.MkdirAll(incoming, 0o755)
 	ext := filepath.Ext(file.Filename)
 	if ext == "" {
 		ext = ".yaml"
 	}
-	tmpPath := filepath.Join("/app/incoming", utils.NewID()+ext)
+	tmpPath := filepath.Join(incoming, utils.NewID()+ext)
 	if err := c.SaveUploadedFile(file, tmpPath); err != nil {
 		c.String(http.StatusInternalServerError, fmt.Sprintf("saving uploaded file failed: %v", err))
 		return

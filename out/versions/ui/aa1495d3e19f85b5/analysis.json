@@ -61,7 +61,7 @@
       }
     ]
   },
-  "dot_path": "/app/out/graph.dot",
-  "svg_path": "/app/out/graph.svg",
+  "dot_path": "/app/out/versions/ui/aa1495d3e19f85b5/graph.dot",
+  "svg_path": "/app/out/versions/ui/aa1495d3e19f85b5/graph.svg",
   "detections": null
 }
