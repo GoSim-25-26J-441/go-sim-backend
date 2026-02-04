@@ -1004,8 +1004,13 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 		if note != "" {
 			po.Note = note
 		}
-
+		if existing, ok := optionMap[key]; ok && existing.PricePerHour <= po.PricePerHour {
+			continue
+		}
 		optionMap[key] = po
+		if optionType == "OnDemand" {
+			onDemandPrice = pricePerHour
+		}
 	}
 
 	// Calculate savings percentages for Reserved instances
