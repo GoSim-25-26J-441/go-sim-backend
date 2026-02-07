@@ -21,7 +21,7 @@ internal/
 ├── design_input_processing/
 │   ├── http/          # HTTP handlers (thin layer, delegates to services)
 │   ├── service/       # Business logic and upstream communication
-│   ├── graph/         # Graph utilities (DOT generation, Neo4j TODO)
+│   ├── graph/         # Graph utilities (DOT generation)
 │   ├── llm/           # LLM client (UIGP)
 │   ├── middleware/    # Request ID, Firebase auth
 │   └── rag/           # RAG search functionality
@@ -193,7 +193,6 @@ Defined in `service/constants.go`:
 - `model.go` - Graph, Node, Edge types
 - `from_spec.go` - Convert Architecture spec to Graph
 - `dot.go` - Generate GraphViz DOT format
-- `neo4j.go` - TODO: Neo4j integration (future work)
 
 **Usage:**
 Used by `GraphService` to generate DOT visualizations from job exports.
@@ -273,6 +272,5 @@ Test full request/response flow:
 
 1. **Structured Logging** - Add context-aware logging with request IDs
 2. **Metrics** - Add observability metrics (latency, error rates)
-3. **Neo4j Integration** - Implement graph storage (see `graph/neo4j.go`)
-4. **Rate Limiting** - Add rate limiting for upstream calls
-5. **Caching** - Cache frequently accessed job data
+3. **Rate Limiting** - Add rate limiting for upstream calls
+4. **Caching** - Cache frequently accessed job data
