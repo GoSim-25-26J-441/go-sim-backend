@@ -5,15 +5,17 @@
 
 param(
     [string]$EmulatorHost = "http://localhost:9099",
-    [string]$Email = "demo@local.test",
-    [string]$Password = "testpassword123",
+    [string]$Email = "malithgihan099@gmail.com",
+    [string]$Password = "test1234",
     [switch]$TestApi,
     [string]$ApiBase = "http://localhost:8000"
 )
 
 $ErrorActionPreference = "Stop"
 $apiKey = "fake-api-key"
-$baseUrl = "$EmulatorHost/identitytoolkit.googleapis.com/v1/accounts"
+# Firebase REST API uses colon in path: accounts:signUp, accounts:signInWithPassword
+$signUpUrl = "$EmulatorHost/identitytoolkit.googleapis.com/v1/accounts:signUp?key=$apiKey"
+$signInUrl = "$EmulatorHost/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$apiKey"
 
 # 1) Try sign-up (creates user if new); if email exists, sign in instead
 $signUpBody = @{
@@ -27,7 +29,7 @@ $localId = $null
 
 try {
     $signUpResp = Invoke-RestMethod -Method Post `
-        -Uri "$baseUrl/signUp?key=$apiKey" `
+        -Uri $signUpUrl `
         -ContentType "application/json" `
         -Body $signUpBody
     $idToken = $signUpResp.idToken
@@ -42,7 +44,7 @@ try {
             returnSecureToken = $true
         } | ConvertTo-Json
         $signInResp = Invoke-RestMethod -Method Post `
-            -Uri "$baseUrl/signInWithPassword?key=$apiKey" `
+            -Uri $signInUrl `
             -ContentType "application/json" `
             -Body $signInBody
         $idToken = $signInResp.idToken
@@ -60,8 +62,12 @@ Write-Host "Email:         $Email"
 Write-Host "ID token (use as Bearer):"
 Write-Host $idToken
 Write-Host ""
-Write-Host "Example request:"
-Write-Host '  Invoke-RestMethod -Method Get -Uri "' + $ApiBase + '/api/v1/projects" -Headers @{ "Authorization" = "Bearer ' + $idToken.Substring(0, [Math]::Min(40, $idToken.Length)) + '..." }'
+Write-Host "To call the API, run the following in PowerShell (API must be running with FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099):"
+Write-Host ""
+Write-Host "  `$token = '$idToken'" -ForegroundColor Cyan
+Write-Host '  Invoke-RestMethod -Method Get -Uri "' -NoNewline -ForegroundColor Cyan
+Write-Host $ApiBase -NoNewline -ForegroundColor Cyan
+Write-Host '/api/v1/projects" -Headers @{ "Authorization" = "Bearer $token" }' -ForegroundColor Cyan
 Write-Host ""
 
 if ($TestApi) {

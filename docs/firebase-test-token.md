@@ -26,23 +26,21 @@ firebase --version
 **Option B – standalone install**  
 If you don’t use Node, install the CLI using the [Firebase CLI install guide](https://firebase.google.com/docs/cli#install_the_firebase_cli) (e.g. Windows standalone installer).
 
-### Use your project and start the Auth emulator
+### Start the Auth emulator
 
-From your repo root, run these **one at a time** (each line is a separate command):
+This repo already has `firebase.json` and `.firebaserc` (project `arc-find`). From the repo root:
+
+**First time only** – log in to Firebase:
 
 ```powershell
 firebase login
 ```
 
-```powershell
-firebase use arc-find
-```
+**Every time you want to test** – start the Auth emulator:
 
 ```powershell
 firebase emulators:start --only auth
 ```
-
-If you don’t have a `firebase.json` yet, run `firebase init`, choose **Emulators**, then enable **Authentication** and finish. Then run `firebase emulators:start --only auth` as above.
 
 Leave this terminal open. The Auth emulator runs on port **9099** by default.
 
