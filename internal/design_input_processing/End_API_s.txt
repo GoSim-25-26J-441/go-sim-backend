@@ -1,0 +1,106 @@
+# =============================================================================
+# How to test these APIs
+# =============================================================================
+# 1. Start Auth emulator (one terminal):
+#      firebase emulators:start --only auth
+# 2. Start API with emulator (second terminal):
+#      $env:FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099"
+#      go run ./cmd/api
+# 3. Get a Firebase ID token and set $token (third terminal, from repo root):
+#      .\scripts\get-firebase-token.ps1
+#    Copy the printed "ID token" line, then in PowerShell:
+#      $token = "PASTE_THE_FULL_TOKEN_HERE"
+# 4. Run the commands below. All project endpoints require: Authorization = "Bearer $token"
+#
+# 5. Before creating projects: sync the user once so they exist in the DB (avoids
+#    "projects_user_firebase_uid_fkey" error). See "Auth – sync user" below.
+#
+# Quick test for GET /api/v1/projects only:
+#   .\scripts\get-firebase-token.ps1 -TestApi
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Health (no auth)
+# -----------------------------------------------------------------------------
+Invoke-RestMethod "http://localhost:8000/health"
+Invoke-RestMethod "http://localhost:8000/healthz"
+# Response: healthy <timestamp> go-sim-backend <version>
+
+# -----------------------------------------------------------------------------
+# Auth – sync user (run once per user before creating projects)
+# Creates/updates the user in the DB so project creation does not hit FK error.
+# -----------------------------------------------------------------------------
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/auth/sync" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{}'
+
+# -----------------------------------------------------------------------------
+# Projects – all require Authorization: Bearer <Firebase ID token>
+# Set $token first (see "How to test" above). Sync user first (see above).
+# -----------------------------------------------------------------------------
+
+# List projects
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Create project (user UID/email come from the token; no need to send them)
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"name":"My First Project","is_temporary":false}'
+
+# Rename project (replace PROJECT_PUBLIC_ID with a real id from list)
+Invoke-RestMethod -Method Patch `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"name":"Renamed Project"}'
+
+# Delete (soft delete)
+Invoke-RestMethod -Method Delete `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# -----------------------------------------------------------------------------
+# Diagram (replace PROJECT_PUBLIC_ID with a real project id)
+# -----------------------------------------------------------------------------
+$body = @{
+  source="canvas_json"
+  diagram_json=@{ nodes=@(); edges=@() }
+  spec_summary=@{ services=@(); dependencies=@(); datastores=@() }
+} | ConvertTo-Json -Depth 20
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body $body
+
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/latest" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# -----------------------------------------------------------------------------
+# Chats (replace PROJECT_PUBLIC_ID and THREAD_ID with real ids)
+# -----------------------------------------------------------------------------
+# Create chat thread
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"title":"Main chat","binding_mode":"FOLLOW_LATEST"}'
+
+# List threads
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Post message
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Hello","mode":"default"}'
+
+# List messages
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token" }
