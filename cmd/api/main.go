@@ -18,8 +18,7 @@ import (
 	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
 	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
 	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
-	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
-	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
+	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/_legacy_files/llm"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
@@ -45,11 +44,6 @@ func main() {
 
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
-	}
-
-	// Load RAG snippets before starting server
-	if err := diprag.Load(cfg.RAG.SnippetsDir); err != nil {
-		log.Printf("RAG load: %v", err)
 	}
 
 	// Initialize database connection (sql.DB for auth and simulation)
@@ -100,16 +94,15 @@ func main() {
 
 	api := router.Group("/api/v1")
 
-	// Design Input Processing routes (require Firebase auth if available)
+	// Design Input Processing: RAG pipeline only (require Firebase auth if available)
 	if authClient != nil {
 		dip := api.Group("/design-input")
 		dip.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 		dip.Use(apimiddleware.RequestIDMiddleware())
-		dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
-		dipHandler.Register(dip)
-		log.Printf("Design Input Processing endpoints registered at /api/v1/design-input (Firebase auth required)")
+		diprag.Register(dip, diprag.NewHandler())
+		log.Printf("Design Input Processing RAG endpoints registered at /api/v1/design-input/rag (Firebase auth required)")
 	} else {
-		log.Printf("Design Input Processing endpoints disabled (Firebase not initialized)")
+		log.Printf("Design Input Processing RAG disabled (Firebase not initialized)")
 	}
 
 	// Auth routes (only if Firebase is initialized)
