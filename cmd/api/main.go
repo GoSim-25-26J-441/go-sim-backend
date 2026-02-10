@@ -18,7 +18,6 @@ import (
 	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
 	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
 	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
-	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/_legacy_files/llm"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
@@ -30,6 +29,11 @@ import (
 	projecthttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/http"
 	projectrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/repository"
 	projectservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/service"
+
+	// Chat module
+	chat "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat"
+	chatrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat/repository"
+	chatservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat/service"
 )
 
 const serviceName = "go-sim-backend"
@@ -128,11 +132,14 @@ func main() {
 
 		// Initialize projects module (includes chats and diagrams)
 		projectRepo := projectrepo.NewProjectRepository(db)
-		chatRepo := projectrepo.NewChatRepository(db)
 		diagramRepo := projectrepo.NewDiagramRepository(db)
 
+		// Initialize chat module with new structure
+		chatRepo := chatrepo.NewChatRepository(db)
+		llmClient := chat.NewLLMClient(cfg.Upstreams.LLMSvcURL, cfg.Upstreams.LLMAPIKey)
+		chatService := chatservice.NewChatService(chatRepo, llmClient)
+
 		projectService := projectservice.NewProjectService(projectRepo)
-		chatService := projectservice.NewChatService(chatRepo, dipllm.NewUIGP())
 		diagramService := projectservice.NewDiagramService(diagramRepo)
 
 		projectHandler := projecthttp.New(projectService, chatService, diagramService)

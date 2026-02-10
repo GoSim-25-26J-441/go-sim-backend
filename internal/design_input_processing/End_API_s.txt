@@ -33,7 +33,7 @@ Invoke-RestMethod "http://localhost:8000/healthz"
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/auth/sync" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
-  -Body '{}'
+  -Body '{"email":"malithgihana099@gmail.com"}'
 
 # -----------------------------------------------------------------------------
 # Projects – all require Authorization: Bearer <Firebase ID token>
@@ -82,25 +82,45 @@ Invoke-RestMethod -Method Get `
 
 # -----------------------------------------------------------------------------
 # Chats (replace PROJECT_PUBLIC_ID and THREAD_ID with real ids)
+# Notes:
+# - Chat history is automatic: reuse the same THREAD_ID and previous turns will
+#   be sent to the LLM as history.
+# - Diagram context is automatic: the latest diagram for the project (if any)
+#   is resolved by the backend and its spec_summary / diagram_json are attached
+#   to the LLM request. Make sure you created a diagram first (see Diagram section).
 # -----------------------------------------------------------------------------
+
 # Create chat thread
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"title":"Main chat","binding_mode":"FOLLOW_LATEST"}'
 
+# (Optional) Pin thread to a specific diagram version (PINNED mode)
+# If you omit diagram_version_id, the latest diagram for the project/user will be pinned.
+Invoke-RestMethod -Method Patch `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{ "binding_mode": "PINNED", "diagram_version_id": "DVER_ID_OR_OMIT_FOR_LATEST" }'
+
 # List threads
 Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats" `
   -Headers @{ "Authorization" = "Bearer $token" }
 
-# Post message
+# First message (starts history, attaches current diagram context)
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"message":"Hello","mode":"default"}'
 
-# List messages
+# Second message (same THREAD_ID) - uses chat history + same diagram context
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Follow-up question about the same diagram","mode":"default"}'
+
+# List messages (inspect stored history)
 Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token" }

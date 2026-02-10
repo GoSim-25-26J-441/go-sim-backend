@@ -13,6 +13,7 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	// Chat routes
 	rg.POST("/:public_id/chats", h.createThread)
 	rg.GET("/:public_id/chats", h.listThreads)
+	rg.PATCH("/:public_id/chats/:thread_id", h.updateThreadBinding)
 	rg.POST("/:public_id/chats/:thread_id/messages", h.postMessage)
 	rg.GET("/:public_id/chats/:thread_id/messages", h.listMessages)
 
