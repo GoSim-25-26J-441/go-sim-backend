@@ -1,9 +1,29 @@
 {
   "graph": {
     "nodes": {
-      "SERVICE:bff": {
-        "id": "SERVICE:bff",
-        "name": "bff",
+      "DATABASE:shared-db": {
+        "id": "DATABASE:shared-db",
+        "name": "shared-db",
+        "kind": "DATABASE"
+      },
+      "SERVICE:auth": {
+        "id": "SERVICE:auth",
+        "name": "auth",
+        "kind": "SERVICE"
+      },
+      "SERVICE:cart": {
+        "id": "SERVICE:cart",
+        "name": "cart",
+        "kind": "SERVICE"
+      },
+      "SERVICE:catalog": {
+        "id": "SERVICE:catalog",
+        "name": "catalog",
+        "kind": "SERVICE"
+      },
+      "SERVICE:inventory": {
+        "id": "SERVICE:inventory",
+        "name": "inventory",
         "kind": "SERVICE"
       },
       "SERVICE:orders": {
@@ -16,25 +36,16 @@
         "name": "payments",
         "kind": "SERVICE"
       },
-      "SERVICE:ui": {
-        "id": "SERVICE:ui",
-        "name": "ui",
+      "SERVICE:web-ui": {
+        "id": "SERVICE:web-ui",
+        "name": "web-ui",
         "kind": "SERVICE"
       }
     },
     "edges": [
       {
-        "from": "SERVICE:orders",
-        "to": "SERVICE:payments",
-        "kind": "CALLS",
-        "attrs": {
-          "dep_kind": "rest",
-          "sync": false
-        }
-      },
-      {
-        "from": "SERVICE:ui",
-        "to": "SERVICE:bff",
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:auth",
         "kind": "CALLS",
         "attrs": {
           "dep_kind": "rest",
@@ -42,7 +53,25 @@
         }
       },
       {
-        "from": "SERVICE:bff",
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:catalog",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:cart",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui",
         "to": "SERVICE:orders",
         "kind": "CALLS",
         "attrs": {
@@ -51,8 +80,80 @@
         }
       },
       {
-        "from": "SERVICE:bff",
+        "from": "SERVICE:web-ui",
         "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:cart",
+        "to": "SERVICE:catalog",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:inventory",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:payments",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:catalog",
+        "to": "DATABASE:shared-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:cart",
+        "to": "DATABASE:shared-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "DATABASE:shared-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:inventory",
+        "to": "DATABASE:shared-db",
         "kind": "CALLS",
         "attrs": {
           "dep_kind": "rest",
@@ -63,5 +164,84 @@
   },
   "dot_path": "/app/out/graph.dot",
   "svg_path": "/app/out/graph.svg",
-  "detections": null
+  "detections": [
+    {
+      "kind": "cycles",
+      "severity": "HIGH",
+      "title": "Cyclic dependency",
+      "summary": "A loop of service dependencies was detected",
+      "nodes": [
+        "SERVICE:payments",
+        "SERVICE:orders"
+      ],
+      "edges": [],
+      "evidence": {
+        "cycle_size": 2
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:orders"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 4,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:web-ui"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 5,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "ping_pong_dependency",
+      "severity": "MEDIUM",
+      "title": "Ping-pong dependency",
+      "summary": "Two services depend on each other (mutual calls)",
+      "nodes": [
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "a": "SERVICE:orders",
+        "b": "SERVICE:payments"
+      }
+    },
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:web-ui",
+        "SERVICE:auth",
+        "SERVICE:catalog",
+        "SERVICE:cart",
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 5,
+        "targets": 5,
+        "ui": "SERVICE:web-ui"
+      }
+    }
+  ]
 }

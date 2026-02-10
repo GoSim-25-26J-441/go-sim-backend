@@ -44,6 +44,23 @@ func (g *Graph) AddEdge(e *Edge) {
 	g.In[e.To] = append(g.In[e.To], e)
 }
 
+// RebuildOutIn repopulates Out and In from Edges (e.g. after JSON unmarshal from DB).
+func (g *Graph) RebuildOutIn() {
+	if g.Out == nil {
+		g.Out = make(map[string][]*Edge)
+	}
+	if g.In == nil {
+		g.In = make(map[string][]*Edge)
+	}
+	for _, e := range g.Edges {
+		if e == nil {
+			continue
+		}
+		g.Out[e.From] = append(g.Out[e.From], e)
+		g.In[e.To] = append(g.In[e.To], e)
+	}
+}
+
 type Detection struct {
 	Kind     AntiPatternKind `json:"kind"`
 	Severity Severity        `json:"severity"`

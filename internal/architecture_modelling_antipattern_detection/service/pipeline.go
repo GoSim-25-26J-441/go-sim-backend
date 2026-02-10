@@ -54,6 +54,38 @@ func AnalyzeYAMLBytes(yamlBytes []byte, outBaseDir string, title string, dotBin 
 	return AnalyzeYAMLBytesToDir(yamlBytes, runDir, title, dotBin)
 }
 
+// AnalyzeYAMLBytesInMemory runs analysis without writing to the filesystem.
+// Returns Result (with DOTPath/SVGPath empty) and the DOT content string for storage/rendering.
+func AnalyzeYAMLBytesInMemory(yamlBytes []byte, title string, dotBin string) (*Result, string, error) {
+	ys, err := parser.ParseYAMLBytes(yamlBytes)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := validator.Validate(ys); err != nil {
+		return nil, "", err
+	}
+	g := mapper.ToGraph(ys)
+	return analyzeGraphInMemory(g, title, dotBin)
+}
+
+func analyzeGraphInMemory(g *domain.Graph, title string, dotBin string) (*Result, string, error) {
+	dot := export.ToDOT(g, title)
+	all, err := detection.RunAll(g)
+	if err != nil {
+		return nil, "", err
+	}
+	for i := range all {
+		if all[i].Nodes == nil {
+			all[i].Nodes = []string{}
+		}
+		if all[i].Edges == nil {
+			all[i].Edges = []int{}
+		}
+	}
+	res := &Result{Graph: g, DOTPath: "", SVGPath: "", Detections: all}
+	return res, dot, nil
+}
+
 func analyzeGraphToDir(g *domain.Graph, outDir string, title string, dotBin string) (*Result, error) {
 	if outDir == "" {
 		outDir = "out"

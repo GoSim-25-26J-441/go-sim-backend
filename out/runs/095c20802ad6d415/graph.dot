@@ -1,0 +1,30 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:search" [label="search", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:profile" [label="profile", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:feed" [label="feed", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:notifications" [label="notifications", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:analytics" [label="analytics", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:graph" [label="graph", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:shared-db" [label="shared-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:ui" [label="ui", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:ranking" [label="ranking", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:recommendations" [label="recommendations", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:ui" -> "SERVICE:search" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:ui" -> "SERVICE:profile" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:ui" -> "SERVICE:feed" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:ui" -> "SERVICE:notifications" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:ui" -> "SERVICE:analytics" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:feed" -> "SERVICE:ranking" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+  "SERVICE:ranking" -> "SERVICE:graph" [label="CALLS [rest] (sync)", tooltip="edge#6"];
+  "SERVICE:graph" -> "SERVICE:profile" [label="CALLS [rest] (sync)", tooltip="edge#7"];
+  "SERVICE:profile" -> "SERVICE:recommendations" [label="CALLS [rest] (sync)", tooltip="edge#8"];
+  "SERVICE:recommendations" -> "SERVICE:profile" [label="CALLS [rest] (sync)", tooltip="edge#9"];
+  "SERVICE:search" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#10"];
+  "SERVICE:profile" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#11"];
+  "SERVICE:feed" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#12"];
+  "SERVICE:notifications" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#13"];
+  "SERVICE:analytics" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#14"];
+}

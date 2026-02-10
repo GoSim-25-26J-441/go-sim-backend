@@ -4,9 +4,9 @@ services:
     container_name: gosim-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: gosim
-    ports: ["5432:5432"]
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: admin
+    ports: ["5433:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -48,7 +48,10 @@ services:
         condition: service_started
     environment:
       DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
       DB_PASSWORD: postgres
+      DB_NAME: gosim
       REDIS_HOST: redis
     volumes:
       - ./samples:/app/samples:ro

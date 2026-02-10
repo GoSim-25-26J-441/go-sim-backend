@@ -101,7 +101,7 @@ func main() {
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
 	healthHandler.RegisterRoutes(router)
 
-	amgapd.Register(router)
+	amgapd.Register(router, db)
 
 	api := router.Group("/api/v1")
 
