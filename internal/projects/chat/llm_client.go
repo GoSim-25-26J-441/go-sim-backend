@@ -85,6 +85,11 @@ func (c *LLMClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, e
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	// Console log: what we pass to UIGP (kept for debugging)
+	fmt.Printf("\n[UIGP] URL: %s/api/v1/chat\n", c.BaseURL)
+	fmt.Printf("[UIGP] Headers: Content-Type=application/json, X-API-Key=%s\n", c.APIKey)
+	fmt.Printf("[UIGP] Body: %s\n\n", string(body))
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/v1/chat", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)

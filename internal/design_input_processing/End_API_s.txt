@@ -65,10 +65,25 @@ Invoke-RestMethod -Method Delete `
 # -----------------------------------------------------------------------------
 # Diagram (replace PROJECT_PUBLIC_ID with a real project id)
 # -----------------------------------------------------------------------------
+# Sample body: microservices-style diagram (api-gateway -> user-service -> postgres)
 $body = @{
-  source="canvas_json"
-  diagram_json=@{ nodes=@(); edges=@() }
-  spec_summary=@{ services=@(); dependencies=@(); datastores=@() }
+  source       = "canvas_json"
+  diagram_json = @{
+    nodes = @(
+      @{ id = "api";  label = "api-gateway";   type = "service" }
+      @{ id = "user"; label = "user-service";  type = "service" }
+      @{ id = "db";   label = "postgres";      type = "db" }
+    )
+    edges = @(
+      @{ from = "api";  to = "user"; protocol = "REST" }
+      @{ from = "user"; to = "db";   protocol = "SQL" }
+    )
+  }
+  spec_summary = @{
+    services     = @("api-gateway", "user-service", "postgres")
+    dependencies = @("api-gateway->user-service(rest)", "user-service->postgres(db)")
+    datastores   = @("postgres")
+  }
 } | ConvertTo-Json -Depth 20
 
 Invoke-RestMethod -Method Post `
@@ -83,25 +98,37 @@ Invoke-RestMethod -Method Get `
 # -----------------------------------------------------------------------------
 # Chats (replace PROJECT_PUBLIC_ID and THREAD_ID with real ids)
 # Notes:
-# - Chat history is automatic: reuse the same THREAD_ID and previous turns will
-#   be sent to the LLM as history.
-# - Diagram context is automatic: the latest diagram for the project (if any)
-#   is resolved by the backend and its spec_summary / diagram_json are attached
-#   to the LLM request. Make sure you created a diagram first (see Diagram section).
+# - Diagram selection: You can optionally send diagram_version_id in the POST message body.
+#   If provided: uses that version for THIS message AND pins it to the thread (future messages use it too).
+#   If omitted: server picks automatically:
+#     - Thread with binding_mode FOLLOW_LATEST (default) => uses latest diagram.
+#     - Thread with binding_mode PINNED => uses the thread's pinned diagram version.
+# - Chat history is automatic: reuse the same THREAD_ID and previous turns are
+#   sent to the LLM as history.
+#
+# - Mode and detail (UIGP): You can send "mode" and "detail" so the user can select behavior:
+#   mode: "instant" | "default" | "thinking"
+#     - instant: fast, minimal reasoning
+#     - default: standard behavior
+#     - thinking: deeper analysis (used automatically when diagram context is sent and mode is default/omitted)
+#   detail: optional, e.g. "high" for more detailed answers (defaults to "high" when diagram is sent and omitted)
+#   Example: -Body '{"message":"...","mode":"thinking","detail":"high"}'
 # -----------------------------------------------------------------------------
 
-# Create chat thread
+# Create chat thread (default FOLLOW_LATEST = always use latest diagram for chat)
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"title":"Main chat","binding_mode":"FOLLOW_LATEST"}'
 
-# (Optional) Pin thread to a specific diagram version (PINNED mode)
-# If you omit diagram_version_id, the latest diagram for the project/user will be pinned.
+# (Optional) Pin thread to a diagram version so chat uses that version instead of latest:
+# - To pin the LATEST diagram: send only binding_mode (omit diagram_version_id).
+# - To pin a SPECIFIC version: send diagram_version_id with the version id (e.g. dver-123).
 Invoke-RestMethod -Method Patch `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
-  -Body '{ "binding_mode": "PINNED", "diagram_version_id": "DVER_ID_OR_OMIT_FOR_LATEST" }'
+  -Body '{ "binding_mode": "PINNED" }'
+# Or with a specific version: -Body '{ "binding_mode": "PINNED", "diagram_version_id": "dver-xxxx" }'
 
 # List threads
 Invoke-RestMethod -Method Get `
@@ -113,6 +140,19 @@ Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"message":"Hello","mode":"default"}'
+
+# Post with user-selected mode: instant | default | thinking (optional detail e.g. "high")
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Spot missing dependencies","mode":"thinking","detail":"high"}'
+
+# Post message with specific diagram version (optional - overrides thread binding)
+# This uses diagram_version_id for THIS message and pins it to the thread for future messages.
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Analyze this specific diagram version","mode":"default","diagram_version_id":"dver-xxxx"}'
 
 # Second message (same THREAD_ID) - uses chat history + same diagram context
 Invoke-RestMethod -Method Post `

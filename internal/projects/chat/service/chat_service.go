@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -36,11 +37,12 @@ func (s *ChatService) ListThreads(ctx context.Context, userID, publicID string) 
 
 // PostMessageRequest contains the request data for posting a message
 type PostMessageRequest struct {
-	Message     string
-	Mode        string
-	Detail      string
-	ForceLLM    bool
-	Attachments []AttachmentInput
+	Message          string
+	Mode             string
+	Detail           string
+	ForceLLM         bool
+	DiagramVersionID *string
+	Attachments      []AttachmentInput
 }
 
 // AttachmentInput represents an attachment in the request
@@ -73,12 +75,68 @@ func (s *ChatService) UpdateThreadBinding(
 	return s.repo.UpdateThreadBinding(ctx, userID, publicID, threadID, bindingMode, diagramVersionID)
 }
 
+// isMeaningfulJSON checks if json.RawMessage contains meaningful data
+func isMeaningfulJSON(data json.RawMessage) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	// Trim whitespace and convert to string for comparison
+	trimmed := strings.TrimSpace(string(data))
+
+	// Check for empty, {}, or null
+	if trimmed == "" || trimmed == "{}" || trimmed == "null" {
+		return false
+	}
+
+	return true
+}
+
+// Returns the same diagram_json with metadata set; if injection fails, returns the original.
+func injectDiagramMetadata(diagramJSON json.RawMessage, diagramVersionID *string) json.RawMessage {
+	if diagramVersionID == nil || *diagramVersionID == "" {
+		return diagramJSON
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(diagramJSON, &m); err != nil {
+		return diagramJSON
+	}
+	if m == nil {
+		m = make(map[string]interface{})
+	}
+	meta, _ := m["metadata"].(map[string]interface{})
+	if meta == nil {
+		meta = make(map[string]interface{})
+	}
+	meta["diagram_version_id"] = *diagramVersionID
+	m["metadata"] = meta
+	out, err := json.Marshal(m)
+	if err != nil {
+		return diagramJSON
+	}
+	return out
+}
+
 // PostMessage posts a message to a thread and gets an LLM response
 func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadID string, req PostMessageRequest) (*PostMessageResponse, error) {
-	// Resolve diagram context - now returns diagram_json and spec_summary separately
-	diagramVersionIDUsed, specSummary, diagramJSON, err := s.repo.ResolveDiagramContext(ctx, userID, publicID, threadID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve diagram context: %w", err)
+	var diagramVersionIDUsed *string
+	var specSummary json.RawMessage
+	var diagramJSON json.RawMessage
+	var err error
+
+	// If diagram_version_id is provided, use that specific version (override)
+	if req.DiagramVersionID != nil && *req.DiagramVersionID != "" {
+		specSummary, diagramJSON, err = s.repo.GetDiagramVersionByID(ctx, userID, publicID, *req.DiagramVersionID)
+		if err != nil {
+			return nil, fmt.Errorf("get diagram version: %w", err)
+		}
+		diagramVersionIDUsed = req.DiagramVersionID
+	} else {
+		// Otherwise, resolve diagram context from thread binding (FOLLOW_LATEST or PINNED)
+		diagramVersionIDUsed, specSummary, diagramJSON, err = s.repo.ResolveDiagramContext(ctx, userID, publicID, threadID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve diagram context: %w", err)
+		}
 	}
 
 	// Get chat history
@@ -102,12 +160,12 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 		if strings.TrimSpace(a.ObjectKey) == "" {
 			continue
 		}
-		
+
 		name := a.ObjectKey
 		if a.FileName != nil && *a.FileName != "" {
 			name = *a.FileName
 		}
-		
+
 		kind := "diagram"
 		if a.MimeType != nil {
 			if strings.HasPrefix(*a.MimeType, "image/") {
@@ -127,18 +185,36 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	}
 
 	// Build LLM request
+	mode := strings.TrimSpace(req.Mode)
+	detail := strings.TrimSpace(req.Detail)
+	hasDiagramContext := isMeaningfulJSON(diagramJSON) || isMeaningfulJSON(specSummary)
+
+	// When we send diagram context, UIGP expects mode "thinking" and detail "high" to use it
+	if hasDiagramContext {
+		if mode == "" || mode == "default" {
+			mode = "thinking"
+		}
+		if detail == "" {
+			detail = "high"
+		}
+	}
+
 	llmReq := chat.ChatRequest{
 		Message:     req.Message,
 		History:     history,
-		Mode:        req.Mode,
-		Detail:      req.Detail,
-		SpecSummary: specSummary,
+		Mode:        mode,
+		Detail:      detail,
 		Attachments: attachments,
 	}
 
-	// Only include diagram_json if it's not empty and different from spec_summary
-	if len(diagramJSON) > 0 && string(diagramJSON) != "{}" && string(diagramJSON) != string(specSummary) {
-		llmReq.DiagramJSON = diagramJSON
+	// Only include spec_summary if it has meaningful content
+	if isMeaningfulJSON(specSummary) {
+		llmReq.SpecSummary = specSummary
+	}
+
+	// Include diagram_json in UIGP format: add metadata.diagram_version_id when we have a version
+	if isMeaningfulJSON(diagramJSON) {
+		llmReq.DiagramJSON = injectDiagramMetadata(diagramJSON, diagramVersionIDUsed)
 	}
 
 	// Call LLM client
@@ -182,6 +258,17 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert turn: %w", err)
+	}
+
+	// If diagram_version_id was provided, update thread binding to PINNED with that version
+	// This ensures future messages in the thread use the same diagram version
+	if req.DiagramVersionID != nil && *req.DiagramVersionID != "" {
+		_, err = s.repo.UpdateThreadBinding(ctx, userID, publicID, threadID, domain.BindingPinned, req.DiagramVersionID)
+		if err != nil {
+			// Log error but don't fail the request - message was already saved
+			// In production, use proper logging here
+			_ = err
+		}
 	}
 
 	return &PostMessageResponse{

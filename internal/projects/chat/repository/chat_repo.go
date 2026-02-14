@@ -314,6 +314,36 @@ where id=$1
 	return use, spec, diagram, nil
 }
 
+// Returns spec_summary and diagram_json as json.RawMessage.
+func (r *ChatRepository) GetDiagramVersionByID(ctx context.Context, userFirebaseUID, projectPublicID, diagramVersionID string) (json.RawMessage, json.RawMessage, error) {
+	// Ensure project belongs to user
+	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
+		return nil, nil, err
+	}
+
+	const q = `
+select
+  coalesce(spec_summary, '{}'::jsonb)::text,
+  coalesce(diagram_json, '{}'::jsonb)::text
+from diagram_versions
+where id=$1
+  and project_public_id=$2
+  and user_firebase_uid=$3
+`
+	var specText, diagramText string
+	if err := r.db.QueryRowContext(ctx, q, diagramVersionID, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, domain.ErrNotFound
+		}
+		return nil, nil, err
+	}
+
+	spec := json.RawMessage(specText)
+	diagram := json.RawMessage(diagramText)
+
+	return spec, diagram, nil
+}
+
 func (r *ChatRepository) ListHistoryForUIGP(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]string, []string, error) {
 	if limit <= 0 {
 		limit = 20
