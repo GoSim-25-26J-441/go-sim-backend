@@ -249,11 +249,14 @@ Invoke-RestMethod -Method Post `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body $requirementsBody
 
-# Post with user-selected mode: instant | default | thinking (optional detail e.g. "high")
+
+
+  # Post with user-selected mode: instant | default | thinking (optional detail e.g. "high")
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"message":"Spot missing dependencies","mode":"thinking","detail":"high"}'
+
 
 # Post message with specific diagram version (optional - overrides thread binding)
 # This uses diagram_version_id for THIS message and pins it to the thread for future messages.
@@ -262,11 +265,14 @@ Invoke-RestMethod -Method Post `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"message":"Analyze this specific diagram version","mode":"default","diagram_version_id":"dver-xxxx"}'
 
+
+
 # Second message (same THREAD_ID) - uses chat history + same diagram context
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"message":"Follow-up question about the same diagram","mode":"default"}'
+
 
 # List messages (inspect stored history)
 Invoke-RestMethod -Method Get `
