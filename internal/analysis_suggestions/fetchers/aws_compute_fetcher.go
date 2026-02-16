@@ -66,10 +66,10 @@ func main() {
 
 	config := FetchConfig{
 		MaxRecords:     800000,
-		RateLimit:      8,
-		BurstSize:      16,
-		BufferSize:     500,
-		Workers:        4,
+		RateLimit:      16,
+		BurstSize:      32,
+		BufferSize:     1500,
+		Workers:        8,
 		BackoffInitial: 1 * time.Second,
 		BackoffMax:     30 * time.Second,
 		MaxRetries:     3,
@@ -322,6 +322,9 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 
 				recordChan <- rec
 				total++
+				if total%1000 == 0 {
+					log.Printf("Fetched %d records", total)
+				}
 				if cfg.MaxRecords > 0 && total >= cfg.MaxRecords {
 					break
 				}
@@ -336,7 +339,7 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 		}
 		nextToken = resp.NextToken
 
-		time.Sleep(time.Duration(rand.Intn(100)+50) * time.Millisecond)
+		time.Sleep(time.Duration(rand.Intn(20)+5) * time.Millisecond)
 	}
 
 	close(recordChan)

@@ -159,7 +159,7 @@ func main() {
 		suggestHandler := as.NewSuggestHandler("internal/analysis_suggestions/rules/rules.json", db)
 		suggestHandler.RegisterRoutes(analysisGroup)
 
-		costHandler := as.NewCostHandler(db)
+		costHandler := as.NewCostHandler(db, redisClient)
 		costHandler.RegisterRoutes(analysisGroup)
 
 		reqHandler := as.NewRequestHandler(db)

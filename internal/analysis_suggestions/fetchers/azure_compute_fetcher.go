@@ -268,12 +268,12 @@ func main() {
 	txtPath := filepath.Join(outDir, "azure_compute_prices.txt")
 
 	ctx := context.Background()
-	limiter := rate.NewLimiter(rate.Limit(5), 10)
+	limiter := rate.NewLimiter(rate.Limit(12), 24)
 
 	log.Printf("Starting Azure compute fetcher -> CSV: %s , TXT: %s\n", csvPath, txtPath)
 
 	maxRecords := 800000
-	if err := fetchComputeAndWriteTables(ctx, limiter, 200, maxRecords, csvPath, txtPath); err != nil {
+	if err := fetchComputeAndWriteTables(ctx, limiter, 500, maxRecords, csvPath, txtPath); err != nil { // pageSize 500 (was 200)
 		log.Fatalf("fetch failed: %v", err)
 	}
 	log.Printf("Finished. Files: %s , %s\n", csvPath, txtPath)
@@ -319,7 +319,7 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 	skip := 0
 	total := 0
 
-	for total < maxRecords {
+	for maxRecords == 0 || total < maxRecords {
 		url := fmt.Sprintf("%s&$top=%d&$skip=%d", filteredBase, pageSize, skip)
 
 		if err := limiter.Wait(ctx); err != nil {
@@ -342,7 +342,7 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 		}
 
 		for _, item := range page.Items {
-			if total >= maxRecords {
+			if maxRecords > 0 && total >= maxRecords {
 				break
 			}
 
@@ -395,7 +395,11 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 			total++
 
 			if total%1000 == 0 {
-				log.Printf("Processed %d/%d records (%.1f%%)", total, maxRecords, float64(total)/float64(maxRecords)*100)
+				if maxRecords > 0 {
+					log.Printf("Processed %d/%d records (%.1f%%)", total, maxRecords, float64(total)/float64(maxRecords)*100)
+				} else {
+					log.Printf("Processed %d records", total)
+				}
 			}
 
 			if total%500 == 0 {
@@ -406,13 +410,13 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 			}
 		}
 
-		if total >= maxRecords {
+		if maxRecords > 0 && total >= maxRecords {
 			log.Printf("Reached maximum record limit of %d", maxRecords)
 			break
 		}
 
 		skip += pageSize
-		time.Sleep(120 * time.Millisecond)
+		time.Sleep(40 * time.Millisecond)
 	}
 
 	csvW.Flush()
@@ -423,7 +427,11 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 		return fmt.Errorf("txt final flush error: %w", err)
 	}
 
-	log.Printf("Wrote %d records to CSV/TXT (max limit: %d)", total, maxRecords)
+	if maxRecords > 0 {
+		log.Printf("Wrote %d records to CSV/TXT (max limit: %d)", total, maxRecords)
+	} else {
+		log.Printf("Wrote %d records to CSV/TXT (no limit)", total)
+	}
 	return nil
 }
 

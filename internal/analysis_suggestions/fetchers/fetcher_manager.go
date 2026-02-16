@@ -31,10 +31,10 @@ func main() {
 
 			Path: filepath.Join(wd, "internal", "analysis_suggestions", "fetchers", "azure_compute_fetcher.go"),
 		},
-		{
-			Name: "GCP",
-			Path: filepath.Join(wd, "internal", "analysis_suggestions", "fetchers", "gcp_compute_fetcher.go"),
-		},
+		// {
+		// 	Name: "GCP",
+		// 	Path: filepath.Join(wd, "internal", "analysis_suggestions", "fetchers", "gcp_compute_fetcher.go"),
+		// },
 		{
 			Name: "AWS",
 			Path: filepath.Join(wd, "internal", "analysis_suggestions", "fetchers", "aws_compute_fetcher.go"),
