@@ -135,6 +135,47 @@ Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/latest" `
   -Headers @{ "Authorization" = "Bearer $token" }
 
+# Get project summary (returns project details, latest diagram version, all other diagram versions, and requirements_answers)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/summary" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Response example:
+# {
+#   "ok": true,
+#   "project": {
+#     "public_id": "archfind-xxxx",
+#     "name": "My Project",
+#     "is_temporary": false,
+#     "current_diagram_version_id": "dver-xxxx",
+#     "created_at": "2026-02-16T10:00:00Z",
+#     "updated_at": "2026-02-16T10:00:00Z"
+#   },
+#   "latest_diagram_version": {
+#     "id": "dver-xxxx",
+#     "project_public_id": "archfind-xxxx",
+#     "version_number": 2,
+#     "source": "canvas_json",
+#     "diagram_json": { ... },
+#     "spec_summary": { ... },
+#     "created_at": "2026-02-16T10:00:00Z"
+#   },
+#   "other_diagram_versions": [
+#     {
+#       "id": "dver-yyyy",
+#       "project_public_id": "archfind-xxxx",
+#       "version_number": 1,
+#       "source": "canvas_json",
+#       "diagram_json": { ... },
+#       "spec_summary": { ... },
+#       "created_at": "2026-02-16T09:00:00Z"
+#     }
+#   ],
+#   "requirements_answers": null
+# }
+# Note: requirements_answers is null because they are not stored in the database.
+# They are only used temporarily when posting the first message in a thread.
+
 # -----------------------------------------------------------------------------
 # Requirements Questionnaire (Design Input Processing)
 # Returns the list of questions for gathering user requirements before first chat message.

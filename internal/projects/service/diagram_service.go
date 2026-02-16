@@ -28,3 +28,8 @@ func (s *DiagramService) CreateVersion(ctx context.Context, userID, publicID str
 func (s *DiagramService) GetLatest(ctx context.Context, userID, publicID string) (*domain.DiagramVersion, error) {
 	return s.repo.Latest(ctx, userID, publicID)
 }
+
+// ListAllVersions returns all diagram versions for a project
+func (s *DiagramService) ListAllVersions(ctx context.Context, userID, publicID string) ([]domain.DiagramVersion, error) {
+	return s.repo.ListAllVersions(ctx, userID, publicID)
+}
