@@ -1,6 +1,7 @@
 package rag
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -30,5 +31,32 @@ func (h *Handler) Ingest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"ok":      true,
 		"message": "RAG pipeline placeholder - implement ingest here",
+	})
+}
+
+// GetRequirementsQuestions returns the requirements questionnaire questions
+func (h *Handler) GetRequirementsQuestions(c *gin.Context) {
+	config, err := GetQuestions()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"ok":    false,
+			"error": fmt.Sprintf("failed to load questions: %v", err),
+		})
+		return
+	}
+
+	if !config.Enabled {
+		c.JSON(http.StatusOK, gin.H{
+			"ok":       true,
+			"enabled":  false,
+			"questions": []Question{},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":        true,
+		"enabled":   true,
+		"questions": config.Questions,
 	})
 }

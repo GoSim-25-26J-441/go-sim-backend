@@ -10,5 +10,6 @@ func Register(rg *gin.RouterGroup, h *Handler) {
 		rag.GET("", h.Search)
 		rag.GET("/search", h.Search)
 		rag.POST("", h.Ingest)
+		rag.GET("/requirements-questions", h.GetRequirementsQuestions)
 	}
 }

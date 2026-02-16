@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat/repository"
@@ -37,12 +38,13 @@ func (s *ChatService) ListThreads(ctx context.Context, userID, publicID string) 
 
 // PostMessageRequest contains the request data for posting a message
 type PostMessageRequest struct {
-	Message          string
-	Mode             string
-	Detail           string
-	ForceLLM         bool
-	DiagramVersionID *string
-	Attachments      []AttachmentInput
+	Message             string
+	Mode                string
+	Detail              string
+	ForceLLM            bool
+	DiagramVersionID    *string
+	RequirementsAnswers map[string]interface{}
+	Attachments         []AttachmentInput
 }
 
 // AttachmentInput represents an attachment in the request
@@ -154,6 +156,22 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 		})
 	}
 
+	// Build requirements summary if this is the first message (no history)
+	userMessage := req.Message
+	if len(history) == 0 {
+		if len(req.RequirementsAnswers) > 0 {
+			// Requirements answers provided - build summary
+			summary := rag.BuildRequirementsSummary(req.RequirementsAnswers)
+			if summary != "" {
+				// Prepend the requirements summary to the user message
+				userMessage = summary + "\n\n" + req.Message
+			}
+		} else {
+			// No requirements answers provided - add note
+			userMessage = "Note: No requirements_answers available. " + req.Message
+		}
+	}
+
 	// Map attachments to API format
 	attachments := make([]chat.AttachmentRequest, 0, len(req.Attachments))
 	for _, a := range req.Attachments {
@@ -200,7 +218,7 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	}
 
 	llmReq := chat.ChatRequest{
-		Message:     req.Message,
+		Message:     userMessage,
 		History:     history,
 		Mode:        mode,
 		Detail:      detail,
@@ -246,6 +264,7 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	}
 
 	// Insert turn into database
+	// Use the original message (not the one with requirements summary prepended) for storage
 	uMsg, aMsg, err := s.repo.InsertTurn(
 		ctx,
 		userID, publicID, threadID,

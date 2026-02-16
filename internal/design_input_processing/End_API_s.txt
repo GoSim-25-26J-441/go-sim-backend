@@ -136,6 +136,41 @@ Invoke-RestMethod -Method Get `
   -Headers @{ "Authorization" = "Bearer $token" }
 
 # -----------------------------------------------------------------------------
+# Requirements Questionnaire (Design Input Processing)
+# Returns the list of questions for gathering user requirements before first chat message.
+# Only shown when thread has no chat history (first message).
+# Questions are editable in: internal/design_input_processing/rag/questions.yaml
+# -----------------------------------------------------------------------------
+
+# Get requirements questions (returns enabled flag and list of questions)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/design-input/rag/requirements-questions" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Response example:
+# {
+#   "ok": true,
+#   "enabled": true,
+#   "questions": [
+#     {
+#       "id": "server_type",
+#       "label": "What type of server/workload?",
+#       "type": "select",
+#       "options": ["Web API", "gRPC", "Batch/Worker", "Mixed"]
+#     },
+#     {
+#       "id": "expected_users",
+#       "label": "Expected concurrent users (approximate)?",
+#       "type": "number",
+#       "placeholder": "e.g., 1000"
+#     },
+#     ...
+#   ]
+# }
+
+# To disable the questionnaire, edit questions.yaml and set enabled: false
+
+# -----------------------------------------------------------------------------
 # Chats (replace PROJECT_PUBLIC_ID and THREAD_ID with real ids)
 # Notes:
 # - Diagram selection: You can optionally send diagram_version_id in the POST message body.
@@ -145,6 +180,14 @@ Invoke-RestMethod -Method Get `
 #     - Thread with binding_mode PINNED => uses the thread's pinned diagram version.
 # - Chat history is automatic: reuse the same THREAD_ID and previous turns are
 #   sent to the LLM as history.
+#
+# - Requirements Questionnaire: When posting the FIRST message (no chat history), you can
+#   optionally include "requirements_answers" with answers from the questionnaire.
+#   - If requirements_answers is provided: The server will build a summary and inject it into the LLM context.
+#   - If requirements_answers is empty/missing: The server will add a note "Note: No requirements_answers available."
+#     to inform the LLM that no requirements were provided.
+#   Example with answers: -Body '{"message":"...","requirements_answers":{"server_type":"Web API","expected_users":1000}}'
+#   Example without answers: -Body '{"message":"..."}' (note will be added automatically)
 #
 # - Mode and detail (UIGP): You can send "mode" and "detail" so the user can select behavior:
 #   mode: "instant" | "default" | "thinking"
@@ -180,6 +223,31 @@ Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"message":"Hello","mode":"default"}'
+
+# First message WITH requirements answers (recommended for first message in new thread)
+# The requirements summary will be injected into LLM context automatically
+$requirementsBody = @{
+  message = "Help me size my system"
+  mode = "default"
+  requirements_answers = @{
+    server_type = "Web API"
+    expected_users = 1000
+    peak_rps = "200 peak, 50 average"
+    latency_target = 150
+    read_write_split = "80% read, 20% write, 2KB payload"
+    cache_hit_rate = 60
+    db_qps_budget = 1000
+    critical_flows = "login, checkout, payment"
+    availability_target = "99.9% SLA, multi-AZ"
+    current_infra = "Intel Xeon, 4 cores, 8GB RAM"
+    burst_tolerance = "2x for 5 minutes"
+  }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body $requirementsBody
 
 # Post with user-selected mode: instant | default | thinking (optional detail e.g. "high")
 Invoke-RestMethod -Method Post `
