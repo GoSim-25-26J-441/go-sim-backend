@@ -86,6 +86,46 @@ $body = @{
   }
 } | ConvertTo-Json -Depth 20
 
+
+# Sample body: microservices-style diagram (unique node ids; spec_summary aligned with nodes/edges)
+$body = @{
+  source       = "canvas_json"
+  diagram_json = @{
+    nodes = @(
+      @{ id = "api";        label = "api-gateway";       type = "service" }
+      @{ id = "auth";       label = "auth-service";      type = "service" }
+      @{ id = "user";       label = "user-service";      type = "service" }
+      @{ id = "payment";    label = "payment-service";   type = "service" }
+      @{ id = "orders";     label = "order-service";     type = "service" }
+      @{ id = "restaurants"; label = "restaurant-service"; type = "service" }
+      @{ id = "postgres";   label = "postgres";          type = "db" }
+      @{ id = "mongo";      label = "mongoDB";           type = "db" }
+    )
+    edges = @(
+      @{ from = "api";  to = "auth";    protocol = "REST" }
+      @{ from = "auth"; to = "user";    protocol = "REST" }
+      @{ from = "user"; to = "payment"; protocol = "REST" }
+      @{ from = "user"; to = "orders";  protocol = "REST" }
+      @{ from = "payment"; to = "orders"; protocol = "REST" }
+      @{ from = "user"; to = "postgres"; protocol = "SQL" }
+      @{ from = "orders"; to = "mongo"; protocol = "SQL" }
+    )
+  }
+  spec_summary = @{
+    services     = @("api-gateway", "auth-service", "user-service", "payment-service", "order-service", "restaurant-service")
+    datastores   = @("postgres", "mongoDB")
+    dependencies = @(
+      "api-gateway->auth-service(rest)",
+      "auth-service->user-service(rest)",
+      "user-service->payment-service(rest)",
+      "user-service->order-service(rest)",
+      "payment-service->order-service(rest)",
+      "user-service->postgres(db)",
+      "order-service->mongoDB(db)"
+    )
+  }
+} | ConvertTo-Json -Depth 20
+
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
@@ -164,3 +204,5 @@ Invoke-RestMethod -Method Post `
 Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token" }
+
+

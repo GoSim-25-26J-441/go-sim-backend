@@ -22,7 +22,7 @@ func NewLLMClient(baseURL, apiKey string) *LLMClient {
 	return &LLMClient{
 		BaseURL: baseURL,
 		APIKey:  apiKey,
-		HTTP:    &http.Client{Timeout: 60 * time.Second},
+		HTTP:    &http.Client{Timeout: 180 * time.Second},
 	}
 }
 
@@ -43,13 +43,13 @@ type AttachmentRequest struct {
 
 // ChatRequest represents the request to the LLM service
 type ChatRequest struct {
-	Message      string                 `json:"message"`
-	History      []ChatMessage          `json:"history,omitempty"`
-	Mode         string                 `json:"mode,omitempty"`
-	Detail       string                 `json:"detail,omitempty"`
-	DiagramJSON  json.RawMessage        `json:"diagram_json,omitempty"`
-	SpecSummary  json.RawMessage        `json:"spec_summary,omitempty"`
-	Attachments  []AttachmentRequest    `json:"attachments,omitempty"`
+	Message     string              `json:"message"`
+	History     []ChatMessage       `json:"history,omitempty"`
+	Mode        string              `json:"mode,omitempty"`
+	Detail      string              `json:"detail,omitempty"`
+	DiagramJSON json.RawMessage     `json:"diagram_json,omitempty"`
+	SpecSummary json.RawMessage     `json:"spec_summary,omitempty"`
+	Attachments []AttachmentRequest `json:"attachments,omitempty"`
 }
 
 // SourceInfo represents the source information in the response
