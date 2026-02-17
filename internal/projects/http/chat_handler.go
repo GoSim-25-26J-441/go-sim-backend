@@ -100,13 +100,13 @@ func (h *Handler) updateThreadBinding(c *gin.Context) {
 }
 
 type postMsgReq struct {
-	Message             string                 `json:"message"`
-	Mode                string                 `json:"mode,omitempty"`
-	Detail              string                 `json:"detail,omitempty"`
-	ForceLLM            bool                   `json:"force_llm,omitempty"`
-	DiagramVersionID    *string                `json:"diagram_version_id,omitempty"`
-	RequirementsAnswers map[string]interface{} `json:"requirements_answers,omitempty"`
-	Attachments         []struct {
+	Message          string                 `json:"message"`
+	Mode             string                 `json:"mode,omitempty"`
+	Detail           string                 `json:"detail,omitempty"`
+	ForceLLM         bool                   `json:"force_llm,omitempty"`
+	DiagramVersionID *string                `json:"diagram_version_id,omitempty"`
+	Design           map[string]interface{} `json:"design,omitempty"`
+	Attachments      []struct {
 		ObjectKey string  `json:"object_key"`
 		MimeType  *string `json:"mime_type,omitempty"`
 		FileName  *string `json:"file_name,omitempty"`
@@ -141,13 +141,13 @@ func (h *Handler) postMessage(c *gin.Context) {
 	}
 
 	serviceReq := chatservice.PostMessageRequest{
-		Message:             req.Message,
-		Mode:                req.Mode,
-		Detail:              req.Detail,
-		ForceLLM:            req.ForceLLM,
-		DiagramVersionID:    req.DiagramVersionID,
-		RequirementsAnswers: req.RequirementsAnswers,
-		Attachments:         attachments,
+		Message:          req.Message,
+		Mode:             req.Mode,
+		Detail:           req.Detail,
+		ForceLLM:         req.ForceLLM,
+		DiagramVersionID: req.DiagramVersionID,
+		Design:           req.Design,
+		Attachments:      attachments,
 	}
 
 	resp, err := h.chatService.PostMessage(c.Request.Context(), userID, publicID, threadID, serviceReq)

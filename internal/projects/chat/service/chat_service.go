@@ -38,13 +38,13 @@ func (s *ChatService) ListThreads(ctx context.Context, userID, publicID string) 
 
 // PostMessageRequest contains the request data for posting a message
 type PostMessageRequest struct {
-	Message             string
-	Mode                string
-	Detail              string
-	ForceLLM            bool
-	DiagramVersionID    *string
-	RequirementsAnswers map[string]interface{}
-	Attachments         []AttachmentInput
+	Message          string
+	Mode             string
+	Detail           string
+	ForceLLM         bool
+	DiagramVersionID *string
+	Design           map[string]interface{} // design: { preferred_vcpu, preferred_memory_gb, workload: { concurrent_users }, budget }
+	Attachments      []AttachmentInput
 }
 
 // AttachmentInput represents an attachment in the request
@@ -156,19 +156,19 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 		})
 	}
 
-	// Build requirements summary if this is the first message (no history)
+	// Build design summary if this is the first message (no history)
 	userMessage := req.Message
 	if len(history) == 0 {
-		if len(req.RequirementsAnswers) > 0 {
-			// Requirements answers provided - build summary
-			summary := rag.BuildRequirementsSummary(req.RequirementsAnswers)
+		if len(req.Design) > 0 {
+			// Design provided - build summary
+			summary := rag.BuildDesignSummary(req.Design)
 			if summary != "" {
-				// Prepend the requirements summary to the user message
+				// Prepend the design summary to the user message
 				userMessage = summary + "\n\n" + req.Message
 			}
 		} else {
-			// No requirements answers provided - add note
-			userMessage = "Note: No requirements_answers available. " + req.Message
+			// No design provided - add note
+			userMessage = "Note: No design available. " + req.Message
 		}
 	}
 

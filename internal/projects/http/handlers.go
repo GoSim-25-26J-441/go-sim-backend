@@ -84,3 +84,64 @@ func (h *Handler) delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+func (h *Handler) summary(c *gin.Context) {
+	publicID := strings.TrimSpace(c.Param("public_id"))
+	userID := c.GetString("firebase_uid")
+
+	if publicID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
+		return
+	}
+
+	// Get project details with current_diagram_version_id
+	project, currentDiagramVersionID, err := h.projectService.GetByPublicID(c.Request.Context(), userID, publicID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	// Get all diagram versions
+	allVersions, err := h.diagramService.ListAllVersions(c.Request.Context(), userID, publicID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	// Find latest diagram version (first in the list since it's ordered DESC)
+	var latestVersion *domain.DiagramVersion
+	if len(allVersions) > 0 {
+		latestVersion = &allVersions[0]
+	}
+
+	// Other versions (excluding the latest)
+	otherVersions := []domain.DiagramVersion{}
+	if len(allVersions) > 1 {
+		otherVersions = allVersions[1:]
+	}
+
+	// It is only used temporarily when posting the first message
+	var design map[string]interface{} = nil
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok": true,
+		"project": gin.H{
+			"public_id":                  project.PublicID,
+			"name":                       project.Name,
+			"is_temporary":               project.Temporary,
+			"current_diagram_version_id": currentDiagramVersionID,
+			"created_at":                 project.CreatedAt,
+			"updated_at":                 project.UpdatedAt,
+		},
+		"latest_diagram_version": latestVersion,
+		"other_diagram_versions": otherVersions,
+		"design":                 design,
+	})
+}
