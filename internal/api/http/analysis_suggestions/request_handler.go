@@ -14,6 +14,8 @@ import (
 type RequestResponseRow struct {
 	ID            string          `json:"id"`
 	UserID        string          `json:"user_id"`
+	ProjectID     string          `json:"project_id,omitempty"`
+	RunID         string          `json:"run_id,omitempty"`
 	Request       json.RawMessage `json:"request"`
 	Response      json.RawMessage `json:"response"`
 	BestCandidate json.RawMessage `json:"best_candidate"`
@@ -43,14 +45,14 @@ func (h *RequestHandler) GetRequestsByUser(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	sql := `
-SELECT id, user_id, request, response, best_candidate, created_at
+	query := `
+SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
 FROM request_responses
 WHERE user_id = $1
-ORDER BY created_at DESC
+ORDER BY project_id, created_at DESC
 `
 
-	rows, err := h.db.QueryContext(ctx, sql, userID)
+	rows, err := h.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed: " + err.Error()})
 		return
@@ -64,7 +66,7 @@ ORDER BY created_at DESC
 		var responseBytes []byte
 		var bestBytes []byte
 
-		if err := rows.Scan(&r.ID, &r.UserID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db scan failed: " + err.Error()})
 			return
 		}
@@ -98,8 +100,8 @@ func (h *RequestHandler) GetRequestByID(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	query := `
-SELECT id, user_id, request, response, best_candidate, created_at
+	queryByID := `
+SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
 FROM request_responses
 WHERE id = $1
 `
@@ -108,7 +110,7 @@ WHERE id = $1
 	var responseBytes []byte
 	var bestBytes []byte
 
-	err := h.db.QueryRowContext(ctx, query, id).Scan(&r.ID, &r.UserID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+	err := h.db.QueryRowContext(ctx, queryByID, id).Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})

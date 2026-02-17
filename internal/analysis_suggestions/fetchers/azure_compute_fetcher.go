@@ -273,7 +273,7 @@ func main() {
 	log.Printf("Starting Azure compute fetcher -> CSV: %s , TXT: %s\n", csvPath, txtPath)
 
 	maxRecords := 800000
-	if err := fetchComputeAndWriteTables(ctx, limiter, 500, maxRecords, csvPath, txtPath); err != nil { // pageSize 500 (was 200)
+	if err := fetchComputeAndWriteTables(ctx, limiter, 500, maxRecords, csvPath, txtPath); err != nil {
 		log.Fatalf("fetch failed: %v", err)
 	}
 	log.Printf("Finished. Files: %s , %s\n", csvPath, txtPath)

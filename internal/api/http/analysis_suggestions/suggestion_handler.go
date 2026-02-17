@@ -11,6 +11,8 @@ import (
 
 type SuggestRequest struct {
 	UserID     string                `json:"user_id,omitempty"`
+	ProjectID  string                `json:"project_id"`
+	RunID      string                `json:"run_id"`
 	Design     rules.DesignInput     `json:"design"`
 	Simulation rules.SimulationInput `json:"simulation"`
 	Candidates []rules.Candidate     `json:"candidates"`
@@ -42,6 +44,10 @@ func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON: " + err.Error()})
 		return
 	}
+	if req.ProjectID == "" || req.RunID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id and run_id are required"})
+		return
+	}
 	ruleFile := h.rulePath
 	if req.RuleFile != "" {
 		ruleFile = req.RuleFile
@@ -54,7 +60,7 @@ func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	results, storageID, err := engine.EvaluateAndStore(ctx, req.UserID, req.Design, req.Simulation, req.Candidates)
+	results, storageID, err := engine.EvaluateAndStore(ctx, req.UserID, req.ProjectID, req.RunID, req.Design, req.Simulation, req.Candidates)
 	if err != nil {
 		log.Printf("evaluation/store error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "evaluation/store failed: " + err.Error()})

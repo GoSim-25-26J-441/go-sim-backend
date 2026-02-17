@@ -114,7 +114,7 @@ func (e *Engine) EvaluateCandidates(design DesignInput, candidates []Candidate) 
 	return out, nil
 }
 
-func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design DesignInput, simulation SimulationInput,
+func (e *Engine) EvaluateAndStore(ctx context.Context, userID, projectID, runID string, design DesignInput, simulation SimulationInput,
 	candidates []Candidate) ([]CandidateScore, string, error) {
 	out, err := e.EvaluateCandidates(design, candidates)
 	if err != nil {
@@ -126,7 +126,7 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 	best := out[0]
 	id := ""
 	if e.db != nil {
-		id, err = saveRequestResponseToDB(ctx, e.db, userID, design, simulation, candidates, out, best)
+		id, err = saveRequestResponseToDB(ctx, e.db, userID, projectID, runID, design, simulation, candidates, out, best)
 		if err == nil {
 			return out, id, nil
 		}
@@ -159,7 +159,7 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID string, design Des
 	return out, path, nil
 }
 
-func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
+func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID, projectID, runID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
 	reqObj := struct {
 		Design     DesignInput     `json:"design"`
 		Simulation SimulationInput `json:"simulation"`
@@ -183,12 +183,19 @@ func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID string, des
 	}
 
 	sql := `
-INSERT INTO request_responses (user_id, request, response, best_candidate, created_at)
-VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, now())
+INSERT INTO request_responses (user_id, project_id, run_id, request, response, best_candidate, created_at)
+VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, now())
 RETURNING id;
 `
 	var id string
-	err = db.QueryRowContext(ctx, sql, userID, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id)
+	projectIDVal, runIDVal := interface{}(projectID), interface{}(runID)
+	if projectID == "" {
+		projectIDVal = nil
+	}
+	if runID == "" {
+		runIDVal = nil
+	}
+	err = db.QueryRowContext(ctx, sql, userID, projectIDVal, runIDVal, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("db insert failed: %v", err)
 	}

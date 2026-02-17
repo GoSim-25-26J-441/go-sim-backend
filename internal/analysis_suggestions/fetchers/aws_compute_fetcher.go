@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -66,12 +65,12 @@ func main() {
 
 	config := FetchConfig{
 		MaxRecords:     800000,
-		RateLimit:      16,
-		BurstSize:      32,
+		RateLimit:      24,
+		BurstSize:      48,
 		BufferSize:     1500,
 		Workers:        8,
-		BackoffInitial: 1 * time.Second,
-		BackoffMax:     30 * time.Second,
+		BackoffInitial: 500 * time.Millisecond,
+		BackoffMax:     20 * time.Second,
 		MaxRetries:     3,
 	}
 
@@ -338,8 +337,6 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 			break
 		}
 		nextToken = resp.NextToken
-
-		time.Sleep(time.Duration(rand.Intn(20)+5) * time.Millisecond)
 	}
 
 	close(recordChan)
