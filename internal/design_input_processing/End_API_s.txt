@@ -224,14 +224,6 @@ Invoke-RestMethod -Method Get `
 #       "binding_mode": "FOLLOW_LATEST",
 #       "pinned_diagram_version_id": null,
 #       "created_at": "2026-02-16T10:00:00Z"
-#     },
-#     {
-#       "id": "thr-yyyy",
-#       "project_public_id": "archfind-yyyy",
-#       "title": "Design discussion",
-#       "binding_mode": "PINNED",
-#       "pinned_diagram_version_id": "dver-xxxx",
-#       "created_at": "2026-02-16T09:00:00Z"
 #     }
 #   ]
 # }
