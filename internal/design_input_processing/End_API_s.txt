@@ -135,7 +135,7 @@ Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/latest" `
   -Headers @{ "Authorization" = "Bearer $token" }
 
-# Get project summary (returns project details, latest diagram version, all other diagram versions, and requirements_answers)
+# Get project summary (returns project details, latest diagram version, all other diagram versions, and design)
 Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/summary" `
   -Headers @{ "Authorization" = "Bearer $token" }
@@ -171,41 +171,34 @@ Invoke-RestMethod -Method Get `
 #       "created_at": "2026-02-16T09:00:00Z"
 #     }
 #   ],
-#   "requirements_answers": null
+#   "design": null
 # }
-# Note: requirements_answers is null because they are not stored in the database.
-# They are only used temporarily when posting the first message in a thread.
+# Note: design is null because it is not stored in the database.
+# It is only used temporarily when posting the first message in a thread.
 
 # -----------------------------------------------------------------------------
-# Requirements Questionnaire (Design Input Processing)
-# Returns the list of questions for gathering user requirements before first chat message.
+# Design Questionnaire (Design Input Processing)
+# Returns the list of questions for gathering design input before first chat message.
+# Maps to design structure: { preferred_vcpu, preferred_memory_gb, workload: { concurrent_users }, budget }
 # Only shown when thread has no chat history (first message).
 # Questions are editable in: internal/design_input_processing/rag/questions.yaml
 # -----------------------------------------------------------------------------
 
-# Get requirements questions (returns enabled flag and list of questions)
+# Get design questions (returns enabled flag and list of questions)
 Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/design-input/rag/requirements-questions" `
   -Headers @{ "Authorization" = "Bearer $token" }
+ConvertTo-Json -Depth 50
 
 # Response example:
 # {
 #   "ok": true,
 #   "enabled": true,
 #   "questions": [
-#     {
-#       "id": "server_type",
-#       "label": "What type of server/workload?",
-#       "type": "select",
-#       "options": ["Web API", "gRPC", "Batch/Worker", "Mixed"]
-#     },
-#     {
-#       "id": "expected_users",
-#       "label": "Expected concurrent users (approximate)?",
-#       "type": "number",
-#       "placeholder": "e.g., 1000"
-#     },
-#     ...
+#     { "id": "preferred_vcpu", "label": "Preferred vCPU count?", "type": "number", "placeholder": "e.g., 4" },
+#     { "id": "preferred_memory_gb", "label": "Preferred memory (GB)?", "type": "number", "placeholder": "e.g., 8" },
+#     { "id": "concurrent_users", "label": "Expected concurrent users?", "type": "number", "placeholder": "e.g., 1000" },
+#     { "id": "budget", "label": "Budget (e.g. USD per month)?", "type": "number", "placeholder": "e.g., 2000" }
 #   ]
 # }
 
@@ -222,13 +215,13 @@ Invoke-RestMethod -Method Get `
 # - Chat history is automatic: reuse the same THREAD_ID and previous turns are
 #   sent to the LLM as history.
 #
-# - Requirements Questionnaire: When posting the FIRST message (no chat history), you can
-#   optionally include "requirements_answers" with answers from the questionnaire.
-#   - If requirements_answers is provided: The server will build a summary and inject it into the LLM context.
-#   - If requirements_answers is empty/missing: The server will add a note "Note: No requirements_answers available."
-#     to inform the LLM that no requirements were provided.
-#   Example with answers: -Body '{"message":"...","requirements_answers":{"server_type":"Web API","expected_users":1000}}'
-#   Example without answers: -Body '{"message":"..."}' (note will be added automatically)
+# - Design input: When posting the FIRST message (no chat history), you can
+#   optionally include "design" with the structure:
+#   { "preferred_vcpu": 4, "preferred_memory_gb": 8, "workload": { "concurrent_users": 1000 }, "budget": 2000 }
+#   - If design is provided: The server will build a summary and inject it into the LLM context.
+#   - If design is empty/missing: The server will add a note "Note: No design available."
+#   Example with design: -Body '{"message":"...","design":{"preferred_vcpu":4,"preferred_memory_gb":8,"workload":{"concurrent_users":1000},"budget":2000}}'
+#   Example without design: -Body '{"message":"..."}' (note will be added automatically)
 #
 # - Mode and detail (UIGP): You can send "mode" and "detail" so the user can select behavior:
 #   mode: "instant" | "default" | "thinking"
@@ -265,30 +258,23 @@ Invoke-RestMethod -Method Post `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body '{"message":"Hello","mode":"default"}'
 
-# First message WITH requirements answers (recommended for first message in new thread)
-# The requirements summary will be injected into LLM context automatically
-$requirementsBody = @{
+# First message WITH design (recommended for first message in new thread)
+# Design structure: preferred_vcpu, preferred_memory_gb, workload: { concurrent_users }, budget
+$designBody = @{
   message = "Help me size my system"
   mode = "default"
-  requirements_answers = @{
-    server_type = "Web API"
-    expected_users = 1000
-    peak_rps = "200 peak, 50 average"
-    latency_target = 150
-    read_write_split = "80% read, 20% write, 2KB payload"
-    cache_hit_rate = 60
-    db_qps_budget = 1000
-    critical_flows = "login, checkout, payment"
-    availability_target = "99.9% SLA, multi-AZ"
-    current_infra = "Intel Xeon, 4 cores, 8GB RAM"
-    burst_tolerance = "2x for 5 minutes"
+  design = @{
+    preferred_vcpu = 4
+    preferred_memory_gb = 8
+    workload = @{ concurrent_users = 1000 }
+    budget = 2000
   }
 } | ConvertTo-Json -Depth 10
 
 Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
-  -Body $requirementsBody
+  -Body $designBody
 
 
 

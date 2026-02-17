@@ -127,23 +127,21 @@ func (h *Handler) summary(c *gin.Context) {
 		otherVersions = allVersions[1:]
 	}
 
-	// Requirements answers are not stored in the database, so return null
-	// They are only used temporarily when posting the first message
-	var requirementsAnswers map[string]interface{} = nil
+	// It is only used temporarily when posting the first message
+	var design map[string]interface{} = nil
 
 	c.JSON(http.StatusOK, gin.H{
 		"ok": true,
 		"project": gin.H{
 			"public_id":                  project.PublicID,
-			"name":                      project.Name,
-			"is_temporary":              project.Temporary,
+			"name":                       project.Name,
+			"is_temporary":               project.Temporary,
 			"current_diagram_version_id": currentDiagramVersionID,
 			"created_at":                 project.CreatedAt,
 			"updated_at":                 project.UpdatedAt,
 		},
 		"latest_diagram_version": latestVersion,
 		"other_diagram_versions": otherVersions,
-		"requirements_answers":   requirementsAnswers,
+		"design":                 design,
 	})
 }
-

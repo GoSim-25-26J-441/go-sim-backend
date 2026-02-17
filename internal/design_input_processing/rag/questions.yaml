@@ -1,63 +1,25 @@
-# Requirements questionnaire - edit to change questions
-# Set enabled: false to disable the questionnaire feature
+
+# Maps to design structure: { preferred_vcpu, preferred_memory_gb, workload: { concurrent_users }, budget }
 enabled: true
 
 questions:
-  - id: server_type
-    label: "What type of server/workload?"
-    type: select
-    options:
-      - "Web API"
-      - "gRPC"
-      - "Batch/Worker"
-      - "Mixed"
+  - id: preferred_vcpu
+    label: "Preferred vCPU count?"
+    type: number
+    placeholder: "e.g., 4"
   
-  - id: expected_users
-    label: "Expected concurrent users (approximate)?"
+  - id: preferred_memory_gb
+    label: "Preferred memory (GB)?"
+    type: number
+    placeholder: "e.g., 8"
+  
+  - id: concurrent_users
+    label: "Expected concurrent users?"
     type: number
     placeholder: "e.g., 1000"
+    # Maps to design.workload.concurrent_users
   
-  - id: peak_rps
-    label: "Peak vs average RPS? Daily/weekly seasonality?"
-    type: text
-    placeholder: "e.g., 200 peak, 50 average"
-  
-  - id: latency_target
-    label: "p95 latency target (ms)? Allowable queueing?"
+  - id: budget
+    label: "Budget (e.g. USD per month)?"
     type: number
-    placeholder: "e.g., 150"
-  
-  - id: read_write_split
-    label: "Read/write split? Payload size (KB)?"
-    type: text
-    placeholder: "e.g., 80% read, 20% write, 2KB payload"
-  
-  - id: cache_hit_rate
-    label: "Cache hit rate expected?"
-    type: number
-    placeholder: "e.g., 60"
-  
-  - id: db_qps_budget
-    label: "DB QPS budget?"
-    type: number
-    placeholder: "e.g., 1000"
-  
-  - id: critical_flows
-    label: "Critical flows? (login, checkout, payment, etc.)"
-    type: text
-    placeholder: "e.g., login, checkout, payment"
-  
-  - id: availability_target
-    label: "Availability target (SLA/SLO)? Multi-AZ/region?"
-    type: text
-    placeholder: "e.g., 99.9% SLA, multi-AZ"
-  
-  - id: current_infra
-    label: "Current infra (CPU model, core count, RAM, network)?"
-    type: text
-    placeholder: "e.g., Intel Xeon, 4 cores, 8GB RAM"
-  
-  - id: burst_tolerance
-    label: "Burst tolerance (x times normal) and warmup?"
-    type: text
-    placeholder: "e.g., 2x for 5 minutes"
+    placeholder: "e.g., 2000"
