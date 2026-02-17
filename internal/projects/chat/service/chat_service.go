@@ -36,6 +36,11 @@ func (s *ChatService) ListThreads(ctx context.Context, userID, publicID string) 
 	return s.repo.ListThreads(ctx, userID, publicID)
 }
 
+// ListAllThreadsForUser lists all threads for a user across all projects
+func (s *ChatService) ListAllThreadsForUser(ctx context.Context, userID string) ([]domain.Thread, error) {
+	return s.repo.ListAllThreadsForUser(ctx, userID)
+}
+
 // PostMessageRequest contains the request data for posting a message
 type PostMessageRequest struct {
 	Message          string

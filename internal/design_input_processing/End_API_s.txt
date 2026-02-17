@@ -206,6 +206,36 @@ ConvertTo-Json -Depth 50
 
 # -----------------------------------------------------------------------------
 # Chats (replace PROJECT_PUBLIC_ID and THREAD_ID with real ids)
+# -----------------------------------------------------------------------------
+
+# List all threads for logged-in user (across all projects)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/chats" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Response example:
+# {
+#   "ok": true,
+#   "threads": [
+#     {
+#       "id": "thr-xxxx",
+#       "project_public_id": "archfind-xxxx",
+#       "title": "Main chat",
+#       "binding_mode": "FOLLOW_LATEST",
+#       "pinned_diagram_version_id": null,
+#       "created_at": "2026-02-16T10:00:00Z"
+#     },
+#     {
+#       "id": "thr-yyyy",
+#       "project_public_id": "archfind-yyyy",
+#       "title": "Design discussion",
+#       "binding_mode": "PINNED",
+#       "pinned_diagram_version_id": "dver-xxxx",
+#       "created_at": "2026-02-16T09:00:00Z"
+#     }
+#   ]
+# }
+
 # Notes:
 # - Diagram selection: You can optionally send diagram_version_id in the POST message body.
 #   If provided: uses that version for THIS message AND pins it to the thread (future messages use it too).

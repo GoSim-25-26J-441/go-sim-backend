@@ -58,6 +58,19 @@ func (h *Handler) listThreads(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "threads": items})
 }
 
+// listAllThreads lists all threads for the logged-in user across all projects
+func (h *Handler) listAllThreads(c *gin.Context) {
+	userID := c.GetString("firebase_uid")
+
+	items, err := h.chatService.ListAllThreadsForUser(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "threads": items})
+}
+
 type updateThreadBindingReq struct {
 	BindingMode      string  `json:"binding_mode"`
 	DiagramVersionID *string `json:"diagram_version_id,omitempty"`

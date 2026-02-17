@@ -152,6 +152,40 @@ order by created_at desc
 	return out, nil
 }
 
+// ListAllThreadsForUser lists all threads for a user across all projects
+func (r *ChatRepository) ListAllThreadsForUser(ctx context.Context, userFirebaseUID string) ([]domain.Thread, error) {
+	const q = `
+select
+  id,
+  project_public_id,
+  title,
+  binding_mode,
+  pinned_diagram_version_id,
+  created_at
+from chat_threads
+where user_firebase_uid=$1
+order by created_at desc
+`
+	rows, err := r.db.QueryContext(ctx, q, userFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []domain.Thread{}
+	for rows.Next() {
+		var t domain.Thread
+		if err := rows.Scan(&t.ID, &t.ProjectPublicID, &t.Title, &t.BindingMode, &t.PinnedDiagramVersionID, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UpdateThreadBinding updates a thread's binding mode and (optionally) pinned diagram version.
 // If bindingMode is PINNED and diagramVersionID is nil/empty, the latest diagram version
 // for the project/user will be used. If bindingMode is FOLLOW_LATEST, the pinned id is cleared.
