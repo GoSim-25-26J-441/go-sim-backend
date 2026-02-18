@@ -18,7 +18,6 @@ func (h *Handler) ragSearch(c *gin.Context) {
 }
 
 func (h *Handler) ragReload(c *gin.Context) {
-	// Optional ?dir=... ; defaults to your snippets folder
 	dir := c.DefaultQuery("dir", "internal/design_input_processing/rag/snippets")
 
 	if err := rag.Load(dir); err != nil {

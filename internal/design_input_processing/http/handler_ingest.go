@@ -1,10 +1,18 @@
 package http
 
 import (
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http/handlers"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) ingest(c *gin.Context) {
-	handlers.Ingest(c, h.UpstreamURL)
+	resp, err := h.upstreamClient.Ingest(c.Request.Context(), c.Request.Body, c.Request.Header)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	proxyResponse(c, resp)
 }

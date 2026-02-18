@@ -33,11 +33,10 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 		Service:   h.serviceName,
 		Version:   h.version,
 	}
-
 	c.JSON(http.StatusOK, response)
 }
 
-func (h *HealthHandler) RegisterRoutes(router *gin.Engine) {
-	router.GET("/health", h.HealthCheck)
-	router.GET("/healthz", h.HealthCheck)
+func (h *HealthHandler) RegisterRoutes(r gin.IRouter) {
+	r.GET("/health", h.HealthCheck)
+	r.GET("/healthz", h.HealthCheck)
 }
