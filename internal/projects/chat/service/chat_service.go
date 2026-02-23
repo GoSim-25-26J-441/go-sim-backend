@@ -310,6 +310,28 @@ func (s *ChatService) ListMessages(ctx context.Context, userID, publicID, thread
 	return s.repo.ListMessages(ctx, userID, publicID, threadID, limit)
 }
 
+// TempChat sends a message to LLM without saving history or requiring thread/project
+func (s *ChatService) TempChat(ctx context.Context, message, mode string) (*chat.ChatResponse, error) {
+	if strings.TrimSpace(message) == "" {
+		return nil, fmt.Errorf("message is required")
+	}
+
+	// Build minimal LLM request with empty history, no diagram, no attachments
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = "default"
+	}
+
+	llmReq := chat.ChatRequest{
+		Message: message,
+		History: []chat.ChatMessage{}, // Empty history
+		Mode:    mode,
+		// No diagram, no attachments, no design, no detail
+	}
+
+	return s.llm.Chat(ctx, llmReq)
+}
+
 // Helper function to safely get string value from pointer
 func getStringValue(s *string) string {
 	if s == nil {

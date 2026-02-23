@@ -298,7 +298,7 @@ Invoke-RestMethod -Method Post `
   -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
   -Body $designBody
 
-
+{"message":"Tell me about this system","mode":"default","design":{"workload":{"concurrent_users":100},"preferred_vcpu":2,"preferred_memory_gb":5,"budget":200}}
 
   # Post with user-selected mode: instant | default | thinking (optional detail e.g. "high")
 Invoke-RestMethod -Method Post `
@@ -327,5 +327,26 @@ Invoke-RestMethod -Method Post `
 Invoke-RestMethod -Method Get `
   -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
   -Headers @{ "Authorization" = "Bearer $token" }
+
+# -----------------------------------------------------------------------------
+# Temporary Chat (no project/thread required, no history saved)
+# Simple endpoint for quick LLM interactions without persistence
+# Requires Firebase authentication (Bearer token)
+# -----------------------------------------------------------------------------
+
+# Temporary chat - only message and mode, no history, no diagram, no thread creation
+# Requires Authorization: Bearer <Firebase ID token>
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/temp-chat" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Hello, how are you?","mode":"default"}'
+
+# Response example:
+# {
+#   "ok": true,
+#   "answer": "I'm doing well, thank you! How can I help you today?",
+#   "source": "openai/gpt-4",
+#   "refs": []
+# }
 
 

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -200,4 +201,37 @@ func (h *Handler) listMessages(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "messages": items})
+}
+
+type tempChatReq struct {
+	Message string `json:"message"`
+	Mode    string `json:"mode,omitempty"`
+}
+
+// TempChat handles temporary chat requests without saving history or requiring thread/project
+func (h *Handler) TempChat(c *gin.Context) {
+	var req tempChatReq
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid body: message is required"})
+		return
+	}
+
+	// Call temporary chat service method
+	llmResp, err := h.chatService.TempChat(c.Request.Context(), req.Message, req.Mode)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	sourceStr := llmResp.Source.Provider
+	if llmResp.Source.Model != "" {
+		sourceStr = fmt.Sprintf("%s/%s", llmResp.Source.Provider, llmResp.Source.Model)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":     llmResp.OK,
+		"answer": llmResp.Answer,
+		"source": sourceStr,
+		"refs":   llmResp.Refs,
+	})
 }

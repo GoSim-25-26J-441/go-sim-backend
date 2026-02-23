@@ -113,28 +113,21 @@ func main() {
 	if authClient != nil {
 		authGroup := api.Group("/auth")
 
-		// Initialize auth module
 		userRepo := authrepo.NewUserRepository(db)
 		authService := authservice.NewAuthService(userRepo)
 		authHandler := authhttp.New(authService)
 
-		// Apply Firebase Auth middleware to auth routes
 		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 		authHandler.Register(authGroup)
-
-		log.Printf("Auth endpoints registered at /api/v1/auth")
 	}
 
-	// Projects module (from temp branch - new feature)
 	if authClient != nil {
 		projectsGroup := api.Group("/projects")
 		projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
-		// Initialize projects module (includes chats and diagrams)
 		projectRepo := projectrepo.NewProjectRepository(db)
 		diagramRepo := projectrepo.NewDiagramRepository(db)
 
-		// Initialize chat module with new structure
 		chatRepo := chatrepo.NewChatRepository(db)
 		llmClient := chat.NewLLMClient(cfg.Upstreams.LLMSvcURL, cfg.Upstreams.LLMAPIKey)
 		chatService := chatservice.NewChatService(chatRepo, llmClient)
@@ -146,6 +139,12 @@ func main() {
 		projectHandler.Register(projectsGroup)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
+
+		// Temporary chat endpoint (requires Firebase auth)
+		tempChatGroup := api.Group("/temp-chat")
+		tempChatGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+		tempChatGroup.POST("", projectHandler.TempChat)
+		log.Printf("Temporary chat endpoint registered at /api/v1/temp-chat (Firebase auth required)")
 	}
 
 	// Initialize simulation module (required for both user routes and callback routes)
