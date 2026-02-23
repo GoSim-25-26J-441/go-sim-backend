@@ -1,0 +1,25 @@
+
+# Maps to design structure: { preferred_vcpu, preferred_memory_gb, workload: { concurrent_users }, budget }
+enabled: true
+
+questions:
+  - id: preferred_vcpu
+    label: "Preferred vCPU count?"
+    type: number
+    placeholder: "e.g., 4"
+  
+  - id: preferred_memory_gb
+    label: "Preferred memory (GB)?"
+    type: number
+    placeholder: "e.g., 8"
+  
+  - id: concurrent_users
+    label: "Expected concurrent users?"
+    type: number
+    placeholder: "e.g., 1000"
+    # Maps to design.workload.concurrent_users
+  
+  - id: budget
+    label: "Budget (e.g. USD per month)?"
+    type: number
+    placeholder: "e.g., 2000"

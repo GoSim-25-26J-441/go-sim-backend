@@ -76,6 +76,66 @@ func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 	return &user, nil
 }
 
+// GetByEmail retrieves a user by email address.
+func (r *UserRepository) GetByEmail(email string) (*domain.User, error) {
+	query := `
+		SELECT firebase_uid, email, display_name, photo_url, role, organization, 
+		       preferences, created_at, updated_at, last_login_at
+		FROM users
+		WHERE email = $1
+	`
+
+	var user domain.User
+	var preferencesJSON []byte
+	var displayName, photoURL, organization sql.NullString
+	var lastLoginAt sql.NullTime
+
+	err := r.db.QueryRow(query, email).Scan(
+		&user.FirebaseUID,
+		&user.Email,
+		&displayName,
+		&photoURL,
+		&user.Role,
+		&organization,
+		&preferencesJSON,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+		&lastLoginAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, domain.ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle nullable fields
+	if displayName.Valid {
+		user.DisplayName = &displayName.String
+	}
+	if photoURL.Valid {
+		user.PhotoURL = &photoURL.String
+	}
+	if organization.Valid {
+		user.Organization = &organization.String
+	}
+	if lastLoginAt.Valid {
+		user.LastLoginAt = &lastLoginAt.Time
+	}
+
+	// Parse JSONB preferences
+	if len(preferencesJSON) > 0 {
+		if err := json.Unmarshal(preferencesJSON, &user.Preferences); err != nil {
+			user.Preferences = make(map[string]interface{})
+		}
+	} else {
+		user.Preferences = make(map[string]interface{})
+	}
+
+	return &user, nil
+}
+
 // Create creates a new user
 func (r *UserRepository) Create(user *domain.User) error {
 	query := `

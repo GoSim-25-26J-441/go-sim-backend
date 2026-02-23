@@ -131,3 +131,23 @@ WHERE user_firebase_uid = $1 AND public_id = $2 AND deleted_at IS NULL;
 	}
 	return rowsAffected > 0, nil
 }
+
+// GetByPublicID returns a project by its public_id with current_diagram_version_id
+func (r *ProjectRepository) GetByPublicID(ctx context.Context, userFirebaseUID, publicID string) (*domain.Project, *string, error) {
+	const q = `
+SELECT public_id, name, is_temporary, current_diagram_version_id, created_at, updated_at
+FROM projects
+WHERE user_firebase_uid = $1 AND public_id = $2 AND deleted_at IS NULL;
+`
+	var p domain.Project
+	var currentDiagramVersionID *string
+	err := r.db.QueryRowContext(ctx, q, userFirebaseUID, publicID).
+		Scan(&p.PublicID, &p.Name, &p.Temporary, &currentDiagramVersionID, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, domain.ErrNotFound
+		}
+		return nil, nil, err
+	}
+	return &p, currentDiagramVersionID, nil
+}

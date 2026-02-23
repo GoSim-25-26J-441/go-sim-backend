@@ -38,3 +38,8 @@ func (s *ProjectService) Rename(ctx context.Context, userID, publicID, newName s
 func (s *ProjectService) Delete(ctx context.Context, userID, publicID string) (bool, error) {
 	return s.repo.SoftDelete(ctx, userID, publicID)
 }
+
+// GetByPublicID returns a project by its public_id with current_diagram_version_id
+func (s *ProjectService) GetByPublicID(ctx context.Context, userID, publicID string) (*domain.Project, *string, error) {
+	return s.repo.GetByPublicID(ctx, userID, publicID)
+}

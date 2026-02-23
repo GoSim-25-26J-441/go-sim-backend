@@ -199,3 +199,80 @@ limit 1
 
 	return &ver, nil
 }
+
+// ListAllVersions returns all diagram versions for a project, ordered by version_number DESC
+func (r *DiagramRepository) ListAllVersions(ctx context.Context, userFirebaseUID, projectPublicID string) ([]domain.DiagramVersion, error) {
+	if strings.TrimSpace(userFirebaseUID) == "" {
+		return nil, fmt.Errorf("user firebase uid required")
+	}
+	if strings.TrimSpace(projectPublicID) == "" {
+		return nil, fmt.Errorf("project public_id required")
+	}
+
+	// Verify project exists and belongs to user
+	var ok string
+	err := r.db.QueryRowContext(ctx, `
+select public_id
+from projects
+where public_id = $1
+  and user_firebase_uid = $2
+  and deleted_at is null
+`, projectPublicID, userFirebaseUID).Scan(&ok)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+
+	const q = `
+select id, version_number, source,
+       coalesce(hash,''), coalesce(image_object_key,''),
+       diagram_json::text,
+       coalesce(spec_summary::text,''),
+       created_at
+from diagram_versions
+where project_public_id = $1
+  and user_firebase_uid = $2
+order by version_number desc
+`
+	rows, err := r.db.QueryContext(ctx, q, projectPublicID, userFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var versions []domain.DiagramVersion
+	for rows.Next() {
+		var ver domain.DiagramVersion
+		ver.ProjectPublicID = projectPublicID
+		ver.UserFirebaseUID = userFirebaseUID
+
+		var diagramText string
+		var specText string
+
+		if err := rows.Scan(
+			&ver.ID, &ver.VersionNumber, &ver.Source,
+			&ver.Hash, &ver.ImageObjectKey,
+			&diagramText, &specText,
+			&ver.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if diagramText != "" {
+			ver.DiagramJSON = json.RawMessage([]byte(diagramText))
+		}
+		if specText != "" {
+			ver.SpecSummary = json.RawMessage([]byte(specText))
+		}
+
+		versions = append(versions, ver)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return versions, nil
+}
