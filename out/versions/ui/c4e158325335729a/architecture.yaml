@@ -1,0 +1,112 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 350
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: web-ui_split
+      kind: rest
+      sync: true
+      to: cart
+    - from: web-ui_split
+      kind: rest
+      sync: true
+      to: orders
+    - from: web-ui_split
+      kind: rest
+      sync: true
+      to: payments
+    - from: cart
+      kind: rest
+      sync: true
+      to: catalog
+    - from: orders
+      kind: rest
+      sync: true
+      to: inventory
+    - from: orders_split
+      kind: rest
+      sync: true
+      to: payments
+    - from: catalog
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: cart
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: orders_split
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: inventory
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: orders
+      kind: rest
+      sync: true
+      to: orders_split
+    - from: web-ui
+      kind: rest
+      sync: true
+      to: web-ui_split
+    - from: web-ui
+      kind: rest
+      sync: true
+      to: bff
+    - from: bff
+      kind: rest
+      sync: true
+      to: catalog
+    - from: bff
+      kind: rest
+      sync: true
+      to: cart
+    - from: bff
+      kind: rest
+      sync: true
+      to: orders
+    - from: bff
+      kind: rest
+      sync: true
+      to: payments
+    - from: bff
+      kind: rest
+      sync: true
+      to: auth
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: web-ui
+      type: service
+    - name: auth
+      type: service
+    - name: catalog
+      type: service
+    - name: cart
+      type: service
+    - name: orders
+      type: service
+    - name: payments
+      type: service
+    - name: inventory
+      type: service
+    - name: shared-db
+      type: service
+    - name: orders_split
+      type: service
+    - name: web-ui_split
+      type: service
+    - name: bff
+      type: service
+topics: []
+trace: []

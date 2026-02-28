@@ -1,0 +1,163 @@
+graph:
+    nodes:
+        DATABASE:shared-db:
+            id: DATABASE:shared-db
+            name: shared-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:auth:
+            id: SERVICE:auth
+            name: auth
+            kind: SERVICE
+            attrs: {}
+        SERVICE:inventory:
+            id: SERVICE:inventory
+            name: inventory
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders:
+            id: SERVICE:orders
+            name: orders
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web:
+            id: SERVICE:web
+            name: web
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:web
+          to: SERVICE:auth
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders
+          to: SERVICE:inventory
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:inventory
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:auth
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:auth:
+            - from: SERVICE:auth
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:inventory:
+            - from: SERVICE:inventory
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:orders
+              to: SERVICE:inventory
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:orders
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web:
+            - from: SERVICE:web
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:web
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:shared-db:
+            - from: SERVICE:orders
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:inventory
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:auth
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:auth:
+            - from: SERVICE:web
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:inventory:
+            - from: SERVICE:orders
+              to: SERVICE:inventory
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:web
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/ea6f69b8d7f141d2/graph.dot
+svg_path: /app/out/runs/ea6f69b8d7f141d2/graph.svg
+detections:
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:web
+        - SERVICE:auth
+        - SERVICE:orders
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 2
+        targets: 2
+        ui: SERVICE:web

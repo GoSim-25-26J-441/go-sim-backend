@@ -50,7 +50,7 @@ func PreviewSuggestionsYAMLFile(path, outBaseDir, title string) (*SuggestPreview
 	return PreviewSuggestionsYAMLBytes(b, outBaseDir, title)
 }
 
-func ApplySuggestionsYAMLBytes(jobID string, yamlBytes []byte, outBaseDir, title string) (*ApplySuggestionsResult, error) {
+func ApplySuggestionsYAMLBytes(jobID string, yamlBytes []byte, outBaseDir, title string, selectedSuggestionIDs []string) (*ApplySuggestionsResult, error) {
 	dotBin := os.Getenv("DOT_BIN")
 
 	origAnalysis, err := AnalyzeYAMLBytes(yamlBytes, outBaseDir, title, dotBin)
@@ -59,7 +59,11 @@ func ApplySuggestionsYAMLBytes(jobID string, yamlBytes []byte, outBaseDir, title
 	}
 	origSugs := suggestion.BuildSuggestions(origAnalysis.Graph, origAnalysis.Detections)
 
-	fixed, applied, err := suggestion.ApplyFixesYAMLBytes(yamlBytes, origAnalysis.Graph, origAnalysis.Detections)
+	// Only apply fixes for explicitly selected suggestions. If no selection is sent, apply nothing.
+	orderedKeys := suggestion.OrderedDetectionKeys(origAnalysis.Detections)
+	selectedMap := suggestion.ResolveSelectedIDs(selectedSuggestionIDs, orderedKeys)
+
+	fixed, applied, err := suggestion.ApplyFixesYAMLBytesFiltered(yamlBytes, origAnalysis.Graph, origAnalysis.Detections, selectedMap)
 	if err != nil {
 		return nil, err
 	}
@@ -95,14 +99,14 @@ func ApplySuggestionsYAMLBytes(jobID string, yamlBytes []byte, outBaseDir, title
 	}, nil
 }
 
-func ApplySuggestionsYAMLString(jobID string, yamlText, outBaseDir, title string) (*ApplySuggestionsResult, error) {
-	return ApplySuggestionsYAMLBytes(jobID, []byte(yamlText), outBaseDir, title)
+func ApplySuggestionsYAMLString(jobID string, yamlText, outBaseDir, title string, selectedSuggestionIDs []string) (*ApplySuggestionsResult, error) {
+	return ApplySuggestionsYAMLBytes(jobID, []byte(yamlText), outBaseDir, title, selectedSuggestionIDs)
 }
 
-func ApplySuggestionsYAMLFile(jobID string, path, outBaseDir, title string) (*ApplySuggestionsResult, error) {
+func ApplySuggestionsYAMLFile(jobID string, path, outBaseDir, title string, selectedSuggestionIDs []string) (*ApplySuggestionsResult, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return ApplySuggestionsYAMLBytes(jobID, b, outBaseDir, title)
+	return ApplySuggestionsYAMLBytes(jobID, b, outBaseDir, title, selectedSuggestionIDs)
 }

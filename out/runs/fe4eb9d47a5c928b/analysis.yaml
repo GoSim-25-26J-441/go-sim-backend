@@ -1,0 +1,445 @@
+graph:
+    nodes:
+        DATABASE:finance-db:
+            id: DATABASE:finance-db
+            name: finance-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:auth:
+            id: SERVICE:auth
+            name: auth
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff:
+            id: SERVICE:bff
+            name: bff
+            kind: SERVICE
+            attrs: {}
+        SERVICE:billing-api:
+            id: SERVICE:billing-api
+            name: billing-api
+            kind: SERVICE
+            attrs: {}
+        SERVICE:catalog:
+            id: SERVICE:catalog
+            name: catalog
+            kind: SERVICE
+            attrs: {}
+        SERVICE:enricher:
+            id: SERVICE:enricher
+            name: enricher
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ingest-worker:
+            id: SERVICE:ingest-worker
+            name: ingest-worker
+            kind: SERVICE
+            attrs: {}
+        SERVICE:profile:
+            id: SERVICE:profile
+            name: profile
+            kind: SERVICE
+            attrs: {}
+        SERVICE:refund-api:
+            id: SERVICE:refund-api
+            name: refund-api
+            kind: SERVICE
+            attrs: {}
+        SERVICE:reviews:
+            id: SERVICE:reviews
+            name: reviews
+            kind: SERVICE
+            attrs: {}
+        SERVICE:settlement-api:
+            id: SERVICE:settlement-api
+            name: settlement-api
+            kind: SERVICE
+            attrs: {}
+        SERVICE:support:
+            id: SERVICE:support
+            name: support
+            kind: SERVICE
+            attrs: {}
+        SERVICE:validator:
+            id: SERVICE:validator
+            name: validator
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web-ui:
+            id: SERVICE:web-ui
+            name: web-ui
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web-ui_split:
+            id: SERVICE:web-ui_split
+            name: web-ui_split
+            kind: SERVICE
+            attrs: {}
+        SERVICE:writer:
+            id: SERVICE:writer
+            name: writer
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:web-ui_split
+          to: SERVICE:reviews
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web-ui_split
+          to: SERVICE:support
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web-ui_split
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ingest-worker
+          to: SERVICE:validator
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:validator
+          to: SERVICE:enricher
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:enricher
+          to: SERVICE:writer
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:billing-api
+          to: DATABASE:finance-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:refund-api
+          to: DATABASE:finance-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:settlement-api
+          to: DATABASE:finance-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web-ui
+          to: SERVICE:web-ui_split
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web-ui
+          to: SERVICE:bff
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:auth
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:catalog
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:reviews
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:support
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:bff:
+            - from: SERVICE:bff
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:reviews
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:support
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:billing-api:
+            - from: SERVICE:billing-api
+              to: DATABASE:finance-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:enricher:
+            - from: SERVICE:enricher
+              to: SERVICE:writer
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ingest-worker:
+            - from: SERVICE:ingest-worker
+              to: SERVICE:validator
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:refund-api:
+            - from: SERVICE:refund-api
+              to: DATABASE:finance-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:settlement-api:
+            - from: SERVICE:settlement-api
+              to: DATABASE:finance-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:validator:
+            - from: SERVICE:validator
+              to: SERVICE:enricher
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web-ui:
+            - from: SERVICE:web-ui
+              to: SERVICE:web-ui_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:web-ui
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web-ui_split:
+            - from: SERVICE:web-ui_split
+              to: SERVICE:reviews
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:web-ui_split
+              to: SERVICE:support
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:web-ui_split
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:finance-db:
+            - from: SERVICE:billing-api
+              to: DATABASE:finance-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:refund-api
+              to: DATABASE:finance-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:settlement-api
+              to: DATABASE:finance-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:auth:
+            - from: SERVICE:bff
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff:
+            - from: SERVICE:web-ui
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:catalog:
+            - from: SERVICE:bff
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:enricher:
+            - from: SERVICE:validator
+              to: SERVICE:enricher
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:profile:
+            - from: SERVICE:web-ui_split
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:reviews:
+            - from: SERVICE:web-ui_split
+              to: SERVICE:reviews
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:reviews
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:support:
+            - from: SERVICE:web-ui_split
+              to: SERVICE:support
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:support
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:validator:
+            - from: SERVICE:ingest-worker
+              to: SERVICE:validator
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web-ui_split:
+            - from: SERVICE:web-ui
+              to: SERVICE:web-ui_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:writer:
+            - from: SERVICE:enricher
+              to: SERVICE:writer
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/fe4eb9d47a5c928b/graph.dot
+svg_path: /app/out/runs/fe4eb9d47a5c928b/graph.svg
+detections:
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:bff
+      edges: []
+      evidence:
+        degree: 6
+        threshold: 4
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:web-ui_split
+      edges: []
+      evidence:
+        degree: 4
+        threshold: 4
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:web-ui
+        - SERVICE:web-ui_split
+        - SERVICE:bff
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 2
+        targets: 2
+        ui: SERVICE:web-ui
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:web-ui_split
+        - SERVICE:reviews
+        - SERVICE:support
+        - SERVICE:profile
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 3
+        targets: 3
+        ui: SERVICE:web-ui_split

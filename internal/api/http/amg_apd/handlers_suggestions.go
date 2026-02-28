@@ -54,7 +54,7 @@ func SuggestionApply(c *gin.Context) {
 		req.JobID = "adhoc"
 	}
 
-	res, err := service.ApplySuggestionsYAMLString(req.JobID, req.YAML, req.OutDir, req.Title)
+	res, err := service.ApplySuggestionsYAMLString(req.JobID, req.YAML, req.OutDir, req.Title, req.SelectedSuggestionIDs)
 	if err != nil {
 		c.String(http.StatusBadRequest, "apply suggestions failed: "+err.Error())
 		return
