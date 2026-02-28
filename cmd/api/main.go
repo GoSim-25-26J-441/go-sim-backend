@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"firebase.google.com/go/v4/auth"
+	"github.com/joho/godotenv"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
@@ -12,14 +14,13 @@ import (
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
 	amgapd "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/amg_apd"
 
+	apimiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/middleware"
 	authpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"
 	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
 	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
 	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
 
-	diphttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/http"
-	dipmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/middleware"
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
 
 	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
@@ -28,11 +29,23 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
+
+	// Projects module (from temp branch)
+	projecthttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/http"
+	projectrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/repository"
+	projectservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/service"
+
+	// Chat module
+	chat "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat"
+	chatrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat/repository"
+	chatservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat/service"
 )
 
 const serviceName = "amg-apd-service"
 
 func main() {
+	_ = godotenv.Load()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
@@ -42,18 +55,15 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// Load RAG snippets before starting server
-	if err := diprag.Load(cfg.RAG.SnippetsDir); err != nil {
-		log.Printf("RAG load: %v", err)
-	}
-
-	// Initialize database connection
+	// Initialize database connection (sql.DB for auth and simulation)
 	db, err := postgres.NewConnection(&cfg.Database)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
 	log.Printf("Database connection established")
+
+	// Single database connection for all modules
 
 	// Initialize Redis connection
 	redisClient, err := redisstorage.NewConnection(&cfg.Redis)
@@ -81,19 +91,9 @@ func main() {
 
 	// Configure CORS middleware (merged)
 	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{
-		"http://localhost:3000",
-		"http://localhost:5173",
-		"http://localhost:8080",
-	}
+	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:8080"}
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
-	corsConfig.AllowHeaders = []string{
-		"Origin", "Content-Type", "Content-Length", "Accept-Encoding",
-		"Authorization", "accept", "origin", "Cache-Control", "X-Requested-With",
-		"X-API-Key", "X-User-Id",
-		"X-CSRF-Token",
-		"X-Simulation-Callback-Secret",
-	}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With", "X-User-Id"}
 	corsConfig.AllowCredentials = true
 	corsConfig.MaxAge = 12 * time.Hour
 	router.Use(cors.New(corsConfig))
@@ -105,27 +105,53 @@ func main() {
 
 	api := router.Group("/api/v1")
 
-	// Design Input Processing routes
-	dip := api.Group("/design-input")
-	dip.Use(dipmiddleware.APIKeyMiddleware())
-	dip.Use(dipmiddleware.RequestIDMiddleware())
-	dipHandler := diphttp.New(cfg.Upstreams.LLMSvcURL, cfg.LLM.OllamaURL)
-	dipHandler.Register(dip)
+	// Design Input Processing: RAG pipeline only (require Firebase auth if available)
+	if authClient != nil {
+		dip := api.Group("/design-input")
+		dip.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+		dip.Use(apimiddleware.RequestIDMiddleware())
+		diprag.Register(dip, diprag.NewHandler())
+		log.Printf("Design Input Processing RAG endpoints registered at /api/v1/design-input/rag (Firebase auth required)")
+	} else {
+		log.Printf("Design Input Processing RAG disabled (Firebase not initialized)")
+	}
 
 	// Auth routes (only if Firebase is initialized)
 	if authClient != nil {
 		authGroup := api.Group("/auth")
 
-		// Initialize auth module
 		userRepo := authrepo.NewUserRepository(db)
 		authSvc := authservice.NewAuthService(userRepo)
 		authHandler := authhttp.New(authSvc)
 
-		// Apply Firebase Auth middleware to auth routes
 		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 		authHandler.Register(authGroup)
+	}
 
-		log.Printf("Auth endpoints registered at /api/v1/auth")
+	if authClient != nil {
+		projectsGroup := api.Group("/projects")
+		projectsGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+
+		projectRepo := projectrepo.NewProjectRepository(db)
+		diagramRepo := projectrepo.NewDiagramRepository(db)
+
+		chatRepo := chatrepo.NewChatRepository(db)
+		llmClient := chat.NewLLMClient(cfg.Upstreams.LLMSvcURL, cfg.Upstreams.LLMAPIKey)
+		chatService := chatservice.NewChatService(chatRepo, llmClient)
+
+		projectService := projectservice.NewProjectService(projectRepo)
+		diagramService := projectservice.NewDiagramService(diagramRepo)
+
+		projectHandler := projecthttp.New(projectService, chatService, diagramService)
+		projectHandler.Register(projectsGroup)
+
+		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
+
+		// Temporary chat endpoint (requires Firebase auth)
+		tempChatGroup := api.Group("/temp-chat")
+		tempChatGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+		tempChatGroup.POST("", projectHandler.TempChat)
+		log.Printf("Temporary chat endpoint registered at /api/v1/temp-chat (Firebase auth required)")
 	}
 
 	// Initialize simulation module (required for both user routes and callback routes)

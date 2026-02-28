@@ -1,0 +1,82 @@
+package http
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
+	"github.com/gin-gonic/gin"
+)
+
+type createDiagramReq struct {
+	Source         string          `json:"source,omitempty"`
+	DiagramJSON    json.RawMessage `json:"diagram_json"`
+	ImageObjectKey string          `json:"image_object_key,omitempty"`
+	SpecSummary    json.RawMessage `json:"spec_summary,omitempty"`
+	Hash           string          `json:"hash,omitempty"`
+}
+
+func (h *Handler) createVersion(c *gin.Context) {
+	publicID := strings.TrimSpace(c.Param("public_id"))
+	if publicID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
+		return
+	}
+
+	var req createDiagramReq
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.DiagramJSON) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid body"})
+		return
+	}
+
+	fuid := strings.TrimSpace(c.GetString("firebase_uid"))
+	if fuid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
+		return
+	}
+
+	ver, err := h.diagramService.CreateVersion(c.Request.Context(), fuid, publicID, domain.CreateVersionInput{
+		Source:         strings.TrimSpace(req.Source),
+		DiagramJSON:    req.DiagramJSON,
+		ImageObjectKey: strings.TrimSpace(req.ImageObjectKey),
+		SpecSummary:    req.SpecSummary,
+		Hash:           strings.TrimSpace(req.Hash),
+	})
+	if err != nil {
+		if err == domain.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"ok": true, "diagram_version": ver})
+}
+
+func (h *Handler) latest(c *gin.Context) {
+	publicID := strings.TrimSpace(c.Param("public_id"))
+	if publicID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
+		return
+	}
+
+	fuid := strings.TrimSpace(c.GetString("firebase_uid"))
+	if fuid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
+		return
+	}
+
+	ver, err := h.diagramService.GetLatest(c.Request.Context(), fuid, publicID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "no diagram found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "diagram_version": ver})
+}

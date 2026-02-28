@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -27,8 +28,19 @@ type AppConfig struct {
 	Version     string
 }
 
+type AuthConfig struct {
+	// LinkByEmail enables resolving an existing DB user by email when the Firebase UID from the
+	// token is not found (useful for Firebase Auth Emulator/dev resets). When enabled, the app
+	// will use the firebase_uid from the DB user row matching the token email.
+	LinkByEmail bool
+	// RequireEmailVerifiedForLinkByEmail blocks email-based linking unless the token has
+	// email_verified=true. Strongly recommended for production.
+	RequireEmailVerifiedForLinkByEmail bool
+}
+
 type UpstreamsConfig struct {
 	LLMSvcURL           string
+	LLMAPIKey           string
 	SimulationEngineURL string
 }
 
@@ -65,6 +77,7 @@ type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
 	App       AppConfig
+	Auth      AuthConfig
 	Upstreams UpstreamsConfig
 	LLM       LLMConfig
 	RAG       RAGConfig
@@ -81,7 +94,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Server: ServerConfig{
-			Port: getEnv("PORT", "8080"),
+			Port: getEnv("PORT", "8000"),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -95,8 +108,13 @@ func Load() (*Config, error) {
 			LogLevel:    getEnv("LOG_LEVEL", "info"),
 			Version:     getEnv("APP_VERSION", "1.0.0"),
 		},
+		Auth: AuthConfig{
+			LinkByEmail:                         getEnvAsBool("AUTH_LINK_BY_EMAIL", false),
+			RequireEmailVerifiedForLinkByEmail:  getEnvAsBool("AUTH_LINK_REQUIRE_EMAIL_VERIFIED", true),
+		},
 		Upstreams: UpstreamsConfig{
 			LLMSvcURL:           getEnv("LLM_SVC_URL", "http://localhost:8081"),
+			LLMAPIKey:           getEnv("LLM_API_KEY", ""),
 			SimulationEngineURL: getEnv("SIMULATION_ENGINE_URL", "http://localhost:8082"),
 		},
 		LLM: LLMConfig{
@@ -156,4 +174,20 @@ func getEnvAsInt(key string, defaultValue int) int {
 	}
 
 	return value
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	switch strings.ToLower(strings.TrimSpace(valueStr)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		log.Printf("Warning: Invalid boolean for %s, using default: %v", key, defaultValue)
+		return defaultValue
+	}
 }

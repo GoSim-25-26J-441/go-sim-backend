@@ -34,6 +34,13 @@ func FirebaseAuthMiddleware(authClient *auth.Client) gin.HandlerFunc {
 			c.Set("email", email)
 		}
 
+		// Extract email_verified from claims if available
+		if ev, ok := decodedToken.Claims["email_verified"].(bool); ok {
+			c.Set("email_verified", ev)
+		} else {
+			c.Set("email_verified", false)
+		}
+
 		// Store the full token for access to other claims if needed
 		c.Set("firebase_token", decodedToken)
 
