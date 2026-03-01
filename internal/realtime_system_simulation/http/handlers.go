@@ -8,7 +8,94 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CreateRun creates a new simulation run
+// CreateRunForProject creates a new simulation run for a project (project_id in path)
+func (h *Handler) CreateRunForProject(c *gin.Context) {
+	projectID := c.Param("project_id")
+	if projectID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id is required"})
+		return
+	}
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+	}
+
+	var body struct {
+		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
+		DurationMs   int64                  `json:"duration_ms,omitempty"`
+		RealTimeMode *bool                  `json:"real_time_mode,omitempty"`
+		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	req := &domain.CreateRunRequest{
+		UserID:          userID,
+		ProjectPublicID: projectID,
+		Metadata:        body.Metadata,
+	}
+	run, err := h.simService.CreateRun(req)
+	if err != nil {
+		log.Printf("Failed to create run in service: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create run", "details": err.Error()})
+		return
+	}
+
+	if body.ScenarioYAML != "" && body.DurationMs > 0 {
+		var callbackURL string
+		if h.callbackURL != "" {
+			callbackURL = h.callbackURL + "/" + run.RunID
+			log.Printf("Creating run in simulation engine with unique callback URL: %s", callbackURL)
+		} else {
+			log.Printf("Warning: SIMULATION_CALLBACK_URL not set - simulation engine will not call back when run completes")
+		}
+		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, body.RealTimeMode, callbackURL, h.callbackSecret)
+		if err != nil {
+			c.JSON(http.StatusCreated, gin.H{
+				"run":     run,
+				"warning": "run created in backend but failed to create in simulation engine: " + err.Error(),
+			})
+			return
+		}
+		run, err = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{EngineRunID: &engineRunID})
+		if err != nil {
+			c.JSON(http.StatusCreated, gin.H{
+				"run":     run,
+				"warning": "run created in engine but failed to update engine_run_id in backend",
+			})
+			return
+		}
+	}
+	c.JSON(http.StatusCreated, gin.H{"run": run})
+}
+
+// ListRunsForProject lists runs for a project (project_id in path)
+func (h *Handler) ListRunsForProject(c *gin.Context) {
+	projectID := c.Param("project_id")
+	if projectID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id is required"})
+		return
+	}
+	if c.GetString("firebase_uid") == "" && c.GetHeader("X-User-Id") == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	runIDs, err := h.simService.ListRunsByProject(projectID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list runs"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
+}
+
+// CreateRun creates a new simulation run (user-level, no project)
 func (h *Handler) CreateRun(c *gin.Context) {
 	// Get user ID from context (set by Firebase auth middleware if authenticated)
 	userID := c.GetString("firebase_uid")
@@ -33,7 +120,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		return
 	}
 
-	// Create run in backend first
+	// Create run in backend first (no project association)
 	req := &domain.CreateRunRequest{
 		UserID:   userID,
 		Metadata: body.Metadata,
@@ -210,7 +297,6 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 
 // ListRuns lists all runs for the current user
 func (h *Handler) ListRuns(c *gin.Context) {
-	// Get user ID from context
 	userID := c.GetString("firebase_uid")
 	if userID == "" {
 		userID = c.GetHeader("X-User-Id")
@@ -225,7 +311,6 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list runs"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
 }
 

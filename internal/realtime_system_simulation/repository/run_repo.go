@@ -13,7 +13,8 @@ import (
 
 const (
 	runKeyPrefix          = "sim:run:"         // Key prefix for run data: sim:run:{run_id}
-	userRunSetPrefix      = "sim:user:"        // Set of run IDs for a user: sim:user:{user_id}
+	userRunSetPrefix      = "sim:user:"        // Set of run IDs for a user: sim:user:{user_id}:runs
+	projectRunSetPrefix   = "sim:project:"     // Set of run IDs for a project: sim:project:{project_id}:runs
 	engineRunIDPrefix     = "sim:engine:"      // Mapping from engine run ID to our run ID: sim:engine:{engine_run_id} -> run_id
 	runEventChannelPrefix = "sim:events:"      // Pub/Sub channel for run events: sim:events:{run_id}
 	runTTL                = 7 * 24 * time.Hour // TTL for run data (7 days)
@@ -59,6 +60,13 @@ func (r *RunRepository) Create(run *domain.SimulationRun) error {
 	pipe.Set(r.ctx, runKey, runData, runTTL)
 	pipe.SAdd(r.ctx, userRunSetKey, run.RunID)
 	pipe.Expire(r.ctx, userRunSetKey, runTTL)
+
+	// Index by project if associated
+	if run.ProjectPublicID != "" {
+		projectRunSetKey := r.projectRunSetKey(run.ProjectPublicID)
+		pipe.SAdd(r.ctx, projectRunSetKey, run.RunID)
+		pipe.Expire(r.ctx, projectRunSetKey, runTTL)
+	}
 
 	// If engine run ID is provided, create index mapping
 	if run.EngineRunID != "" {
@@ -173,6 +181,18 @@ func (r *RunRepository) ListByUserID(userID string) ([]string, error) {
 	return runIDs, nil
 }
 
+// ListByProjectID retrieves all run IDs for a project
+func (r *RunRepository) ListByProjectID(projectPublicID string) ([]string, error) {
+	projectRunSetKey := r.projectRunSetKey(projectPublicID)
+
+	runIDs, err := r.client.SMembers(r.ctx, projectRunSetKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runs for project: %w", err)
+	}
+
+	return runIDs, nil
+}
+
 // Delete deletes a run
 func (r *RunRepository) Delete(runID string) error {
 	run, err := r.GetByRunID(runID)
@@ -186,6 +206,12 @@ func (r *RunRepository) Delete(runID string) error {
 	pipe := r.client.Pipeline()
 	pipe.Del(r.ctx, runKey)
 	pipe.SRem(r.ctx, userRunSetKey, runID)
+
+	// Remove from project index if associated
+	if run.ProjectPublicID != "" {
+		projectRunSetKey := r.projectRunSetKey(run.ProjectPublicID)
+		pipe.SRem(r.ctx, projectRunSetKey, runID)
+	}
 
 	// Remove engine run ID index if it exists
 	if run.EngineRunID != "" {
@@ -208,6 +234,10 @@ func (r *RunRepository) runKey(runID string) string {
 
 func (r *RunRepository) userRunSetKey(userID string) string {
 	return fmt.Sprintf("%s%s:runs", userRunSetPrefix, userID)
+}
+
+func (r *RunRepository) projectRunSetKey(projectPublicID string) string {
+	return fmt.Sprintf("%s%s:runs", projectRunSetPrefix, projectPublicID)
 }
 
 func (r *RunRepository) engineRunIDKey(engineRunID string) string {
