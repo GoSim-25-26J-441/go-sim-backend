@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/llm"
+	dipllm "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/_legacy_files/llm"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/repository"
 )

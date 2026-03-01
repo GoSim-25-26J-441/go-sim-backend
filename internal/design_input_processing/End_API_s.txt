@@ -1,0 +1,352 @@
+# =============================================================================
+# How to test these APIs
+# =============================================================================
+# 1. Start Auth emulator (one terminal):
+#      firebase emulators:start --only auth
+# 2. Start API with emulator (second terminal):
+#      $env:FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099"
+#      go run ./cmd/api
+# 3. Get a Firebase ID token and set $token (third terminal, from repo root):
+#      .\scripts\get-firebase-token.ps1
+#    Copy the printed "ID token" line, then in PowerShell:
+#      $token = "PASTE_THE_FULL_TOKEN_HERE"
+# 4. Run the commands below. All project endpoints require: Authorization = "Bearer $token"
+#
+# 5. Before creating projects: sync the user once so they exist in the DB (avoids
+#    "projects_user_firebase_uid_fkey" error). See "Auth – sync user" below.
+#
+# Quick test for GET /api/v1/projects only:
+#   .\scripts\get-firebase-token.ps1 -TestApi
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Health (no auth)
+# -----------------------------------------------------------------------------
+Invoke-RestMethod "http://localhost:8000/health"
+Invoke-RestMethod "http://localhost:8000/healthz"
+# Response: healthy <timestamp> go-sim-backend <version>
+
+# -----------------------------------------------------------------------------
+# Auth – sync user (run once per user before creating projects)
+# Creates/updates the user in the DB so project creation does not hit FK error.
+# -----------------------------------------------------------------------------
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/auth/sync" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"email":"malithgihana099@gmail.com"}'
+
+# -----------------------------------------------------------------------------
+# Projects – all require Authorization: Bearer <Firebase ID token>
+# Set $token first (see "How to test" above). Sync user first (see above).
+# -----------------------------------------------------------------------------
+
+# List projects
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Create project (user UID/email come from the token; no need to send them)
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"name":"My First Project","is_temporary":false}'
+
+# Rename project (replace PROJECT_PUBLIC_ID with a real id from list)
+Invoke-RestMethod -Method Patch `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"name":"Renamed Project"}'
+
+# Delete (soft delete)
+Invoke-RestMethod -Method Delete `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# -----------------------------------------------------------------------------
+# Diagram (replace PROJECT_PUBLIC_ID with a real project id)
+# -----------------------------------------------------------------------------
+# Sample body: microservices-style diagram (api-gateway -> user-service -> postgres)
+$body = @{
+  source       = "canvas_json"
+  diagram_json = @{
+    nodes = @(
+      @{ id = "api";  label = "api-gateway";   type = "service" }
+      @{ id = "user"; label = "user-service";  type = "service" }
+      @{ id = "db";   label = "postgres";      type = "db" }
+    )
+    edges = @(
+      @{ from = "api";  to = "user"; protocol = "REST" }
+      @{ from = "user"; to = "db";   protocol = "SQL" }
+    )
+  }
+  spec_summary = @{
+    services     = @("api-gateway", "user-service", "postgres")
+    dependencies = @("api-gateway->user-service(rest)", "user-service->postgres(db)")
+    datastores   = @("postgres")
+  }
+} | ConvertTo-Json -Depth 20
+
+
+# Sample body: microservices-style diagram (unique node ids; spec_summary aligned with nodes/edges)
+$body = @{
+  source       = "canvas_json"
+  diagram_json = @{
+    nodes = @(
+      @{ id = "api";        label = "api-gateway";       type = "service" }
+      @{ id = "auth";       label = "auth-service";      type = "service" }
+      @{ id = "user";       label = "user-service";      type = "service" }
+      @{ id = "payment";    label = "payment-service";   type = "service" }
+      @{ id = "orders";     label = "order-service";     type = "service" }
+      @{ id = "restaurants"; label = "restaurant-service"; type = "service" }
+      @{ id = "postgres";   label = "postgres";          type = "db" }
+      @{ id = "mongo";      label = "mongoDB";           type = "db" }
+    )
+    edges = @(
+      @{ from = "api";  to = "auth";    protocol = "REST" }
+      @{ from = "auth"; to = "user";    protocol = "REST" }
+      @{ from = "user"; to = "payment"; protocol = "REST" }
+      @{ from = "user"; to = "orders";  protocol = "REST" }
+      @{ from = "payment"; to = "orders"; protocol = "REST" }
+      @{ from = "user"; to = "postgres"; protocol = "SQL" }
+      @{ from = "orders"; to = "mongo"; protocol = "SQL" }
+    )
+  }
+  spec_summary = @{
+    services     = @("api-gateway", "auth-service", "user-service", "payment-service", "order-service", "restaurant-service")
+    datastores   = @("postgres", "mongoDB")
+    dependencies = @(
+      "api-gateway->auth-service(rest)",
+      "auth-service->user-service(rest)",
+      "user-service->payment-service(rest)",
+      "user-service->order-service(rest)",
+      "payment-service->order-service(rest)",
+      "user-service->postgres(db)",
+      "order-service->mongoDB(db)"
+    )
+  }
+} | ConvertTo-Json -Depth 20
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body $body
+
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/latest" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Get project summary (returns project details, latest diagram version, all other diagram versions, and design)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/summary" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Response example:
+# {
+#   "ok": true,
+#   "project": {
+#     "public_id": "archfind-xxxx",
+#     "name": "My Project",
+#     "is_temporary": false,
+#     "current_diagram_version_id": "dver-xxxx",
+#     "created_at": "2026-02-16T10:00:00Z",
+#     "updated_at": "2026-02-16T10:00:00Z"
+#   },
+#   "latest_diagram_version": {
+#     "id": "dver-xxxx",
+#     "project_public_id": "archfind-xxxx",
+#     "version_number": 2,
+#     "source": "canvas_json",
+#     "diagram_json": { ... },
+#     "spec_summary": { ... },
+#     "created_at": "2026-02-16T10:00:00Z"
+#   },
+#   "other_diagram_versions": [
+#     {
+#       "id": "dver-yyyy",
+#       "project_public_id": "archfind-xxxx",
+#       "version_number": 1,
+#       "source": "canvas_json",
+#       "diagram_json": { ... },
+#       "spec_summary": { ... },
+#       "created_at": "2026-02-16T09:00:00Z"
+#     }
+#   ],
+#   "design": null
+# }
+# Note: design is null because it is not stored in the database.
+# It is only used temporarily when posting the first message in a thread.
+
+# -----------------------------------------------------------------------------
+# Design Questionnaire (Design Input Processing)
+# Returns the list of questions for gathering design input before first chat message.
+# Maps to design structure: { preferred_vcpu, preferred_memory_gb, workload: { concurrent_users }, budget }
+# Only shown when thread has no chat history (first message).
+# Questions are editable in: internal/design_input_processing/rag/questions.yaml
+# -----------------------------------------------------------------------------
+
+# Get design questions (returns enabled flag and list of questions)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/design-input/rag/requirements-questions" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+ConvertTo-Json -Depth 50
+
+# Response example:
+# {
+#   "ok": true,
+#   "enabled": true,
+#   "questions": [
+#     { "id": "preferred_vcpu", "label": "Preferred vCPU count?", "type": "number", "placeholder": "e.g., 4" },
+#     { "id": "preferred_memory_gb", "label": "Preferred memory (GB)?", "type": "number", "placeholder": "e.g., 8" },
+#     { "id": "concurrent_users", "label": "Expected concurrent users?", "type": "number", "placeholder": "e.g., 1000" },
+#     { "id": "budget", "label": "Budget (e.g. USD per month)?", "type": "number", "placeholder": "e.g., 2000" }
+#   ]
+# }
+
+# To disable the questionnaire, edit questions.yaml and set enabled: false
+
+# -----------------------------------------------------------------------------
+# Chats (replace PROJECT_PUBLIC_ID and THREAD_ID with real ids)
+# -----------------------------------------------------------------------------
+
+# List all threads for logged-in user (across all projects)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/chats" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Response example:
+# {
+#   "ok": true,
+#   "threads": [
+#     {
+#       "id": "thr-xxxx",
+#       "project_public_id": "archfind-xxxx",
+#       "title": "Main chat",
+#       "binding_mode": "FOLLOW_LATEST",
+#       "pinned_diagram_version_id": null,
+#       "created_at": "2026-02-16T10:00:00Z"
+#     }
+#   ]
+# }
+
+# Notes:
+# - Diagram selection: You can optionally send diagram_version_id in the POST message body.
+#   If provided: uses that version for THIS message AND pins it to the thread (future messages use it too).
+#   If omitted: server picks automatically:
+#     - Thread with binding_mode FOLLOW_LATEST (default) => uses latest diagram.
+#     - Thread with binding_mode PINNED => uses the thread's pinned diagram version.
+# - Chat history is automatic: reuse the same THREAD_ID and previous turns are
+#   sent to the LLM as history.
+#
+# - Design input: When posting the FIRST message (no chat history), you can
+#   optionally include "design" with the structure:
+#   { "preferred_vcpu": 4, "preferred_memory_gb": 8, "workload": { "concurrent_users": 1000 }, "budget": 2000 }
+#   - If design is provided: The server will build a summary and inject it into the LLM context.
+#   - If design is empty/missing: The server will add a note "Note: No design available."
+#   Example with design: -Body '{"message":"...","design":{"preferred_vcpu":4,"preferred_memory_gb":8,"workload":{"concurrent_users":1000},"budget":2000}}'
+#   Example without design: -Body '{"message":"..."}' (note will be added automatically)
+#
+# - Mode and detail (UIGP): You can send "mode" and "detail" so the user can select behavior:
+#   mode: "instant" | "default" | "thinking"
+#     - instant: fast, minimal reasoning
+#     - default: standard behavior
+#     - thinking: deeper analysis (used automatically when diagram context is sent and mode is default/omitted)
+#   detail: optional, e.g. "high" for more detailed answers (defaults to "high" when diagram is sent and omitted)
+#   Example: -Body '{"message":"...","mode":"thinking","detail":"high"}'
+# -----------------------------------------------------------------------------
+
+# Create chat thread (default FOLLOW_LATEST = always use latest diagram for chat)
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"title":"Main chat","binding_mode":"FOLLOW_LATEST"}'
+
+# (Optional) Pin thread to a diagram version so chat uses that version instead of latest:
+# - To pin the LATEST diagram: send only binding_mode (omit diagram_version_id).
+# - To pin a SPECIFIC version: send diagram_version_id with the version id (e.g. dver-123).
+Invoke-RestMethod -Method Patch `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{ "binding_mode": "PINNED" }'
+# Or with a specific version: -Body '{ "binding_mode": "PINNED", "diagram_version_id": "dver-xxxx" }'
+
+# List threads
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# First message (starts history, attaches current diagram context)
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Hello","mode":"default"}'
+
+# First message WITH design (recommended for first message in new thread)
+# Design structure: preferred_vcpu, preferred_memory_gb, workload: { concurrent_users }, budget
+$designBody = @{
+  message = "Help me size my system"
+  mode = "default"
+  design = @{
+    preferred_vcpu = 4
+    preferred_memory_gb = 8
+    workload = @{ concurrent_users = 1000 }
+    budget = 2000
+  }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body $designBody
+
+{"message":"Tell me about this system","mode":"default","design":{"workload":{"concurrent_users":100},"preferred_vcpu":2,"preferred_memory_gb":5,"budget":200}}
+
+  # Post with user-selected mode: instant | default | thinking (optional detail e.g. "high")
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Spot missing dependencies","mode":"thinking","detail":"high"}'
+
+
+# Post message with specific diagram version (optional - overrides thread binding)
+# This uses diagram_version_id for THIS message and pins it to the thread for future messages.
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Analyze this specific diagram version","mode":"default","diagram_version_id":"dver-xxxx"}'
+
+
+
+# Second message (same THREAD_ID) - uses chat history + same diagram context
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Follow-up question about the same diagram","mode":"default"}'
+
+
+# List messages (inspect stored history)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/chats/THREAD_ID/messages" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# -----------------------------------------------------------------------------
+# Temporary Chat (no project/thread required, no history saved)
+# Simple endpoint for quick LLM interactions without persistence
+# Requires Firebase authentication (Bearer token)
+# -----------------------------------------------------------------------------
+
+# Temporary chat - only message and mode, no history, no diagram, no thread creation
+# Requires Authorization: Bearer <Firebase ID token>
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/temp-chat" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"message":"Hello, how are you?","mode":"default"}'
+
+# Response example:
+# {
+#   "ok": true,
+#   "answer": "I'm doing well, thank you! How can I help you today?",
+#   "source": "openai/gpt-4",
+#   "refs": []
+# }
+
+
