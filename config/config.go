@@ -73,6 +73,24 @@ type SimulationCallbacksConfig struct {
 	CallbackSecret string
 }
 
+// S3Config holds configuration for S3-compatible object storage (AWS S3, MinIO, etc.).
+// Module-specific paths (e.g. projects/, exports/) can be configured via env in each module.
+type S3Config struct {
+	// Bucket is the S3 bucket name
+	Bucket string
+	// Region is the AWS region (e.g. us-east-1). Used for AWS S3; MinIO may ignore.
+	Region string
+	// Endpoint is optional. When set, uses a custom endpoint (e.g. MinIO: http://localhost:9000).
+	// Leave empty for standard AWS S3.
+	Endpoint string
+	// ForcePathStyle when true uses path-style URLs (required for MinIO).
+	ForcePathStyle bool
+	// AccessKeyID and SecretAccessKey are optional. When both set, use static credentials.
+	// Otherwise the SDK uses the default credential chain (env vars, ~/.aws/credentials, IAM roles).
+	AccessKeyID     string
+	SecretAccessKey string
+}
+
 type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
@@ -82,8 +100,9 @@ type Config struct {
 	LLM       LLMConfig
 	RAG       RAGConfig
 	Firebase  FirebaseConfig
-	Redis     RedisConfig
+	Redis              RedisConfig
 	SimulationCallbacks SimulationCallbacksConfig
+	S3                  S3Config
 }
 
 func Load() (*Config, error) {
@@ -136,6 +155,14 @@ func Load() (*Config, error) {
 		SimulationCallbacks: SimulationCallbacksConfig{
 			CallbackURL:    getEnv("SIMULATION_CALLBACK_URL", ""),
 			CallbackSecret: getEnv("SIMULATION_CALLBACK_SECRET", ""),
+		},
+		S3: S3Config{
+			Bucket:          getEnv("S3_BUCKET", ""),
+			Region:          getEnv("AWS_REGION", getEnv("AWS_DEFAULT_REGION", "us-east-1")),
+			Endpoint:        getEnv("S3_ENDPOINT", ""),
+			ForcePathStyle:  getEnvAsBool("S3_FORCE_PATH_STYLE", false),
+			AccessKeyID:     getEnv("AWS_ACCESS_KEY_ID", getEnv("S3_ACCESS_KEY_ID", "")),
+			SecretAccessKey: getEnv("AWS_SECRET_ACCESS_KEY", getEnv("S3_SECRET_ACCESS_KEY", "")),
 		},
 	}
 
