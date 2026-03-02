@@ -1,4 +1,4 @@
-package analysis_suggestions
+package http
 
 import (
 	"log"

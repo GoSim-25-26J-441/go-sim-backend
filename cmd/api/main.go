@@ -12,7 +12,7 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	cronjob "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/cron"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
-	as "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/analysis_suggestions"
+	asimhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/http"
 	apimiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/middleware"
 	authpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"
@@ -185,22 +185,7 @@ func main() {
 
 	// Analysis Suggestions routes
 	analysisGroup := api.Group("/analysis-suggestions")
-	{
-		fetchHandler := as.NewFetchHandler()
-		fetchHandler.RegisterRoutes(analysisGroup)
-
-		importHandler := as.NewImportHandler()
-		importHandler.RegisterRoutes(analysisGroup)
-
-		suggestHandler := as.NewSuggestHandler("internal/analysis_suggestions/rules/rules.json", db)
-		suggestHandler.RegisterRoutes(analysisGroup)
-
-		costHandler := as.NewCostHandler(db, redisClient)
-		costHandler.RegisterRoutes(analysisGroup)
-
-		reqHandler := as.NewRequestHandler(db)
-		reqHandler.RegisterRoutes(analysisGroup)
-	}
+	asimhttp.Register(analysisGroup, db, redisClient, "internal/analysis_suggestions/rules/rules.json")
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)

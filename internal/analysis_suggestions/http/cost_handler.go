@@ -1,4 +1,4 @@
-package analysis_suggestions
+package http
 
 import (
 	"context"
@@ -43,7 +43,6 @@ func (h *CostHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/cost/:id/provider/:provider", h.HandleCostForProvider)
 }
 
-// GET REGIONS
 func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 	provider := strings.ToLower(c.Param("provider"))
 	ctx, cancel := context.WithTimeout(c, 10*time.Second)
@@ -109,7 +108,6 @@ func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 	})
 }
 
-// Calculation for all providers
 func (h *CostHandler) HandleCost(c *gin.Context) {
 	id := c.Param("id")
 	ctx, cancel := context.WithTimeout(c, 15*time.Second)
@@ -225,7 +223,6 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 		}
 	}
 
-	// Read best_candidate JSON
 	var bestJSON, reqJSON []byte
 	var created time.Time
 
@@ -257,7 +254,6 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 		return
 	}
 
-	// Calculate cluster costs for specific provider and region
 	clusterCosts, err := cc.CalculateClusterCostsForProvider(
 		ctx,
 		db,
@@ -272,7 +268,6 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 		return
 	}
 
-	//Response
 	providerClusters := make(map[string][]cc.ClusterCostResult)
 	providerClusters[provider] = clusterCosts
 

@@ -1,53 +1,14 @@
-package storage
+package repository
 
 import (
 	"context"
 	"encoding/json"
-	"time"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/domain"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type AzurePriceRow struct {
-	SKUID        string
-	Region       string
-	InstanceType string
-	VCPU         *int
-	MemoryGB     *float64
-	PricePerHour *float64
-	Currency     string
-	Unit         string
-	FetchedAt    time.Time
-	Metadata     map[string]interface{}
-}
-
-type GCPPriceRow struct {
-	SKUID        string
-	Region       string
-	Description  string
-	VCPU         *int
-	MemoryGB     *float64
-	PricePerUnit *float64
-	Currency     string
-	Unit         string
-	FetchedAt    time.Time
-	Metadata     map[string]interface{}
-}
-
-type AWSPriceRow struct {
-	SKUID        string
-	Region       string
-	InstanceType string
-	VCPU         *int
-	MemoryGB     *float64
-	PricePerHour *float64
-	Currency     string
-	Unit         string
-	FetchedAt    time.Time
-	Metadata     map[string]interface{}
-}
-
-func UpsertAzure(ctx context.Context, pool *pgxpool.Pool, r AzurePriceRow) error {
+func UpsertAzure(ctx context.Context, pool *pgxpool.Pool, r domain.AzurePriceRow) error {
 	const sql = `
 INSERT INTO azure_compute_prices
   (sku_id, provider, region, instance_type, vcpu, memory_gb, price_per_hour, currency, unit, fetched_at, metadata, created_at, updated_at)
@@ -71,7 +32,7 @@ ON CONFLICT (sku_id, region) DO UPDATE
 	return err
 }
 
-func UpsertAzureBatch(ctx context.Context, pool *pgxpool.Pool, rows []AzurePriceRow) error {
+func UpsertAzureBatch(ctx context.Context, pool *pgxpool.Pool, rows []domain.AzurePriceRow) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -104,9 +65,7 @@ ON CONFLICT (sku_id, region) DO UPDATE
 	return tx.Commit(ctx)
 }
 
-// ---------------- GCP upserts ----------------
-
-func UpsertGCP(ctx context.Context, pool *pgxpool.Pool, r GCPPriceRow) error {
+func UpsertGCP(ctx context.Context, pool *pgxpool.Pool, r domain.GCPPriceRow) error {
 	const sql = `
 INSERT INTO gcp_compute_prices
   (sku_id, provider, region, description, vcpu, memory_gb, price_per_hour, currency, unit, fetched_at, metadata, created_at, updated_at)
@@ -130,7 +89,7 @@ ON CONFLICT (sku_id, region) DO UPDATE
 	return err
 }
 
-func UpsertGCPBatch(ctx context.Context, pool *pgxpool.Pool, rows []GCPPriceRow) error {
+func UpsertGCPBatch(ctx context.Context, pool *pgxpool.Pool, rows []domain.GCPPriceRow) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -163,9 +122,7 @@ ON CONFLICT (sku_id, region) DO UPDATE
 	return tx.Commit(ctx)
 }
 
-// ---------------- AWS upserts ----------------
-
-func UpsertAWS(ctx context.Context, pool *pgxpool.Pool, r AWSPriceRow) error {
+func UpsertAWS(ctx context.Context, pool *pgxpool.Pool, r domain.AWSPriceRow) error {
 	const sql = `
 INSERT INTO aws_compute_prices
   (sku_id, provider, region, instance_type, vcpu, memory_gb, price_per_hour, currency, unit, fetched_at, metadata, created_at, updated_at)
@@ -189,7 +146,7 @@ ON CONFLICT (sku_id, region) DO UPDATE
 	return err
 }
 
-func UpsertAWSBatch(ctx context.Context, pool *pgxpool.Pool, rows []AWSPriceRow) error {
+func UpsertAWSBatch(ctx context.Context, pool *pgxpool.Pool, rows []domain.AWSPriceRow) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
