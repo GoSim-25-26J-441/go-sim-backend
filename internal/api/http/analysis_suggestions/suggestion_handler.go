@@ -1,0 +1,81 @@
+package analysis_suggestions
+
+import (
+	"database/sql"
+	"log"
+	"net/http"
+
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/rules"
+	"github.com/gin-gonic/gin"
+)
+
+type SuggestRequest struct {
+	UserID     string                `json:"user_id,omitempty"`
+	ProjectID  string                `json:"project_id"`
+	RunID      string                `json:"run_id"`
+	Design     rules.DesignInput     `json:"design"`
+	Simulation rules.SimulationInput `json:"simulation"`
+	Candidates []rules.Candidate     `json:"candidates"`
+	RuleFile   string                `json:"rule_file,omitempty"`
+}
+
+type SuggestResponse struct {
+	Best      rules.CandidateScore   `json:"best"`
+	AllScores []rules.CandidateScore `json:"all_scores"`
+	StorageID string                 `json:"storage_id"`
+}
+
+type SuggestHandler struct {
+	rulePath string
+	db       *sql.DB
+}
+
+func NewSuggestHandler(rulePath string, db *sql.DB) *SuggestHandler {
+	return &SuggestHandler{rulePath: rulePath, db: db}
+}
+
+func (h *SuggestHandler) RegisterRoutes(rg *gin.RouterGroup) {
+	rg.POST("/suggest", h.HandleSuggest)
+}
+
+func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
+	var req SuggestRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if req.ProjectID == "" || req.RunID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id and run_id are required"})
+		return
+	}
+	ruleFile := h.rulePath
+	if req.RuleFile != "" {
+		ruleFile = req.RuleFile
+	}
+	engine, err := rules.NewEngineFromFile(ruleFile, h.db)
+	if err != nil {
+		log.Printf("failed to load rules: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load rules: " + err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	results, storageID, err := engine.EvaluateAndStore(ctx, req.UserID, req.ProjectID, req.RunID, req.Design, req.Simulation, req.Candidates)
+	if err != nil {
+		log.Printf("evaluation/store error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "evaluation/store failed: " + err.Error()})
+		return
+	}
+
+	if len(results) == 0 {
+		c.JSON(http.StatusOK, gin.H{"message": "no candidates provided", "storage_id": storageID})
+		return
+	}
+
+	resp := SuggestResponse{
+		Best:      results[0],
+		AllScores: results,
+		StorageID: storageID,
+	}
+	c.JSON(http.StatusOK, resp)
+}
