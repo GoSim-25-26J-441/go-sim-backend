@@ -122,6 +122,32 @@ func (h *Handler) StartMetricsStreamProxy(runID string, engineRunID string, inte
 					eventJSON, _ := json.Marshal(forwardEvent)
 					h.redisClient.Publish(ctx, eventChannel, eventJSON)
 
+				case "metrics_snapshot":
+					// Aggregated metrics updates per BACKEND_INTEGRATION.md
+					forwardEvent := map[string]interface{}{
+						"event":  sseEvent.EventType,
+						"run_id": runID,
+					}
+					var snapshotData map[string]interface{}
+					if err := json.Unmarshal(sseEvent.Data, &snapshotData); err == nil {
+						forwardEvent["data"] = snapshotData
+					}
+					eventJSON, _ := json.Marshal(forwardEvent)
+					h.redisClient.Publish(ctx, eventChannel, eventJSON)
+
+				case "optimization_progress":
+					// Optimization runs: iteration, best_score, best_run_id per BACKEND_INTEGRATION.md
+					forwardEvent := map[string]interface{}{
+						"event":  sseEvent.EventType,
+						"run_id": runID,
+					}
+					var progressData map[string]interface{}
+					if err := json.Unmarshal(sseEvent.Data, &progressData); err == nil {
+						forwardEvent["data"] = progressData
+					}
+					eventJSON, _ := json.Marshal(forwardEvent)
+					h.redisClient.Publish(ctx, eventChannel, eventJSON)
+
 				case "complete":
 					// Simulation completed - forward event and stop proxy
 					forwardEvent := map[string]interface{}{

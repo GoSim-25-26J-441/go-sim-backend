@@ -22,11 +22,12 @@ func NewSimulationService(runRepo *repository.RunRepository) *SimulationService 
 // CreateRun creates a new simulation run
 func (s *SimulationService) CreateRun(req *domain.CreateRunRequest) (*domain.SimulationRun, error) {
 	run := &domain.SimulationRun{
-		UserID:    req.UserID,
-		Status:    domain.StatusPending,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		Metadata:  req.Metadata,
+		UserID:          req.UserID,
+		ProjectPublicID: req.ProjectPublicID,
+		Status:          domain.StatusPending,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+		Metadata:        req.Metadata,
 	}
 
 	if run.Metadata == nil {
@@ -95,6 +96,11 @@ func (s *SimulationService) UpdateRun(runID string, req *domain.UpdateRunRequest
 // ListRunsByUser retrieves all run IDs for a user
 func (s *SimulationService) ListRunsByUser(userID string) ([]string, error) {
 	return s.runRepo.ListByUserID(userID)
+}
+
+// ListRunsByProject retrieves all run IDs for a project
+func (s *SimulationService) ListRunsByProject(projectPublicID string) ([]string, error) {
+	return s.runRepo.ListByProjectID(projectPublicID)
 }
 
 // DeleteRun deletes a run

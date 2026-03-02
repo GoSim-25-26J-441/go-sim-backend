@@ -1,0 +1,29 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:order-status" [label="order-status", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:invoice" [label="invoice", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:ledger" [label="ledger", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:reconciliation" [label="reconciliation", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:search" [label="search", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:wishlist" [label="wishlist", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:offers" [label="offers", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:recommendations" [label="recommendations", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:fulfillment" [label="fulfillment", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:dispatch" [label="dispatch", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:tracking" [label="tracking", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:accounting-db" [label="accounting-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:mobile-ui" [label="mobile-ui", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:mobile-ui" -> "SERVICE:search" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:mobile-ui" -> "SERVICE:wishlist" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:mobile-ui" -> "SERVICE:offers" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:mobile-ui" -> "SERVICE:order-status" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:mobile-ui" -> "SERVICE:recommendations" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:fulfillment" -> "SERVICE:dispatch" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+  "SERVICE:dispatch" -> "SERVICE:tracking" [label="CALLS [rest] (sync)", tooltip="edge#6"];
+  "SERVICE:tracking" -> "SERVICE:fulfillment" [label="CALLS [rest] (sync)", tooltip="edge#7"];
+  "SERVICE:invoice" -> "DATABASE:accounting-db" [label="CALLS [rest] (sync)", tooltip="edge#8"];
+  "SERVICE:ledger" -> "DATABASE:accounting-db" [label="CALLS [rest] (sync)", tooltip="edge#9"];
+  "SERVICE:reconciliation" -> "DATABASE:accounting-db" [label="CALLS [rest] (sync)", tooltip="edge#10"];
+}
