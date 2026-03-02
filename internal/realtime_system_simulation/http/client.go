@@ -159,6 +159,38 @@ func (c *SimulationEngineClient) StartRun(runID string) error {
 	return nil
 }
 
+// UpdateWorkloadRate updates the request rate for a workload pattern in a running simulation.
+// Per BACKEND_INTEGRATION.md: PATCH /v1/runs/{run_id}/workload
+func (c *SimulationEngineClient) UpdateWorkloadRate(runID string, patternKey string, rateRPS float64) error {
+	reqBody := map[string]interface{}{
+		"pattern_key": patternKey,
+		"rate_rps":    rateRPS,
+	}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/runs/%s/workload", c.baseURL, runID)
+	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // StopRun stops a run in the simulation engine
 func (c *SimulationEngineClient) StopRun(runID string) error {
 	url := fmt.Sprintf("%s/v1/runs/%s:stop", c.baseURL, runID)
@@ -187,11 +219,12 @@ type SimulatorSSEEvent struct {
 	Data      []byte
 }
 
-// StreamMetrics subscribes to the simulation engine's metrics stream for a run
+// StreamMetrics subscribes to the simulation engine's metrics stream for a run.
 // Endpoint: GET /v1/runs/{run_id}/metrics/stream?interval_ms={interval}
-// Returns a channel that receives SSE events with event type and data
+// Note: BACKEND_INTEGRATION.md documents "interval" but simulation-core uses "interval_ms".
+// Returns a channel that receives SSE events with event type and data.
 func (c *SimulationEngineClient) StreamMetrics(runID string, intervalMs int, ctx context.Context) (<-chan SimulatorSSEEvent, error) {
-	// Build URL with optional interval_ms parameter
+	// Build URL with optional interval_ms parameter (simulation-core expects interval_ms)
 	url := fmt.Sprintf("%s/v1/runs/%s/metrics/stream", c.baseURL, runID)
 	if intervalMs > 0 {
 		url = fmt.Sprintf("%s?interval_ms=%d", url, intervalMs)
