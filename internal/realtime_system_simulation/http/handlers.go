@@ -314,6 +314,65 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
 }
 
+// UpdateConfiguration updates the configuration (services, workload, policies) for a running simulation.
+// It proxies configuration changes to simulation-core PATCH /v1/runs/{run_id}/configuration.
+func (h *Handler) UpdateConfiguration(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	var body UpdateRunConfigurationRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+
+	// Require at least one change to be specified
+	if len(body.Services) == 0 && len(body.Workload) == 0 && body.Policies == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one of services, workload, or policies must be provided"})
+		return
+	}
+
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.EngineRunID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run has no engine association"})
+		return
+	}
+
+	// Verify user has access
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+	}
+	if userID == "" || run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if err := h.engineClient.UpdateRunConfiguration(run.EngineRunID, &body); err != nil {
+		log.Printf("Failed to update configuration for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to update configuration in simulation engine: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "configuration updated successfully",
+		"run_id":  runID,
+	})
+}
+
 // UpdateWorkload updates the workload rate for a running simulation.
 // Proxies to simulation-core PATCH /v1/runs/{run_id}/workload per BACKEND_INTEGRATION.md.
 func (h *Handler) UpdateWorkload(c *gin.Context) {
