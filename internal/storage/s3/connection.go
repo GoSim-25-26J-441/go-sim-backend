@@ -1,8 +1,10 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -71,4 +73,43 @@ func NewConnectionIfConfigured(ctx context.Context, cfg *config.S3Config) (*Clie
 		return nil, nil
 	}
 	return NewConnection(ctx, cfg)
+}
+
+// PutObject uploads the given bytes to S3 under the provided key within this client's bucket.
+func (c *Client) PutObject(ctx context.Context, key string, data []byte) error {
+	if c == nil || c.Client == nil {
+		return fmt.Errorf("s3 client is not initialized")
+	}
+
+	_, err := c.Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(c.Bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(data),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to put object to S3 (bucket=%s, key=%s): %w", c.Bucket, key, err)
+	}
+	return nil
+}
+
+// GetObject downloads the object for the given key from this client's bucket.
+func (c *Client) GetObject(ctx context.Context, key string) ([]byte, error) {
+	if c == nil || c.Client == nil {
+		return nil, fmt.Errorf("s3 client is not initialized")
+	}
+
+	out, err := c.Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.Bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object from S3 (bucket=%s, key=%s): %w", c.Bucket, key, err)
+	}
+	defer out.Body.Close()
+
+	data, err := io.ReadAll(out.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read S3 object body (bucket=%s, key=%s): %w", c.Bucket, key, err)
+	}
+	return data, nil
 }

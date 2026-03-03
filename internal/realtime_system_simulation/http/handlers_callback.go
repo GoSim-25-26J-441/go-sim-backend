@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/subtle"
 	"log"
 	"net/http"
@@ -231,6 +232,13 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		return
 	}
 
+	// Best-candidate scenario handling: when run reaches a terminal state and S3 is configured,
+	// fetch the scenario export from the simulator and upload it to S3 under
+	// simulation/{run_id}/best_scenario.yaml. Then persist the S3 path in simulation_summaries.
+	if h.s3Client != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
+		go h.uploadBestScenarioToS3(context.Background(), run, backendStatus)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
 }
 
@@ -267,6 +275,49 @@ func mapEngineStatusToBackendStatus(engineStatus string) string {
 	default:
 		return domain.StatusPending
 	}
+}
+
+// uploadBestScenarioToS3 fetches the best scenario from the simulator export endpoint and uploads it to S3.
+// It then stores the S3 path in the simulation_summaries table for the given run.
+func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.SimulationRun, status string) {
+	if h.s3Client == nil || h.db == nil {
+		return
+	}
+	if run == nil || run.EngineRunID == "" || run.RunID == "" {
+		return
+	}
+
+	exportResp, err := h.engineClient.ExportRun(run.EngineRunID)
+	if err != nil {
+		log.Printf("Failed to export run from simulator for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
+		return
+	}
+
+	scenarioYAML := exportResp.Input.ScenarioYAML
+	if scenarioYAML == "" {
+		log.Printf("Export for run_id=%s, engine_run_id=%s did not contain scenario_yaml", run.RunID, run.EngineRunID)
+		return
+	}
+
+	key := "simulation/" + run.RunID + "/best_scenario.yaml"
+	if err := h.s3Client.PutObject(ctx, key, []byte(scenarioYAML)); err != nil {
+		log.Printf("Failed to upload best_scenario.yaml to S3 for run_id=%s: %v", run.RunID, err)
+		return
+	}
+
+	// Persist S3 path in simulation_summaries; create row if needed.
+	if _, err := h.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (run_id) DO UPDATE SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path`,
+		run.RunID, run.EngineRunID, key,
+	); err != nil {
+		log.Printf("Failed to upsert best_candidate_s3_path for run_id=%s into simulation_summaries: %v", run.RunID, err)
+		return
+	}
+
+	log.Printf("Best candidate scenario for run_id=%s stored at S3 key=%s and recorded in simulation_summaries", run.RunID, key)
 }
 
 
