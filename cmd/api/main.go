@@ -11,8 +11,8 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	cronjob "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/cron"
-	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
 	asimhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/http"
+	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
 	apimiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/middleware"
 	authpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"

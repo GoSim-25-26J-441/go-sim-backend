@@ -9,12 +9,6 @@ CREATE TABLE IF NOT EXISTS request_responses (
     run_id         VARCHAR(128)
 );
 
-ALTER TABLE request_responses
-    ADD CONSTRAINT fk_request_responses_user
-    FOREIGN KEY (user_id)
-    REFERENCES users(firebase_uid)
-    ON DELETE CASCADE;
-
 CREATE INDEX IF NOT EXISTS idx_request_responses_user_id
     ON request_responses(user_id);
 
