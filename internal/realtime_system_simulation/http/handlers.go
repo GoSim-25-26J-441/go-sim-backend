@@ -314,6 +314,71 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
 }
 
+// UpdateWorkload updates the workload rate for a running simulation.
+// Proxies to simulation-core PATCH /v1/runs/{run_id}/workload per BACKEND_INTEGRATION.md.
+func (h *Handler) UpdateWorkload(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	var body struct {
+		PatternKey string  `json:"pattern_key"`
+		RateRPS    float64 `json:"rate_rps"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+	if body.PatternKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pattern_key is required"})
+		return
+	}
+	if body.RateRPS <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rate_rps must be positive"})
+		return
+	}
+
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.EngineRunID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run has no engine association"})
+		return
+	}
+
+	// Verify user has access
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+	}
+	if userID == "" || run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if err := h.engineClient.UpdateWorkloadRate(run.EngineRunID, body.PatternKey, body.RateRPS); err != nil {
+		log.Printf("Failed to update workload for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to update workload in simulation engine: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "workload updated successfully",
+		"run_id":      runID,
+		"pattern_key": body.PatternKey,
+	})
+}
+
 // DeleteRun deletes a simulation run
 func (h *Handler) DeleteRun(c *gin.Context) {
 	runID := c.Param("id")
