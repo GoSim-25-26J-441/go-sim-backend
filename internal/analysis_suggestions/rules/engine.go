@@ -160,15 +160,18 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID, projectID, runID 
 }
 
 func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID, projectID, runID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
+	effectiveDesign := design
+
 	reqObj := struct {
 		Design     DesignInput     `json:"design"`
 		Simulation SimulationInput `json:"simulation"`
 		Candidates []Candidate     `json:"candidates"`
 	}{
-		Design:     design,
+		Design:     effectiveDesign,
 		Simulation: simulation,
 		Candidates: candidates,
 	}
+
 	reqJSON, err := json.Marshal(reqObj)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request JSON: %v", err)
@@ -182,11 +185,6 @@ func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID, projectID,
 		return "", fmt.Errorf("failed to marshal best JSON: %v", err)
 	}
 
-	sql := `
-INSERT INTO request_responses (user_id, project_id, run_id, request, response, best_candidate, created_at)
-VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, now())
-RETURNING id;
-`
 	var id string
 	projectIDVal, runIDVal := interface{}(projectID), interface{}(runID)
 	if projectID == "" {
@@ -195,8 +193,113 @@ RETURNING id;
 	if runID == "" {
 		runIDVal = nil
 	}
-	err = db.QueryRowContext(ctx, sql, userID, projectIDVal, runIDVal, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id)
-	if err != nil {
+
+	if runID != "" {
+		const checkRunSQL = `
+SELECT id
+FROM request_responses
+WHERE user_id = $1
+  AND project_id IS NOT DISTINCT FROM $2
+  AND run_id IS NOT DISTINCT FROM $3
+ORDER BY created_at DESC
+LIMIT 1;
+`
+		var existingID string
+		err = db.QueryRowContext(ctx, checkRunSQL, userID, projectIDVal, runIDVal).Scan(&existingID)
+		if err != nil && err != sql.ErrNoRows {
+			return "", fmt.Errorf("db lookup failed: %v", err)
+		}
+
+		if err == nil {
+			const updateRunSQL = `
+UPDATE request_responses
+SET request = $1::jsonb,
+    response = $2::jsonb,
+    best_candidate = $3::jsonb,
+    created_at = now()
+WHERE id = $4
+RETURNING id;
+`
+			if err := db.QueryRowContext(ctx, updateRunSQL, string(reqJSON), string(respJSON), string(bestJSON), existingID).Scan(&id); err != nil {
+				return "", fmt.Errorf("db update failed: %v", err)
+			}
+			return id, nil
+		}
+
+		const checkDesignOnlySQL = `
+SELECT id, request
+FROM request_responses
+WHERE user_id = $1
+  AND project_id IS NOT DISTINCT FROM $2
+  AND run_id IS NULL
+ORDER BY created_at DESC
+LIMIT 1;
+`
+		var designOnlyID string
+		var existingReqJSON []byte
+		err = db.QueryRowContext(ctx, checkDesignOnlySQL, userID, projectIDVal).Scan(&designOnlyID, &existingReqJSON)
+		if err != nil && err != sql.ErrNoRows {
+			return "", fmt.Errorf("db lookup (design-only) failed: %v", err)
+		}
+
+		if err == nil {
+			var storedReq struct {
+				Design DesignInput `json:"design"`
+			}
+			if err := json.Unmarshal(existingReqJSON, &storedReq); err == nil {
+				effectiveDesign = storedReq.Design
+				reqObj.Design = effectiveDesign
+				reqJSON, _ = json.Marshal(reqObj)
+			}
+
+			const updateDesignOnlySQL = `
+UPDATE request_responses
+SET run_id = $1,
+    request = $2::jsonb,
+    response = $3::jsonb,
+    best_candidate = $4::jsonb,
+    created_at = now()
+WHERE id = $5
+RETURNING id;
+`
+			if err := db.QueryRowContext(ctx, updateDesignOnlySQL, runIDVal, string(reqJSON), string(respJSON), string(bestJSON), designOnlyID).Scan(&id); err != nil {
+				return "", fmt.Errorf("db update (design-only) failed: %v", err)
+			}
+			return id, nil
+		}
+	}
+
+	const checkAnyForProjectSQL = `
+SELECT request
+FROM request_responses
+WHERE user_id = $1
+  AND project_id IS NOT DISTINCT FROM $2
+ORDER BY created_at DESC
+LIMIT 1;
+`
+	var anyReqJSON []byte
+	err = db.QueryRowContext(ctx, checkAnyForProjectSQL, userID, projectIDVal).Scan(&anyReqJSON)
+	if err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("db lookup (any project row) failed: %v", err)
+	}
+
+	if err == nil {
+		var storedReq struct {
+			Design DesignInput `json:"design"`
+		}
+		if err := json.Unmarshal(anyReqJSON, &storedReq); err == nil {
+			effectiveDesign = storedReq.Design
+			reqObj.Design = effectiveDesign
+			reqJSON, _ = json.Marshal(reqObj)
+		}
+	}
+
+	const insertSQL = `
+INSERT INTO request_responses (user_id, project_id, run_id, request, response, best_candidate, created_at)
+VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, now())
+RETURNING id;
+`
+	if err := db.QueryRowContext(ctx, insertSQL, userID, projectIDVal, runIDVal, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id); err != nil {
 		return "", fmt.Errorf("db insert failed: %v", err)
 	}
 	return id, nil
