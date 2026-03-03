@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"firebase.google.com/go/v4/auth"
@@ -24,6 +25,7 @@ import (
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
+	s3storage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/s3"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 
 	// Projects module (from temp branch)
@@ -81,6 +83,23 @@ func main() {
 		}
 	} else {
 		log.Printf("Firebase credentials not provided (auth endpoints will be disabled)")
+	}
+
+	// Initialize S3 client (optional)
+	var s3Client *s3storage.Client
+	{
+		ctx := context.Background()
+		c, err := s3storage.NewConnectionIfConfigured(ctx, &cfg.S3)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize S3 client: %v (best-candidate uploads will be disabled)", err)
+		} else {
+			s3Client = c
+			if s3Client != nil {
+				log.Printf("S3 client initialized for bucket %s", s3Client.Bucket)
+			} else {
+				log.Printf("S3 client not configured (S3_BUCKET is empty); skipping best-candidate uploads")
+			}
+		}
 	}
 
 	router := gin.Default()
@@ -160,6 +179,8 @@ func main() {
 		cfg.SimulationCallbacks.CallbackURL,
 		cfg.SimulationCallbacks.CallbackSecret,
 		redisClient,
+		db,
+		s3Client,
 	)
 
 	// Simulation-engine callback routes (called by simulation engine, NOT by end-users)

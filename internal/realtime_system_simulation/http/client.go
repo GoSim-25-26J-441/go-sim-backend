@@ -111,6 +111,35 @@ type GetRunResponse struct {
 	} `json:"run"`
 }
 
+// ExportRunResponse represents the export data from the simulator.
+type ExportRunResponse struct {
+	Input struct {
+		ScenarioYAML string `json:"scenario_yaml"`
+	} `json:"input"`
+}
+
+// UpdateRunConfigurationRequest mirrors the payload expected by the simulation-core
+// PATCH /v1/runs/{id}/configuration endpoint.
+type UpdateRunConfigurationRequest struct {
+	Services []struct {
+		ID       string   `json:"id"`
+		Replicas int      `json:"replicas"`
+		CPUCores *float64 `json:"cpu_cores,omitempty"`
+		MemoryMB *float64 `json:"memory_mb,omitempty"`
+	} `json:"services,omitempty"`
+	Workload []struct {
+		PatternKey string  `json:"pattern_key"`
+		RateRPS    float64 `json:"rate_rps"`
+	} `json:"workload,omitempty"`
+	Policies *struct {
+		Autoscaling *struct {
+			Enabled       bool    `json:"enabled"`
+			TargetCPUUtil float64 `json:"target_cpu_util"`
+			ScaleStep     int     `json:"scale_step"`
+		} `json:"autoscaling,omitempty"`
+	} `json:"policies,omitempty"`
+}
+
 // GetRun retrieves a run from the simulation engine
 func (c *SimulationEngineClient) GetRun(runID string) (*GetRunResponse, error) {
 	url := fmt.Sprintf("%s/v1/runs/%s", c.baseURL, runID)
@@ -137,6 +166,32 @@ func (c *SimulationEngineClient) GetRun(runID string) (*GetRunResponse, error) {
 	return &getResp, nil
 }
 
+// ExportRun fetches the export data for a run and returns the scenario_yaml, if present.
+func (c *SimulationEngineClient) ExportRun(runID string) (*ExportRunResponse, error) {
+	url := fmt.Sprintf("%s/v1/runs/%s/export", c.baseURL, runID)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine export: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read export response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simulation engine returned status %d for export: %s", resp.StatusCode, string(body))
+	}
+
+	var exportResp ExportRunResponse
+	if err := json.Unmarshal(body, &exportResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal export response: %w", err)
+	}
+
+	return &exportResp, nil
+}
+
 // StartRun starts a run in the simulation engine
 func (c *SimulationEngineClient) StartRun(runID string) error {
 	url := fmt.Sprintf("%s/v1/runs/%s", c.baseURL, runID)
@@ -154,6 +209,39 @@ func (c *SimulationEngineClient) StartRun(runID string) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// UpdateRunConfiguration sends a configuration update to the simulation engine for a running run.
+// It proxies to PATCH /v1/runs/{run_id}/configuration as documented in BACKEND_INTEGRATION.md.
+func (c *SimulationEngineClient) UpdateRunConfiguration(runID string, cfg *UpdateRunConfigurationRequest) error {
+	if cfg == nil {
+		return fmt.Errorf("configuration payload is required")
+	}
+
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal configuration: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/runs/%s/configuration", c.baseURL, runID)
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("simulation engine returned status %d for configuration update: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

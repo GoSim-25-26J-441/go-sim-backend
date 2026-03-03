@@ -45,6 +45,23 @@ Run integration tests:
 go test ./tests/integration/...
 ```
 
+### Best-Candidate Storage (S3)
+
+When S3 is configured (see `.env.example`), the realtime simulation module will:
+
+- On simulation completion, call the simulation-core export endpoint to retrieve the `scenario_yaml`.
+- Upload it to object storage under:
+  - `simulation/{run_id}/best_scenario.yaml` (within the configured `S3_BUCKET`).
+- Upsert the S3 object key into Postgres:
+  - `simulation_summaries.best_candidate_s3_path`.
+
+The API exposes this data via:
+
+- `GET /api/v1/simulation/runs/{run_id}/best-candidate`
+  - Returns the stored S3 path and a normalized view of the scenario’s hosts and services.
+
+If S3 is not configured (`S3_BUCKET` empty), best-candidate uploads and this endpoint are effectively disabled.
+
 ### Project Structure
 
 ```

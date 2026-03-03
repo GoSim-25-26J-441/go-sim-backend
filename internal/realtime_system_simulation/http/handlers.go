@@ -1,11 +1,13 @@
 package http
 
 import (
+	"database/sql"
 	"log"
 	"net/http"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
 // CreateRunForProject creates a new simulation run for a project (project_id in path)
@@ -194,6 +196,117 @@ func (h *Handler) GetRun(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"run": run})
 }
 
+// GetBestCandidate returns best-candidate info for a run, including S3 path and normalized hosts/services.
+func (h *Handler) GetBestCandidate(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not configured for simulation summaries"})
+		return
+	}
+
+	// Look up S3 path for best candidate scenario
+	var s3Path sql.NullString
+	err := h.db.QueryRowContext(
+		c.Request.Context(),
+		`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = $1`,
+		runID,
+	).Scan(&s3Path)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "best candidate not available for this run"})
+		return
+	}
+	if err != nil {
+		log.Printf("Failed to query best_candidate_s3_path for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load best candidate info"})
+		return
+	}
+	if !s3Path.Valid || s3Path.String == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "best candidate not available for this run"})
+		return
+	}
+
+	if h.s3Client == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "S3 client not configured; best candidate storage is disabled"})
+		return
+	}
+
+	// Fetch scenario.yaml from S3
+	data, err := h.s3Client.GetObject(c.Request.Context(), s3Path.String)
+	if err != nil {
+		log.Printf("Failed to fetch best candidate scenario from S3 for run_id=%s, key=%s: %v", runID, s3Path.String, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch best candidate scenario from storage"})
+		return
+	}
+
+	// Minimal scenario struct just for hosts/services extraction
+	type scenarioYAML struct {
+		Hosts []struct {
+			ID    string `yaml:"id"`
+			Cores int    `yaml:"cores"`
+		} `yaml:"hosts"`
+		Services []struct {
+			ID       string  `yaml:"id"`
+			Replicas int     `yaml:"replicas"`
+			CPUCores float64 `yaml:"cpu_cores"`
+			MemoryMB float64 `yaml:"memory_mb"`
+		} `yaml:"services"`
+	}
+
+	var scenario scenarioYAML
+	if err := yaml.Unmarshal(data, &scenario); err != nil {
+		log.Printf("Failed to parse best candidate scenario YAML for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse best candidate scenario"})
+		return
+	}
+
+	// Normalize hosts/services for API response
+	type bestCandidateHost struct {
+		HostID   string  `json:"host_id"`
+		CPUCores int     `json:"cpu_cores"`
+		MemoryGB float64 `json:"memory_gb"`
+	}
+	type bestCandidateService struct {
+		ServiceID string  `json:"service_id"`
+		Replicas  int     `json:"replicas"`
+		CPUCores  float64 `json:"cpu_cores"`
+		MemoryMB  float64 `json:"memory_mb"`
+	}
+
+	hosts := make([]bestCandidateHost, 0, len(scenario.Hosts))
+	for _, hst := range scenario.Hosts {
+		hosts = append(hosts, bestCandidateHost{
+			HostID:   hst.ID,
+			CPUCores: hst.Cores,
+			// For now, memory_gb is fixed at 16 as per engine defaults; can be extended later.
+			MemoryGB: 16,
+		})
+	}
+
+	services := make([]bestCandidateService, 0, len(scenario.Services))
+	for _, svc := range scenario.Services {
+		services = append(services, bestCandidateService{
+			ServiceID: svc.ID,
+			Replicas:  svc.Replicas,
+			CPUCores:  svc.CPUCores,
+			MemoryMB:  svc.MemoryMB,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"run_id": runID,
+		"best_candidate": gin.H{
+			"s3_path":  s3Path.String,
+			"hosts":    hosts,
+			"services": services,
+		},
+	})
+}
+
 // GetRunByEngineID retrieves a simulation run by engine run ID
 func (h *Handler) GetRunByEngineID(c *gin.Context) {
 	engineRunID := c.Param("engine_run_id")
@@ -312,6 +425,65 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
+}
+
+// UpdateConfiguration updates the configuration (services, workload, policies) for a running simulation.
+// It proxies configuration changes to simulation-core PATCH /v1/runs/{run_id}/configuration.
+func (h *Handler) UpdateConfiguration(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	var body UpdateRunConfigurationRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+
+	// Require at least one change to be specified
+	if len(body.Services) == 0 && len(body.Workload) == 0 && body.Policies == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one of services, workload, or policies must be provided"})
+		return
+	}
+
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.EngineRunID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run has no engine association"})
+		return
+	}
+
+	// Verify user has access
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+	}
+	if userID == "" || run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if err := h.engineClient.UpdateRunConfiguration(run.EngineRunID, &body); err != nil {
+		log.Printf("Failed to update configuration for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to update configuration in simulation engine: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "configuration updated successfully",
+		"run_id":  runID,
+	})
 }
 
 // UpdateWorkload updates the workload rate for a running simulation.
