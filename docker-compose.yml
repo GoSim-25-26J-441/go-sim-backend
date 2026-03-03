@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: admin
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - gosim_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -46,7 +46,7 @@ services:
     container_name: amg-apd
     env_file: .env
     ports:
-      - "8080:8080"
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
