@@ -5,8 +5,10 @@ import (
 	"crypto/subtle"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/gin-gonic/gin"
 )
 
@@ -239,6 +241,13 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		go h.uploadBestScenarioToS3(context.Background(), run, backendStatus)
 	}
 
+	// Metrics persistence: when run reaches a terminal state and DB is configured,
+	// fetch aggregated metrics and time-series from the simulator export endpoint and
+	// persist them into simulation_summaries and simulation_metrics_timeseries.
+	if h.db != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
+		go h.persistRunMetrics(context.Background(), run)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
 }
 
@@ -274,6 +283,85 @@ func mapEngineStatusToBackendStatus(engineStatus string) string {
 		return domain.StatusCancelled
 	default:
 		return domain.StatusPending
+	}
+}
+
+// persistRunMetrics fetches export data from the simulator and writes summaries and
+// time-series metrics into Postgres. Best-effort: failures are logged and do not
+// affect the callback response.
+func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationRun) {
+	if h.db == nil || run == nil || run.EngineRunID == "" || run.RunID == "" {
+		return
+	}
+
+	exportResp, err := h.engineClient.ExportRun(run.EngineRunID)
+	if err != nil {
+		log.Printf("Failed to export metrics for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
+		return
+	}
+
+	metricsRepo := repository.NewMetricsRepository(h.db)
+
+	// Persist aggregated metrics into simulation_summaries.metrics
+	if exportResp.Metrics != nil {
+		summaryParams := &repository.SummaryUpsertParams{
+			RunID:       run.RunID,
+			EngineRunID: run.EngineRunID,
+			Metrics:     exportResp.Metrics,
+			// For now, store an empty summary_data object. This can be extended
+			// later with derived summary fields if needed.
+			SummaryData: map[string]any{},
+		}
+		if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
+			log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)
+		}
+	}
+
+	// Persist time-series metrics into simulation_metrics_timeseries
+	if len(exportResp.TimeSeries) > 0 {
+		points := make([]repository.TimeSeriesPoint, 0)
+
+		for _, series := range exportResp.TimeSeries {
+			metricName := series.Metric
+			for _, p := range series.Points {
+				if p.Timestamp == "" {
+					continue
+				}
+				parsedTime, err := time.Parse(time.RFC3339Nano, p.Timestamp)
+				if err != nil {
+					log.Printf("Failed to parse metrics timestamp for run_id=%s metric=%s: %v", run.RunID, metricName, err)
+					continue
+				}
+
+				labels := p.Labels
+				if labels == nil {
+					labels = map[string]string{}
+				}
+
+				serviceID := labels["service_id"]
+				nodeID := labels["host_id"]
+
+				tags := make(map[string]any, len(labels))
+				for k, v := range labels {
+					tags[k] = v
+				}
+
+				points = append(points, repository.TimeSeriesPoint{
+					RunID:       run.RunID,
+					Time:        parsedTime,
+					TimestampMs: parsedTime.UnixMilli(),
+					MetricType:  metricName,
+					MetricValue: p.Value,
+					ServiceID:   serviceID,
+					NodeID:      nodeID,
+					Tags:        tags,
+				})
+			}
+		}
+
+		if err := metricsRepo.InsertTimeSeries(ctx, points); err != nil {
+			log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, err)
+		}
 	}
 }
 
