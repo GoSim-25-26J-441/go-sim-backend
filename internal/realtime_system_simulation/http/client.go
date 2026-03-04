@@ -33,13 +33,30 @@ type CreateRunRequest struct {
 	Input *RunInput `json:"input"`
 }
 
-// RunInput represents the input for a simulation run
+// OptimizationConfig configures an optimization run (batch or online).
+type OptimizationConfig struct {
+	Objective            string  `json:"objective,omitempty"`
+	MaxIterations        int32   `json:"max_iterations,omitempty"`
+	StepSize             float64 `json:"step_size,omitempty"`
+	EvaluationDurationMs int64   `json:"evaluation_duration_ms,omitempty"`
+	Online               bool    `json:"online,omitempty"`
+	TargetP95LatencyMs   float64 `json:"target_p95_latency_ms,omitempty"`
+	ControlIntervalMs    int64   `json:"control_interval_ms,omitempty"`
+	MinHosts             int32   `json:"min_hosts,omitempty"`
+	MaxHosts             int32   `json:"max_hosts,omitempty"`
+}
+
+// RunInput represents the input for a simulation run.
+// It mirrors simulation-core's RunInput message.
 type RunInput struct {
-	ScenarioYAML   string `json:"scenario_yaml"`
-	DurationMs     int64  `json:"duration_ms"`
-	RealTimeMode   *bool  `json:"real_time_mode,omitempty"` // Enable real-time mode for faster simulation
-	CallbackURL    string `json:"callback_url,omitempty"`
-	CallbackSecret string `json:"callback_secret,omitempty"` // Secret for simulator to use when calling back
+	ScenarioYAML   string              `json:"scenario_yaml"`
+	ConfigYAML     string              `json:"config_yaml,omitempty"`
+	DurationMs     int64               `json:"duration_ms"`
+	Seed           int64               `json:"seed,omitempty"`
+	RealTimeMode   *bool               `json:"real_time_mode,omitempty"` // Enable real-time mode for faster simulation
+	Optimization   *OptimizationConfig `json:"optimization,omitempty"`
+	CallbackURL    string              `json:"callback_url,omitempty"`
+	CallbackSecret string              `json:"callback_secret,omitempty"` // Secret for simulator to use when calling back
 }
 
 // CreateRunResponse represents the response from creating a run
@@ -51,17 +68,19 @@ type CreateRunResponse struct {
 	} `json:"run"`
 }
 
-// CreateRun creates a run in the simulation engine
-func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, durationMs int64, realTimeMode *bool, callbackURL string, callbackSecret string) (string, error) {
+// CreateRunWithInput creates a run in the simulation engine with a full RunInput payload.
+func (c *SimulationEngineClient) CreateRunWithInput(runID string, input *RunInput, callbackURL string, callbackSecret string) (string, error) {
+	if input == nil {
+		return "", fmt.Errorf("run input is required")
+	}
+
+	// Attach callback information to the input before sending.
+	input.CallbackURL = callbackURL
+	input.CallbackSecret = callbackSecret
+
 	reqBody := CreateRunRequest{
 		RunID: runID,
-		Input: &RunInput{
-			ScenarioYAML:   scenarioYAML,
-			DurationMs:     durationMs,
-			RealTimeMode:   realTimeMode,
-			CallbackURL:    callbackURL,
-			CallbackSecret: callbackSecret,
-		},
+		Input: input,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -97,6 +116,17 @@ func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, du
 	}
 
 	return createResp.Run.ID, nil
+}
+
+// CreateRun creates a run in the simulation engine using a minimal set of fields.
+// It is kept for backwards compatibility and delegates to CreateRunWithInput.
+func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, durationMs int64, realTimeMode *bool, callbackURL string, callbackSecret string) (string, error) {
+	input := &RunInput{
+		ScenarioYAML: scenarioYAML,
+		DurationMs:   durationMs,
+		RealTimeMode: realTimeMode,
+	}
+	return c.CreateRunWithInput(runID, input, callbackURL, callbackSecret)
 }
 
 // GetRunResponse represents the response from getting a run
