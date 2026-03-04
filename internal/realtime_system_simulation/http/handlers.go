@@ -129,7 +129,19 @@ func (h *Handler) ListRunsForProject(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list runs"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
+
+	runs := make([]*domain.SimulationRun, 0, len(runIDs))
+	for _, id := range runIDs {
+		run, err := h.simService.GetRun(id)
+		if err != nil {
+			// If a specific run cannot be loaded (e.g., expired), skip it but continue.
+			log.Printf("Warning: failed to load run %s for project %s: %v", id, projectID, err)
+			continue
+		}
+		runs = append(runs, run)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"runs": runs})
 }
 
 // CreateRun creates a new simulation run (user-level, no project)
@@ -495,7 +507,19 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list runs"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
+
+	runs := make([]*domain.SimulationRun, 0, len(runIDs))
+	for _, id := range runIDs {
+		run, err := h.simService.GetRun(id)
+		if err != nil {
+			// If a specific run cannot be loaded (e.g., expired), skip it but continue.
+			log.Printf("Warning: failed to load run %s for user %s: %v", id, userID, err)
+			continue
+		}
+		runs = append(runs, run)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"runs": runs})
 }
 
 // UpdateConfiguration updates the configuration (services, workload, policies) for a running simulation.
