@@ -36,6 +36,7 @@ func (f *fakeObjectStorage) GetObject(_ context.Context, key string) ([]byte, er
 	return f.objects[key], nil
 }
 
+
 func TestHandler_GetBestCandidate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -172,4 +173,5 @@ func TestUploadBestScenarioToS3_StoresObjectAndDBRecord(t *testing.T) {
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
 
