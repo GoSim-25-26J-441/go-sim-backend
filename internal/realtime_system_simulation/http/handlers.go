@@ -30,7 +30,20 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode *bool                  `json:"real_time_mode,omitempty"`
-		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+		ConfigYAML   string                 `json:"config_yaml,omitempty"`
+		Seed         int64                  `json:"seed,omitempty"`
+		Optimization *struct {
+			Objective            string  `json:"objective,omitempty"`
+			MaxIterations        int32   `json:"max_iterations,omitempty"`
+			StepSize             float64 `json:"step_size,omitempty"`
+			EvaluationDurationMs int64   `json:"evaluation_duration_ms,omitempty"`
+			Online               bool    `json:"online,omitempty"`
+			TargetP95LatencyMs   float64 `json:"target_p95_latency_ms,omitempty"`
+			ControlIntervalMs    int64   `json:"control_interval_ms,omitempty"`
+			MinHosts             int32   `json:"min_hosts,omitempty"`
+			MaxHosts             int32   `json:"max_hosts,omitempty"`
+		} `json:"optimization,omitempty"`
+		Metadata map[string]interface{} `json:"metadata,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -49,7 +62,8 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		return
 	}
 
-	if body.ScenarioYAML != "" && body.DurationMs > 0 {
+	online := body.Optimization != nil && body.Optimization.Online
+	if body.ScenarioYAML != "" && (body.DurationMs > 0 || online) {
 		var callbackURL string
 		if h.callbackURL != "" {
 			callbackURL = h.callbackURL + "/" + run.RunID
@@ -57,7 +71,28 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		} else {
 			log.Printf("Warning: SIMULATION_CALLBACK_URL not set - simulation engine will not call back when run completes")
 		}
-		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, body.RealTimeMode, callbackURL, h.callbackSecret)
+		input := &RunInput{
+			ScenarioYAML: body.ScenarioYAML,
+			ConfigYAML:   body.ConfigYAML,
+			DurationMs:   body.DurationMs,
+			Seed:         body.Seed,
+			RealTimeMode: body.RealTimeMode,
+		}
+		if body.Optimization != nil {
+			input.Optimization = &OptimizationConfig{
+				Objective:            body.Optimization.Objective,
+				MaxIterations:        body.Optimization.MaxIterations,
+				StepSize:             body.Optimization.StepSize,
+				EvaluationDurationMs: body.Optimization.EvaluationDurationMs,
+				Online:               body.Optimization.Online,
+				TargetP95LatencyMs:   body.Optimization.TargetP95LatencyMs,
+				ControlIntervalMs:    body.Optimization.ControlIntervalMs,
+				MinHosts:             body.Optimization.MinHosts,
+				MaxHosts:             body.Optimization.MaxHosts,
+			}
+		}
+
+		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
 		if err != nil {
 			c.JSON(http.StatusCreated, gin.H{
 				"run":     run,
@@ -114,7 +149,20 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode *bool                  `json:"real_time_mode,omitempty"` // Enable real-time mode
-		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+		ConfigYAML   string                 `json:"config_yaml,omitempty"`
+		Seed         int64                  `json:"seed,omitempty"`
+		Optimization *struct {
+			Objective            string  `json:"objective,omitempty"`
+			MaxIterations        int32   `json:"max_iterations,omitempty"`
+			StepSize             float64 `json:"step_size,omitempty"`
+			EvaluationDurationMs int64   `json:"evaluation_duration_ms,omitempty"`
+			Online               bool    `json:"online,omitempty"`
+			TargetP95LatencyMs   float64 `json:"target_p95_latency_ms,omitempty"`
+			ControlIntervalMs    int64   `json:"control_interval_ms,omitempty"`
+			MinHosts             int32   `json:"min_hosts,omitempty"`
+			MaxHosts             int32   `json:"max_hosts,omitempty"`
+		} `json:"optimization,omitempty"`
+		Metadata map[string]interface{} `json:"metadata,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -135,8 +183,10 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		return
 	}
 
-	// If scenario_yaml is provided, create run in simulation engine
-	if body.ScenarioYAML != "" && body.DurationMs > 0 {
+	// If scenario_yaml is provided, create run in simulation engine.
+	// For online optimization runs, duration_ms can be zero; the controller keeps the run alive.
+	online := body.Optimization != nil && body.Optimization.Online
+	if body.ScenarioYAML != "" && (body.DurationMs > 0 || online) {
 		// Generate unique callback URL per run (includes run_id in path for identification)
 		var callbackURL string
 		if h.callbackURL != "" {
@@ -146,7 +196,28 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		} else {
 			log.Printf("Warning: SIMULATION_CALLBACK_URL not set - simulation engine will not call back when run completes")
 		}
-		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, body.RealTimeMode, callbackURL, h.callbackSecret)
+		input := &RunInput{
+			ScenarioYAML: body.ScenarioYAML,
+			ConfigYAML:   body.ConfigYAML,
+			DurationMs:   body.DurationMs,
+			Seed:         body.Seed,
+			RealTimeMode: body.RealTimeMode,
+		}
+		if body.Optimization != nil {
+			input.Optimization = &OptimizationConfig{
+				Objective:            body.Optimization.Objective,
+				MaxIterations:        body.Optimization.MaxIterations,
+				StepSize:             body.Optimization.StepSize,
+				EvaluationDurationMs: body.Optimization.EvaluationDurationMs,
+				Online:               body.Optimization.Online,
+				TargetP95LatencyMs:   body.Optimization.TargetP95LatencyMs,
+				ControlIntervalMs:    body.Optimization.ControlIntervalMs,
+				MinHosts:             body.Optimization.MinHosts,
+				MaxHosts:             body.Optimization.MaxHosts,
+			}
+		}
+
+		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
 		if err != nil {
 			// Log error but don't fail the request - the run is already created in backend
 			// The user can retry by updating the run
