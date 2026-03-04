@@ -112,10 +112,21 @@ type GetRunResponse struct {
 }
 
 // ExportRunResponse represents the export data from the simulator.
+// It contains the original input, aggregated metrics, and optional time-series data.
 type ExportRunResponse struct {
 	Input struct {
 		ScenarioYAML string `json:"scenario_yaml"`
+		DurationMs   int64  `json:"duration_ms,omitempty"`
 	} `json:"input"`
+	Metrics    map[string]any `json:"metrics,omitempty"`
+	TimeSeries []struct {
+		Metric string `json:"metric"`
+		Points []struct {
+			Timestamp string            `json:"timestamp"`
+			Value     float64           `json:"value"`
+			Labels    map[string]string `json:"labels"`
+		} `json:"points"`
+	} `json:"time_series,omitempty"`
 }
 
 // UpdateRunConfigurationRequest mirrors the payload expected by the simulation-core
