@@ -1,11 +1,14 @@
 package http
 
 import (
+	"context"
 	"crypto/subtle"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,6 +22,11 @@ type engineRunCallbackBody struct {
 	Metrics          map[string]interface{} `json:"metrics"`
 	TimestampUnixMs  int64                  `json:"timestamp"`
 	Error            string                 `json:"error,omitempty"`  // Error message if any
+	// Optimization / batch fields (optional; present for optimization runs)
+	BestRunID     string   `json:"best_run_id,omitempty"`
+	BestScore     float64  `json:"best_score,omitempty"`
+	Iterations    int32    `json:"iterations,omitempty"`
+	TopCandidates []string `json:"top_candidates,omitempty"`
 }
 
 // EngineRunCallback handles callbacks from the simulation engine when a run changes state.
@@ -94,6 +102,20 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
+	}
+
+	// Optimization metadata (if present on callback)
+	if body.BestRunID != "" {
+		updateMeta["best_run_id"] = body.BestRunID
+	}
+	if body.BestScore != 0 {
+		updateMeta["best_score"] = body.BestScore
+	}
+	if body.Iterations != 0 {
+		updateMeta["iterations"] = body.Iterations
+	}
+	if len(body.TopCandidates) > 0 {
+		updateMeta["top_candidates"] = body.TopCandidates
 	}
 	
 	// Add metrics if provided
@@ -209,6 +231,20 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
+
+	// Optimization metadata (if present on callback)
+	if body.BestRunID != "" {
+		updateMeta["best_run_id"] = body.BestRunID
+	}
+	if body.BestScore != 0 {
+		updateMeta["best_score"] = body.BestScore
+	}
+	if body.Iterations != 0 {
+		updateMeta["iterations"] = body.Iterations
+	}
+	if len(body.TopCandidates) > 0 {
+		updateMeta["top_candidates"] = body.TopCandidates
+	}
 	
 	// Add metrics if provided
 	if len(body.Metrics) > 0 {
@@ -231,6 +267,20 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		return
 	}
 
+	// Best-candidate scenario handling: when run reaches a terminal state and S3 is configured,
+	// fetch the scenario export from the simulator and upload it to S3 under
+	// simulation/{run_id}/best_scenario.yaml. Then persist the S3 path in simulation_summaries.
+	if h.s3Client != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
+		go h.uploadBestScenarioToS3(context.Background(), run, backendStatus)
+	}
+
+	// Metrics persistence: when run reaches a terminal state and DB is configured,
+	// fetch aggregated metrics and time-series from the simulator export endpoint and
+	// persist them into simulation_summaries and simulation_metrics_timeseries.
+	if h.db != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
+		go h.persistRunMetrics(context.Background(), run)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
 }
 
@@ -247,6 +297,9 @@ func mapNumericStatusToString(statusCode int) string {
 		return "RUN_STATUS_FAILED"
 	case 5:
 		return "RUN_STATUS_CANCELLED"
+	case 6:
+		// Assuming 6 represents STOPPED in the simulator enum.
+		return "RUN_STATUS_STOPPED"
 	default:
 		return "RUN_STATUS_PENDING"
 	}
@@ -264,9 +317,172 @@ func mapEngineStatusToBackendStatus(engineStatus string) string {
 		return domain.StatusFailed
 	case "RUN_STATUS_CANCELLED":
 		return domain.StatusCancelled
+	case "RUN_STATUS_STOPPED":
+		return domain.StatusStopped
 	default:
 		return domain.StatusPending
 	}
+}
+
+// persistRunMetrics fetches export data from the simulator and writes summaries and
+// time-series metrics into Postgres. Best-effort: failures are logged and do not
+// affect the callback response.
+func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationRun) {
+	if h.db == nil || run == nil || run.EngineRunID == "" || run.RunID == "" {
+		return
+	}
+
+	exportResp, err := h.engineClient.ExportRun(run.EngineRunID)
+	if err != nil {
+		log.Printf("Failed to export metrics for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
+		return
+	}
+
+	metricsRepo := repository.NewMetricsRepository(h.db)
+
+	// Persist aggregated metrics into simulation_summaries.metrics
+	if exportResp.Metrics != nil {
+		summaryParams := &repository.SummaryUpsertParams{
+			RunID:       run.RunID,
+			EngineRunID: run.EngineRunID,
+			Metrics:     exportResp.Metrics,
+			// For now, store an empty summary_data object. This can be extended
+			// later with derived summary fields if needed.
+			SummaryData: map[string]any{},
+		}
+		if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
+			log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)
+		}
+	}
+
+	// Persist time-series metrics into simulation_metrics_timeseries
+	if len(exportResp.TimeSeries) > 0 {
+		points := make([]repository.TimeSeriesPoint, 0)
+
+		for _, series := range exportResp.TimeSeries {
+			metricName := series.Metric
+			for _, p := range series.Points {
+				if p.Timestamp == "" {
+					continue
+				}
+				parsedTime, err := time.Parse(time.RFC3339Nano, p.Timestamp)
+				if err != nil {
+					log.Printf("Failed to parse metrics timestamp for run_id=%s metric=%s: %v", run.RunID, metricName, err)
+					continue
+				}
+
+				labels := p.Labels
+				if labels == nil {
+					labels = map[string]string{}
+				}
+
+				// Derive service_id from labels; prefer explicit service_id, fall back to "service".
+				serviceID := labels["service_id"]
+				if serviceID == "" {
+					if v, ok := labels["service"]; ok {
+						serviceID = v
+					}
+				}
+
+				// Derive node_id from labels; prefer explicit host_id, fall back to "host" or "instance".
+				nodeID := labels["host_id"]
+				if nodeID == "" {
+					if v, ok := labels["host"]; ok {
+						nodeID = v
+					} else if v, ok := labels["instance"]; ok {
+						nodeID = v
+					}
+				}
+
+				tags := make(map[string]any, len(labels))
+				for k, v := range labels {
+					tags[k] = v
+				}
+
+				points = append(points, repository.TimeSeriesPoint{
+					RunID:       run.RunID,
+					Time:        parsedTime,
+					TimestampMs: parsedTime.UnixMilli(),
+					MetricType:  metricName,
+					MetricValue: p.Value,
+					ServiceID:   serviceID,
+					NodeID:      nodeID,
+					Tags:        tags,
+				})
+			}
+		}
+
+		if err := metricsRepo.InsertTimeSeries(ctx, points); err != nil {
+			log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, err)
+		}
+	}
+
+	// Persist optimization history for online optimization runs, if provided by the simulator export.
+	// This stores the full history on the parent run so the frontend can access it via GET /runs.
+	if len(exportResp.OptimizationHistory) > 0 {
+		_, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+			Metadata: map[string]interface{}{
+				"optimization_history": exportResp.OptimizationHistory,
+			},
+		})
+		if err != nil {
+			log.Printf("Failed to persist optimization_history for run_id=%s: %v", run.RunID, err)
+		}
+	}
+}
+
+// uploadBestScenarioToS3 fetches the best scenario from the simulator export endpoint and uploads it to S3.
+// It then stores the S3 path in the simulation_summaries table for the given run.
+func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.SimulationRun, status string) {
+	if h.s3Client == nil || h.db == nil {
+		return
+	}
+	if run == nil || run.EngineRunID == "" || run.RunID == "" {
+		return
+	}
+
+	exportResp, err := h.engineClient.ExportRun(run.EngineRunID)
+	if err != nil {
+		log.Printf("Failed to export run from simulator for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
+		return
+	}
+
+	scenarioYAML := exportResp.Input.ScenarioYAML
+	if scenarioYAML == "" {
+		log.Printf("Export for run_id=%s, engine_run_id=%s did not contain scenario_yaml", run.RunID, run.EngineRunID)
+		return
+	}
+
+	key := "simulation/" + run.RunID + "/best_scenario.yaml"
+	if err := h.s3Client.PutObject(ctx, key, []byte(scenarioYAML)); err != nil {
+		log.Printf("Failed to upload best_scenario.yaml to S3 for run_id=%s: %v", run.RunID, err)
+		return
+	}
+
+	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
+	if _, err := h.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_runs (run_id) VALUES ($1)
+         ON CONFLICT (run_id) DO NOTHING`,
+		run.RunID,
+	); err != nil {
+		log.Printf("Failed to ensure simulation_runs row for run_id=%s before best_candidate upsert: %v", run.RunID, err)
+		return
+	}
+
+	// Persist S3 path in simulation_summaries; create row if needed.
+	if _, err := h.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (run_id) DO UPDATE SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path`,
+		run.RunID, run.EngineRunID, key,
+	); err != nil {
+		log.Printf("Failed to upsert best_candidate_s3_path for run_id=%s into simulation_summaries: %v", run.RunID, err)
+		return
+	}
+
+	log.Printf("Best candidate scenario for run_id=%s stored at S3 key=%s and recorded in simulation_summaries", run.RunID, key)
 }
 
 

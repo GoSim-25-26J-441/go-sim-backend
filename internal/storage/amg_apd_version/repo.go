@@ -3,6 +3,7 @@ package amg_apd_version
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,18 +49,48 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 	var nextVersion int
 	err := r.db.QueryRow(`
 		SELECT COALESCE(MAX(version_number), 0) + 1
-		FROM amg_apd_versions
-		WHERE user_id = $1 AND chat_id = $2
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2
 	`, userID, chatID).Scan(&nextVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	if title == "" {
+		title = fmt.Sprintf("diagramV%d", nextVersion)
+	}
+
+	// Pack graph and detections into diagram_json as a single JSON object.
+	var payload struct {
+		Graph      json.RawMessage `json:"graph,omitempty"`
+		Detections json.RawMessage `json:"detections,omitempty"`
+	}
+	if len(graphJSON) > 0 {
+		payload.Graph = json.RawMessage(graphJSON)
+	}
+	if len(detectionsJSON) > 0 {
+		payload.Detections = json.RawMessage(detectionsJSON)
+	}
+	diagramJSON, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
 	id := uuid.New().String()
 	_, err = r.db.Exec(`
-		INSERT INTO amg_apd_versions (id, user_id, chat_id, version_number, title, yaml_content, graph_json, dot_content, detections_json)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, id, userID, chatID, nextVersion, title, yamlContent, graphJSON, dotContent, detectionsJSON)
+		INSERT INTO diagram_versions (
+			id,
+			user_firebase_uid,
+			project_public_id,
+			version_number,
+			source,
+			title,
+			yaml_content,
+			diagram_json,
+			dot_content
+		)
+		VALUES ($1, $2, $3, $4, 'amg_apd', $5, $6, $7, $8)
+	`, id, userID, chatID, nextVersion, title, yamlContent, diagramJSON, dotContent)
 	if err != nil {
 		return nil, err
 	}
@@ -89,9 +120,9 @@ func (r *Repo) ListByUserChat(userID, chatID string) ([]VersionRow, error) {
 	}
 
 	rows, err := r.db.Query(`
-		SELECT id, user_id, chat_id, version_number, title, yaml_content, graph_json, dot_content, detections_json, created_at
-		FROM amg_apd_versions
-		WHERE user_id = $1 AND chat_id = $2
+		SELECT id, user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
 		ORDER BY version_number DESC
 	`, userID, chatID)
 	if err != nil {
@@ -102,15 +133,28 @@ func (r *Repo) ListByUserChat(userID, chatID string) ([]VersionRow, error) {
 	var list []VersionRow
 	for rows.Next() {
 		var row VersionRow
-		var graphJSON, detectionsJSON []byte
+		var diagramJSON []byte
 		var dotContent sql.NullString
 		err := rows.Scan(&row.ID, &row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
-			&row.YAMLContent, &graphJSON, &dotContent, &detectionsJSON, &row.CreatedAt)
+			&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
-		row.GraphJSON = graphJSON
-		row.DetectionsJSON = detectionsJSON
+		// Unpack graph and detections from diagram_json
+		if len(diagramJSON) > 0 {
+			var payload struct {
+				Graph      json.RawMessage `json:"graph,omitempty"`
+				Detections json.RawMessage `json:"detections,omitempty"`
+			}
+			if err := json.Unmarshal(diagramJSON, &payload); err == nil {
+				if len(payload.Graph) > 0 {
+					row.GraphJSON = payload.Graph
+				}
+				if len(payload.Detections) > 0 {
+					row.DetectionsJSON = payload.Detections
+				}
+			}
+		}
 		if dotContent.Valid {
 			row.DOTContent = dotContent.String
 		}
@@ -122,22 +166,34 @@ func (r *Repo) ListByUserChat(userID, chatID string) ([]VersionRow, error) {
 // GetByID returns a single version by id. Returns nil if not found.
 func (r *Repo) GetByID(id string) (*VersionRow, error) {
 	row := &VersionRow{ID: id}
-	var graphJSON, detectionsJSON []byte
+	var diagramJSON []byte
 	var dotContent sql.NullString
 	err := r.db.QueryRow(`
-		SELECT user_id, chat_id, version_number, title, yaml_content, graph_json, dot_content, detections_json, created_at
-		FROM amg_apd_versions
-		WHERE id = $1
+		SELECT user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		FROM diagram_versions
+		WHERE id = $1 AND source = 'amg_apd'
 	`, id).Scan(&row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
-		&row.YAMLContent, &graphJSON, &dotContent, &detectionsJSON, &row.CreatedAt)
+		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	row.GraphJSON = graphJSON
-	row.DetectionsJSON = detectionsJSON
+	if len(diagramJSON) > 0 {
+		var payload struct {
+			Graph      json.RawMessage `json:"graph,omitempty"`
+			Detections json.RawMessage `json:"detections,omitempty"`
+		}
+		if err := json.Unmarshal(diagramJSON, &payload); err == nil {
+			if len(payload.Graph) > 0 {
+				row.GraphJSON = payload.Graph
+			}
+			if len(payload.Detections) > 0 {
+				row.DetectionsJSON = payload.Detections
+			}
+		}
+	}
 	if dotContent.Valid {
 		row.DOTContent = dotContent.String
 	}
@@ -164,7 +220,7 @@ func (r *Repo) GetByIDForUserChat(id, userID, chatID string) (*VersionRow, error
 
 // DeleteByID deletes a version by id. Returns whether a row was deleted.
 func (r *Repo) DeleteByID(id string) (bool, error) {
-	res, err := r.db.Exec(`DELETE FROM amg_apd_versions WHERE id = $1`, id)
+	res, err := r.db.Exec(`DELETE FROM diagram_versions WHERE id = $1 AND source = 'amg_apd'`, id)
 	if err != nil {
 		return false, err
 	}
@@ -180,7 +236,7 @@ func (r *Repo) DeleteByIDForUserChat(id, userID, chatID string) (bool, error) {
 	if chatID == "" {
 		chatID = DefaultChatID
 	}
-	res, err := r.db.Exec(`DELETE FROM amg_apd_versions WHERE id = $1 AND user_id = $2 AND chat_id = $3`, id, userID, chatID)
+	res, err := r.db.Exec(`DELETE FROM diagram_versions WHERE id = $1 AND user_firebase_uid = $2 AND project_public_id = $3 AND source = 'amg_apd'`, id, userID, chatID)
 	if err != nil {
 		return false, err
 	}
@@ -206,8 +262,8 @@ func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary,
 	}
 	rows, err := r.db.Query(`
 		SELECT id, version_number, title, created_at
-		FROM amg_apd_versions
-		WHERE user_id = $1 AND chat_id = $2
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
 		ORDER BY version_number DESC
 	`, userID, chatID)
 	if err != nil {

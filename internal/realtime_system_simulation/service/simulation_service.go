@@ -65,8 +65,11 @@ func (s *SimulationService) UpdateRun(runID string, req *domain.UpdateRunRequest
 		}
 		run.Status = *req.Status
 
-		// Set completed_at if status is completed, failed, or cancelled (terminal states)
-		if *req.Status == domain.StatusCompleted || *req.Status == domain.StatusFailed || *req.Status == domain.StatusCancelled {
+		// Set completed_at if status is completed, failed, cancelled, or stopped (terminal states)
+		if *req.Status == domain.StatusCompleted ||
+			*req.Status == domain.StatusFailed ||
+			*req.Status == domain.StatusCancelled ||
+			*req.Status == domain.StatusStopped {
 			now := time.Now()
 			run.CompletedAt = &now
 		}
@@ -77,7 +80,7 @@ func (s *SimulationService) UpdateRun(runID string, req *domain.UpdateRunRequest
 	}
 
 	// Merge metadata if provided
-	if req.Metadata != nil && len(req.Metadata) > 0 {
+	if len(req.Metadata) > 0 {
 		if run.Metadata == nil {
 			run.Metadata = make(map[string]interface{})
 		}
@@ -114,5 +117,6 @@ func isValidStatus(status string) bool {
 		status == domain.StatusRunning ||
 		status == domain.StatusCompleted ||
 		status == domain.StatusFailed ||
-		status == domain.StatusCancelled
+		status == domain.StatusCancelled ||
+		status == domain.StatusStopped
 }

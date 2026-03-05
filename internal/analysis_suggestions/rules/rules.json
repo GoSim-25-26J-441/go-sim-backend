@@ -1,0 +1,104 @@
+[
+  {
+    "id": "r1",
+    "description": "CPU utilization should be <= 80% (avoid CPU saturation)",
+    "field": "metrics.cpu_util_pct",
+    "operator": "<=",
+    "required": false
+  },
+  {
+    "id": "r2",
+    "description": "CPU utilization should not be too low (avoid over-provisioning)",
+    "field": "metrics.cpu_util_pct",
+    "operator": ">=",
+    "required": false
+  },
+  {
+    "id": "r3",
+    "description": "Memory utilization should be <= 85% (avoid memory bottlenecks)",
+    "field": "metrics.mem_util_pct",
+    "operator": "<=",
+    "required": false
+  },
+  {
+    "id": "r4",
+    "description": "Memory utilization should not be too low (avoid wasted memory)",
+    "field": "metrics.mem_util_pct",
+    "operator": ">=",
+    "required": false
+  },
+  {
+    "id": "r5",
+    "description": "Tail latency (p95) should be <= 250 ms",
+    "field": "metrics.latency_ms",
+    "operator": "<=",
+    "required": false
+  },
+  {
+    "id": "r7",
+    "description": "Prefer candidates that meet or exceed design vCPU",
+    "field": "spec.vcpu",
+    "operator": ">=",
+    "required": false,
+    "compare_with_design": true
+  },
+  {
+    "id": "r8",
+    "description": "Prefer candidates that meet or exceed design memory",
+    "field": "spec.memory_gb",
+    "operator": ">=",
+    "required": false,
+    "compare_with_design": true
+  },
+  {
+    "id": "r9",
+    "description": "Avoid excessive over-provisioning (vCPU <= 2.5x design vCPU)",
+    "field": "spec.vcpu",
+    "operator": "<=",
+    "required": false,
+    "compare_with_design": true
+  },
+  {
+    "id": "r10",
+    "description": "Avoid excessive over-provisioning (Memory <= 2.5x design memory)",
+    "field": "spec.memory_gb",
+    "operator": "<=",
+    "required": false,
+    "compare_with_design": true
+  },
+  {
+    "id": "r11",
+    "description": "If CPU utilization is very high (>85%), prefer configurations with higher vCPU",
+    "field": "metrics.cpu_util_pct",
+    "operator": ">",
+    "required": false
+  },
+  {
+    "id": "r12",
+    "description": "If memory utilization is very high (>85%), prefer configurations with higher memory",
+    "field": "metrics.mem_util_pct",
+    "operator": ">",
+    "required": false
+  },
+  {
+    "id": "r18",
+    "description": "Prefer balanced utilization (CPU between 35%-85%)",
+    "field": "metrics.cpu_util_pct",
+    "operator": ">=",
+    "required": false
+  },
+  {
+    "id": "r19",
+    "description": "Prefer balanced utilization (Memory between 35%-85%)",
+    "field": "metrics.mem_util_pct",
+    "operator": ">=",
+    "required": false
+  },
+  {
+    "id": "r20",
+    "description": "Disqualify candidates with extremely high latency (> 500ms)",
+    "field": "metrics.latency_ms",
+    "operator": "<=",
+    "required": true
+  }
+]

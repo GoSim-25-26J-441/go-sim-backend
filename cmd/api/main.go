@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
+	cronjob "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/cron"
+	asimhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/http"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
 	amgapd "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/amg_apd"
 
@@ -29,6 +32,7 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
+	s3storage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/s3"
 
 	// Projects module (from temp branch)
 	projecthttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/http"
@@ -87,6 +91,23 @@ func main() {
 		log.Printf("Firebase credentials not provided (auth endpoints will be disabled)")
 	}
 
+	// Initialize S3 client (optional)
+	var s3Client *s3storage.Client
+	{
+		ctx := context.Background()
+		c, err := s3storage.NewConnectionIfConfigured(ctx, &cfg.S3)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize S3 client: %v (best-candidate uploads will be disabled)", err)
+		} else {
+			s3Client = c
+			if s3Client != nil {
+				log.Printf("S3 client initialized for bucket %s", s3Client.Bucket)
+			} else {
+				log.Printf("S3 client not configured (S3_BUCKET is empty); skipping best-candidate uploads")
+			}
+		}
+	}
+
 	router := gin.Default()
 
 	// Configure CORS middleware (merged)
@@ -101,6 +122,8 @@ func main() {
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
 	healthHandler.RegisterRoutes(router)
 
+	scheduler := cronjob.NewScheduler()
+	scheduler.Start()
 	amgapd.Register(router, db)
 
 	api := router.Group("/api/v1")
@@ -142,7 +165,7 @@ func main() {
 		projectService := projectservice.NewProjectService(projectRepo)
 		diagramService := projectservice.NewDiagramService(diagramRepo)
 
-		projectHandler := projecthttp.New(projectService, chatService, diagramService)
+		projectHandler := projecthttp.New(projectService, chatService, diagramService, s3Client)
 		projectHandler.Register(projectsGroup)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
@@ -163,6 +186,8 @@ func main() {
 		cfg.SimulationCallbacks.CallbackURL,
 		cfg.SimulationCallbacks.CallbackSecret,
 		redisClient,
+		db,
+		s3Client,
 	)
 
 	// Simulation-engine callback routes (called by simulation engine, NOT by end-users)
@@ -171,21 +196,27 @@ func main() {
 	simHandler.RegisterEngineCallbackRoutes(simEngineGroup)
 	log.Printf("Simulation engine callback endpoints registered at /api/v1/simulation-engine/runs/callback (no Firebase auth required)")
 
-	// Simulation routes (user-facing endpoints - require Firebase auth if Firebase is initialized)
+	// Simulation routes (user-facing endpoints)
+	simGroup := api.Group("/simulation")
 	if authClient != nil {
-		simGroup := api.Group("/simulation")
-
-		// Apply Firebase Auth middleware to simulation routes (for user access)
+		// Apply Firebase Auth middleware when available (production)
 		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
 		simHandler.Register(simGroup)
 		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
 	} else {
-		log.Printf("Simulation user endpoints disabled (Firebase not initialized)")
+		// No Firebase: routes still registered; use X-User-Id header for dev (e.g. events SSE)
+		log.Printf("Simulation user endpoints registered at /api/v1/simulation (no Firebase; use X-User-Id for auth)")
 	}
+	simHandler.Register(simGroup)
+
+	// Analysis Suggestions routes
+	analysisGroup := api.Group("/analysis-suggestions")
+	asimhttp.Register(analysisGroup, db, redisClient, "internal/analysis_suggestions/rules/rules.json")
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
+	log.Printf("CORS enabled for origins: http://localhost:3000, http://localhost:8080")
 	log.Printf("Health endpoint available at: http://localhost:%s/health", cfg.Server.Port)
 
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
