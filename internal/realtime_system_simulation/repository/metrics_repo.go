@@ -89,6 +89,20 @@ func (r *MetricsRepository) InsertTimeSeries(ctx context.Context, points []TimeS
 		return nil
 	}
 
+	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
+	// All points for a single call are expected to share the same RunID.
+	runID := points[0].RunID
+	if runID != "" {
+		if _, err := r.db.ExecContext(
+			ctx,
+			`INSERT INTO simulation_runs (run_id) VALUES ($1)
+             ON CONFLICT (run_id) DO NOTHING`,
+			runID,
+		); err != nil {
+			return fmt.Errorf("failed to ensure simulation_runs row for run_id=%s before timeseries insert: %w", runID, err)
+		}
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction for timeseries insert: %w", err)

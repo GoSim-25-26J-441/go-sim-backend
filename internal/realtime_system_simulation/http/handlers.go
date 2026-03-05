@@ -94,9 +94,18 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 
 		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
 		if err != nil {
-			c.JSON(http.StatusCreated, gin.H{
-				"run":     run,
-				"warning": "run created in backend but failed to create in simulation engine: " + err.Error(),
+			// Engine run was not created – surface this as an error to the client.
+			// Mark the backend run as failed so it is clearly not active.
+			failedStatus := domain.StatusFailed
+			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+				Status: &failedStatus,
+				Metadata: map[string]interface{}{
+					"engine_error": "failed to create run in simulation engine: " + err.Error(),
+				},
+			})
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":   "failed to create run in simulation engine",
+				"details": err.Error(),
 			})
 			return
 		}
@@ -231,11 +240,18 @@ func (h *Handler) CreateRun(c *gin.Context) {
 
 		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
 		if err != nil {
-			// Log error but don't fail the request - the run is already created in backend
-			// The user can retry by updating the run
-			c.JSON(http.StatusCreated, gin.H{
-				"run":     run,
-				"warning": "run created in backend but failed to create in simulation engine: " + err.Error(),
+			// Engine run was not created – surface this as an error to the client.
+			// Mark the backend run as failed so it is clearly not active.
+			failedStatus := domain.StatusFailed
+			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+				Status: &failedStatus,
+				Metadata: map[string]interface{}{
+					"engine_error": "failed to create run in simulation engine: " + err.Error(),
+				},
+			})
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":   "failed to create run in simulation engine",
+				"details": err.Error(),
 			})
 			return
 		}
@@ -441,6 +457,21 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		return
 	}
 
+	// If the client wants to change the run status to a state that requires a live simulator
+	// but this run never got an engine_run_id (engine run was not created), surface an error
+	// instead of silently marking the run as started/completed/cancelled.
+	if body.Status != nil && run.EngineRunID == "" {
+		if *body.Status == domain.StatusRunning ||
+			*body.Status == domain.StatusCompleted ||
+			*body.Status == domain.StatusCancelled ||
+			*body.Status == domain.StatusStopped {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "simulation engine run not created; cannot change status when simulator is not running",
+			})
+			return
+		}
+	}
+
 	// If status is being set to "running" and we have an engine_run_id, start the run in the engine
 	if body.Status != nil && *body.Status == domain.StatusRunning && run.EngineRunID != "" {
 		err := h.engineClient.StartRun(run.EngineRunID)
@@ -457,14 +488,21 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		log.Printf("Started metrics stream proxy for run_id=%s, engine_run_id=%s", runID, run.EngineRunID)
 	}
 
-	// If status is being set to "cancelled" and we have an engine_run_id, stop the run in the engine
-	if body.Status != nil && *body.Status == domain.StatusCancelled && run.EngineRunID != "" {
-		err := h.engineClient.StopRun(run.EngineRunID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "failed to stop run in simulation engine: " + err.Error(),
-			})
-			return
+	// If status is being set to "cancelled" or "completed" and we have an engine_run_id, stop the run in the engine.
+	// - "cancelled": user aborts the run.
+	// - "completed": user stops an online/indefinite run (end successfully).
+	// - "stopped": explicit stop status from simulator contract.
+	if body.Status != nil && run.EngineRunID != "" {
+		if *body.Status == domain.StatusCancelled ||
+			*body.Status == domain.StatusCompleted ||
+			*body.Status == domain.StatusStopped {
+			err := h.engineClient.StopRun(run.EngineRunID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": "failed to stop run in simulation engine: " + err.Error(),
+				})
+				return
+			}
 		}
 	}
 
