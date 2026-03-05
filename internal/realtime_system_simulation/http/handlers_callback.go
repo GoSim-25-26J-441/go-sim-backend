@@ -338,8 +338,23 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 					labels = map[string]string{}
 				}
 
+				// Derive service_id from labels; prefer explicit service_id, fall back to "service".
 				serviceID := labels["service_id"]
+				if serviceID == "" {
+					if v, ok := labels["service"]; ok {
+						serviceID = v
+					}
+				}
+
+				// Derive node_id from labels; prefer explicit host_id, fall back to "host" or "instance".
 				nodeID := labels["host_id"]
+				if nodeID == "" {
+					if v, ok := labels["host"]; ok {
+						nodeID = v
+					} else if v, ok := labels["instance"]; ok {
+						nodeID = v
+					}
+				}
 
 				tags := make(map[string]any, len(labels))
 				for k, v := range labels {
