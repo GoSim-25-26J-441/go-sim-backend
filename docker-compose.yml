@@ -2,16 +2,19 @@ services:
   postgres:
     image: postgres:16
     container_name: gosim-postgres
+    env_file:
+      - .env
     environment:
-      POSTGRES_DB: gosim
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5433:5432"
+      - "${DB_PORT}:5432"
     volumes:
       - gosim_pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d gosim"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -20,7 +23,7 @@ services:
     image: redis:7-alpine
     container_name: gosim-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT}:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - gosim_redisdata:/data
@@ -30,43 +33,6 @@ services:
       timeout: 3s
       retries: 20
 
-  neo4j:
-    image: neo4j:5.25
-    container_name: neo4j
-    environment:
-      - NEO4J_AUTH=neo4j/neo4jpass
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - neo4j_data:/data
-
-  backend:
-    build: .
-    container_name: amg-apd
-    env_file: .env
-    ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      neo4j:
-        condition: service_started
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: gosim
-      REDIS_HOST: redis
-    volumes:
-      - ./samples:/app/samples:ro
-      - ./out:/app/out
-
 volumes:
   gosim_pgdata:
   gosim_redisdata:
-  postgres_data:
-  neo4j_data:
