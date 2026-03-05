@@ -1,0 +1,51 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 180
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: recommendations
+      kind: rest
+      to: profile
+    - from: profile
+      kind: rest
+      sync: true
+      to: profile-db
+    - from: recommendations
+      kind: rest
+      sync: true
+      to: profile-db
+    - from: ui
+      kind: rest
+      sync: true
+      to: bff
+    - from: bff
+      kind: rest
+      sync: true
+      to: profile
+    - from: bff
+      kind: rest
+      sync: true
+      to: recommendations
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: ui
+      type: service
+    - name: profile
+      type: service
+    - name: recommendations
+      type: service
+    - name: profile-db
+      type: service
+    - name: bff
+      type: service
+topics: []
+trace: []

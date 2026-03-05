@@ -1,0 +1,325 @@
+graph:
+    nodes:
+        DATABASE:accounting-db:
+            id: DATABASE:accounting-db
+            name: accounting-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:dispatch:
+            id: SERVICE:dispatch
+            name: dispatch
+            kind: SERVICE
+            attrs: {}
+        SERVICE:fulfillment:
+            id: SERVICE:fulfillment
+            name: fulfillment
+            kind: SERVICE
+            attrs: {}
+        SERVICE:invoice:
+            id: SERVICE:invoice
+            name: invoice
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ledger:
+            id: SERVICE:ledger
+            name: ledger
+            kind: SERVICE
+            attrs: {}
+        SERVICE:mobile-ui:
+            id: SERVICE:mobile-ui
+            name: mobile-ui
+            kind: SERVICE
+            attrs: {}
+        SERVICE:offers:
+            id: SERVICE:offers
+            name: offers
+            kind: SERVICE
+            attrs: {}
+        SERVICE:order-status:
+            id: SERVICE:order-status
+            name: order-status
+            kind: SERVICE
+            attrs: {}
+        SERVICE:recommendations:
+            id: SERVICE:recommendations
+            name: recommendations
+            kind: SERVICE
+            attrs: {}
+        SERVICE:reconciliation:
+            id: SERVICE:reconciliation
+            name: reconciliation
+            kind: SERVICE
+            attrs: {}
+        SERVICE:search:
+            id: SERVICE:search
+            name: search
+            kind: SERVICE
+            attrs: {}
+        SERVICE:tracking:
+            id: SERVICE:tracking
+            name: tracking
+            kind: SERVICE
+            attrs: {}
+        SERVICE:wishlist:
+            id: SERVICE:wishlist
+            name: wishlist
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:mobile-ui
+          to: SERVICE:search
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:mobile-ui
+          to: SERVICE:wishlist
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:mobile-ui
+          to: SERVICE:offers
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:mobile-ui
+          to: SERVICE:order-status
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:mobile-ui
+          to: SERVICE:recommendations
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:fulfillment
+          to: SERVICE:dispatch
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:dispatch
+          to: SERVICE:tracking
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:tracking
+          to: SERVICE:fulfillment
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:invoice
+          to: DATABASE:accounting-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ledger
+          to: DATABASE:accounting-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:reconciliation
+          to: DATABASE:accounting-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:dispatch:
+            - from: SERVICE:dispatch
+              to: SERVICE:tracking
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:fulfillment:
+            - from: SERVICE:fulfillment
+              to: SERVICE:dispatch
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:invoice:
+            - from: SERVICE:invoice
+              to: DATABASE:accounting-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ledger:
+            - from: SERVICE:ledger
+              to: DATABASE:accounting-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:mobile-ui:
+            - from: SERVICE:mobile-ui
+              to: SERVICE:search
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:mobile-ui
+              to: SERVICE:wishlist
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:mobile-ui
+              to: SERVICE:offers
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:mobile-ui
+              to: SERVICE:order-status
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:mobile-ui
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:reconciliation:
+            - from: SERVICE:reconciliation
+              to: DATABASE:accounting-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:tracking:
+            - from: SERVICE:tracking
+              to: SERVICE:fulfillment
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:accounting-db:
+            - from: SERVICE:invoice
+              to: DATABASE:accounting-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ledger
+              to: DATABASE:accounting-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:reconciliation
+              to: DATABASE:accounting-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:dispatch:
+            - from: SERVICE:fulfillment
+              to: SERVICE:dispatch
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:fulfillment:
+            - from: SERVICE:tracking
+              to: SERVICE:fulfillment
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:offers:
+            - from: SERVICE:mobile-ui
+              to: SERVICE:offers
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:order-status:
+            - from: SERVICE:mobile-ui
+              to: SERVICE:order-status
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:recommendations:
+            - from: SERVICE:mobile-ui
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:search:
+            - from: SERVICE:mobile-ui
+              to: SERVICE:search
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:tracking:
+            - from: SERVICE:dispatch
+              to: SERVICE:tracking
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:wishlist:
+            - from: SERVICE:mobile-ui
+              to: SERVICE:wishlist
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/ef7f63c987f44d5f/graph.dot
+svg_path: /app/out/runs/ef7f63c987f44d5f/graph.svg
+detections:
+    - kind: cycles
+      severity: HIGH
+      title: Cyclic dependency
+      summary: A loop of service dependencies was detected
+      nodes:
+        - SERVICE:tracking
+        - SERVICE:dispatch
+        - SERVICE:fulfillment
+      edges: []
+      evidence:
+        cycle_size: 3
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:mobile-ui
+      edges: []
+      evidence:
+        degree: 5
+        threshold: 4
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:mobile-ui
+        - SERVICE:search
+        - SERVICE:wishlist
+        - SERVICE:offers
+        - SERVICE:order-status
+        - SERVICE:recommendations
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 5
+        targets: 5
+        ui: SERVICE:mobile-ui

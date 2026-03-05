@@ -1,0 +1,419 @@
+graph:
+    nodes:
+        DATABASE:shared-db:
+            id: DATABASE:shared-db
+            name: shared-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:analytics:
+            id: SERVICE:analytics
+            name: analytics
+            kind: SERVICE
+            attrs: {}
+        SERVICE:feed:
+            id: SERVICE:feed
+            name: feed
+            kind: SERVICE
+            attrs: {}
+        SERVICE:graph:
+            id: SERVICE:graph
+            name: graph
+            kind: SERVICE
+            attrs: {}
+        SERVICE:notifications:
+            id: SERVICE:notifications
+            name: notifications
+            kind: SERVICE
+            attrs: {}
+        SERVICE:profile:
+            id: SERVICE:profile
+            name: profile
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ranking:
+            id: SERVICE:ranking
+            name: ranking
+            kind: SERVICE
+            attrs: {}
+        SERVICE:recommendations:
+            id: SERVICE:recommendations
+            name: recommendations
+            kind: SERVICE
+            attrs: {}
+        SERVICE:search:
+            id: SERVICE:search
+            name: search
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ui:
+            id: SERVICE:ui
+            name: ui
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:ui
+          to: SERVICE:search
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ui
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ui
+          to: SERVICE:feed
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ui
+          to: SERVICE:notifications
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ui
+          to: SERVICE:analytics
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:feed
+          to: SERVICE:ranking
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ranking
+          to: SERVICE:graph
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:graph
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:profile
+          to: SERVICE:recommendations
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:recommendations
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:search
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:profile
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:feed
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:notifications
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:analytics
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:analytics:
+            - from: SERVICE:analytics
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:feed:
+            - from: SERVICE:feed
+              to: SERVICE:ranking
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:feed
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:graph:
+            - from: SERVICE:graph
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:notifications:
+            - from: SERVICE:notifications
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:profile:
+            - from: SERVICE:profile
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:profile
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ranking:
+            - from: SERVICE:ranking
+              to: SERVICE:graph
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:recommendations:
+            - from: SERVICE:recommendations
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:search:
+            - from: SERVICE:search
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ui:
+            - from: SERVICE:ui
+              to: SERVICE:search
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ui
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ui
+              to: SERVICE:feed
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ui
+              to: SERVICE:notifications
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ui
+              to: SERVICE:analytics
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:shared-db:
+            - from: SERVICE:search
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:profile
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:feed
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:notifications
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:analytics
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:analytics:
+            - from: SERVICE:ui
+              to: SERVICE:analytics
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:feed:
+            - from: SERVICE:ui
+              to: SERVICE:feed
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:graph:
+            - from: SERVICE:ranking
+              to: SERVICE:graph
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:notifications:
+            - from: SERVICE:ui
+              to: SERVICE:notifications
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:profile:
+            - from: SERVICE:ui
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:graph
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:recommendations
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ranking:
+            - from: SERVICE:feed
+              to: SERVICE:ranking
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:recommendations:
+            - from: SERVICE:profile
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:search:
+            - from: SERVICE:ui
+              to: SERVICE:search
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/095c20802ad6d415/graph.dot
+svg_path: /app/out/runs/095c20802ad6d415/graph.svg
+detections:
+    - kind: cycles
+      severity: HIGH
+      title: Cyclic dependency
+      summary: A loop of service dependencies was detected
+      nodes:
+        - SERVICE:recommendations
+        - SERVICE:profile
+      edges: []
+      evidence:
+        cycle_size: 2
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:profile
+      edges: []
+      evidence:
+        degree: 4
+        threshold: 4
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:ui
+      edges: []
+      evidence:
+        degree: 5
+        threshold: 4
+    - kind: ping_pong_dependency
+      severity: MEDIUM
+      title: Ping-pong dependency
+      summary: Two services depend on each other (mutual calls)
+      nodes:
+        - SERVICE:profile
+        - SERVICE:recommendations
+      edges: []
+      evidence:
+        a: SERVICE:profile
+        b: SERVICE:recommendations
+    - kind: sync_call_chain
+      severity: MEDIUM
+      title: Sync call chain
+      summary: Long synchronous dependency chain can amplify latency/failure impact
+      nodes:
+        - SERVICE:ui
+        - SERVICE:feed
+        - SERVICE:ranking
+        - SERVICE:graph
+        - SERVICE:profile
+        - SERVICE:recommendations
+      edges: []
+      evidence:
+        edges: 5
+        min_edges: 4
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:ui
+        - SERVICE:search
+        - SERVICE:profile
+        - SERVICE:feed
+        - SERVICE:notifications
+        - SERVICE:analytics
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 5
+        targets: 5
+        ui: SERVICE:ui

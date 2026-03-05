@@ -1,0 +1,45 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 80
+dependencies:
+    - from: web
+      to: auth
+      kind: rest
+      sync: true
+    - from: web
+      to: catalog
+      kind: rest
+      sync: true
+    - from: catalog
+      to: database
+      kind: rest
+      sync: true
+    - from: SERVICE:web
+      to: bff
+      kind: rest
+      sync: true
+    - from: bff
+      to: SERVICE:auth
+      kind: rest
+      sync: true
+    - from: bff
+      to: SERVICE:catalog
+      kind: rest
+      sync: true
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: web
+      type: service
+    - name: auth
+      type: service
+    - name: catalog
+      type: service
+    - name: database
+      type: service
+    - name: bff
+      type: service

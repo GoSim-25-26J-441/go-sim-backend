@@ -1,0 +1,377 @@
+{
+  "graph": {
+    "nodes": {
+      "SERVICE:bff": {
+        "id": "SERVICE:bff",
+        "name": "bff",
+        "kind": "SERVICE"
+      },
+      "SERVICE:database": {
+        "id": "SERVICE:database",
+        "name": "database",
+        "kind": "SERVICE"
+      },
+      "SERVICE:new-database": {
+        "id": "SERVICE:new-database",
+        "name": "new-database",
+        "kind": "SERVICE"
+      },
+      "SERVICE:new-database2": {
+        "id": "SERVICE:new-database2",
+        "name": "new-database2",
+        "kind": "SERVICE"
+      },
+      "SERVICE:orders": {
+        "id": "SERVICE:orders",
+        "name": "orders",
+        "kind": "SERVICE"
+      },
+      "SERVICE:payments": {
+        "id": "SERVICE:payments",
+        "name": "payments",
+        "kind": "SERVICE"
+      },
+      "SERVICE:restaurants": {
+        "id": "SERVICE:restaurants",
+        "name": "restaurants",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:payments": {
+        "id": "SERVICE:service:payments",
+        "name": "SERVICE:payments",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:restaurants": {
+        "id": "SERVICE:service:restaurants",
+        "name": "SERVICE:restaurants",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:web page": {
+        "id": "SERVICE:service:web page",
+        "name": "SERVICE:web page",
+        "kind": "SERVICE"
+      },
+      "SERVICE:user": {
+        "id": "SERVICE:user",
+        "name": "user",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web page": {
+        "id": "SERVICE:web page",
+        "name": "web page",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:user",
+        "to": "SERVICE:web page",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:web page",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web page",
+        "to": "SERVICE:restaurants",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web page",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "SERVICE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:payments",
+        "to": "SERVICE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "SERVICE:new-database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "SERVICE:new-database2",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:database",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:payments",
+        "to": "SERVICE:new-database2",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:service:web page",
+        "to": "SERVICE:bff",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:service:restaurants",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:service:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/versions/ui/c76c12099def22b7/graph.dot",
+  "svg_path": "/app/out/versions/ui/c76c12099def22b7/graph.svg",
+  "detections": [
+    {
+      "kind": "cycles",
+      "severity": "HIGH",
+      "title": "Cyclic dependency",
+      "summary": "A loop of service dependencies was detected",
+      "nodes": [
+        "SERVICE:payments",
+        "SERVICE:database"
+      ],
+      "edges": [],
+      "evidence": {
+        "cycle_size": 2
+      }
+    },
+    {
+      "kind": "cycles",
+      "severity": "HIGH",
+      "title": "Cyclic dependency",
+      "summary": "A loop of service dependencies was detected",
+      "nodes": [
+        "SERVICE:restaurants",
+        "SERVICE:web page",
+        "SERVICE:orders"
+      ],
+      "edges": [],
+      "evidence": {
+        "cycle_size": 3
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:web page"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 4,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "ping_pong_dependency",
+      "severity": "MEDIUM",
+      "title": "Ping-pong dependency",
+      "summary": "Two services depend on each other (mutual calls)",
+      "nodes": [
+        "SERVICE:payments",
+        "SERVICE:database"
+      ],
+      "edges": [],
+      "evidence": {
+        "a": "SERVICE:payments",
+        "b": "SERVICE:database"
+      }
+    },
+    {
+      "kind": "reverse_dependency",
+      "severity": "HIGH",
+      "title": "Reverse dependency (backend → UI)",
+      "summary": "Backend service depends on the UI/frontend layer",
+      "nodes": [
+        "SERVICE:user",
+        "SERVICE:web page"
+      ],
+      "edges": [],
+      "evidence": {
+        "from": "SERVICE:user",
+        "to": "SERVICE:web page"
+      }
+    },
+    {
+      "kind": "reverse_dependency",
+      "severity": "HIGH",
+      "title": "Reverse dependency (backend → UI)",
+      "summary": "Backend service depends on the UI/frontend layer",
+      "nodes": [
+        "SERVICE:orders",
+        "SERVICE:web page"
+      ],
+      "edges": [],
+      "evidence": {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:web page"
+      }
+    },
+    {
+      "kind": "shared_database",
+      "severity": "HIGH",
+      "title": "Shared database",
+      "summary": "Multiple services depend on the same database node",
+      "nodes": [
+        "SERVICE:database",
+        "SERVICE:orders",
+        "SERVICE:restaurants",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "clients": 3,
+        "db": "SERVICE:database",
+        "min_clients": 2
+      }
+    },
+    {
+      "kind": "shared_database",
+      "severity": "MEDIUM",
+      "title": "Shared database",
+      "summary": "Multiple services depend on the same database node",
+      "nodes": [
+        "SERVICE:new-database2",
+        "SERVICE:restaurants",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "clients": 2,
+        "db": "SERVICE:new-database2",
+        "min_clients": 2
+      }
+    },
+    {
+      "kind": "sync_call_chain",
+      "severity": "MEDIUM",
+      "title": "Sync call chain",
+      "summary": "Long synchronous dependency chain can amplify latency/failure impact",
+      "nodes": [
+        "SERVICE:user",
+        "SERVICE:web page",
+        "SERVICE:restaurants",
+        "SERVICE:orders",
+        "SERVICE:database",
+        "SERVICE:payments",
+        "SERVICE:new-database2"
+      ],
+      "edges": [],
+      "evidence": {
+        "edges": 6,
+        "min_edges": 4
+      }
+    },
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:web page",
+        "SERVICE:payments",
+        "SERVICE:restaurants"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 2,
+        "targets": 2,
+        "ui": "SERVICE:web page"
+      }
+    }
+  ]
+}

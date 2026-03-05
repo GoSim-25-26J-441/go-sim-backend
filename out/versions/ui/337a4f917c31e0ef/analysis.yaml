@@ -1,0 +1,149 @@
+graph:
+    nodes:
+        DATABASE:profile-db:
+            id: DATABASE:profile-db
+            name: profile-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:bff:
+            id: SERVICE:bff
+            name: bff
+            kind: SERVICE
+            attrs: {}
+        SERVICE:profile:
+            id: SERVICE:profile
+            name: profile
+            kind: SERVICE
+            attrs: {}
+        SERVICE:recommendations:
+            id: SERVICE:recommendations
+            name: recommendations
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ui:
+            id: SERVICE:ui
+            name: ui
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:profile
+          to: SERVICE:recommendations
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: false
+        - from: SERVICE:profile
+          to: DATABASE:profile-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:recommendations
+          to: DATABASE:profile-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ui
+          to: SERVICE:bff
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:recommendations
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:bff:
+            - from: SERVICE:bff
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:profile:
+            - from: SERVICE:profile
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+            - from: SERVICE:profile
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:recommendations:
+            - from: SERVICE:recommendations
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ui:
+            - from: SERVICE:ui
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:profile-db:
+            - from: SERVICE:profile
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:recommendations
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff:
+            - from: SERVICE:ui
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:profile:
+            - from: SERVICE:bff
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:recommendations:
+            - from: SERVICE:profile
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+            - from: SERVICE:bff
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/versions/ui/337a4f917c31e0ef/graph.dot
+svg_path: /app/out/versions/ui/337a4f917c31e0ef/graph.svg
+detections: []
