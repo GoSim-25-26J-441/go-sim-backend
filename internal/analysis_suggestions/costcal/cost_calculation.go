@@ -39,13 +39,15 @@ type CostResult struct {
 }
 
 type ClusterCostResult struct {
-	Provider          string `json:"provider"`
-	PurchaseType      string `json:"purchase_type"`
-	LeaseContractType string `json:"lease_contract_length"`
+	Provider          string  `json:"provider"`
+	PurchaseType      string  `json:"purchase_type"`
+	LeaseContractType string  `json:"lease_contract_length"`
 
-	InstanceType string `json:"instance_type"`
-	Region       string `json:"region"`
-	Nodes        int    `json:"nodes"`
+	InstanceType string  `json:"instance_type"`
+	Region       string  `json:"region"`
+	Nodes        int     `json:"nodes"`
+	VCPUs        int     `json:"vcpus"`
+	MemoryGB     float64 `json:"memory_gb"`
 
 	PricePerNodeHour  float64 `json:"price_per_node_hour"`
 	PricePerNodeMonth float64 `json:"price_per_node_month"`
@@ -210,6 +212,8 @@ func CalculateClusterCosts(
 				InstanceType:      nodeCost.InstanceType,
 				Region:            selectedRegion,
 				Nodes:             nodeCount,
+				VCPUs:             nodeCost.MatchedVCPU,
+				MemoryGB:          nodeCost.MatchedMemoryGB,
 
 				PricePerNodeHour:  round(nHr, 5),
 				PricePerNodeMonth: round(nMo, 2),
@@ -299,6 +303,8 @@ func CalculateClusterCostsForProvider(
 			InstanceType:      nodeCost.InstanceType,
 			Region:            nodeCost.Region,
 			Nodes:             nodeCount,
+			VCPUs:             nodeCost.MatchedVCPU,
+			MemoryGB:          nodeCost.MatchedMemoryGB,
 
 			PricePerNodeHour:  round(nHr, 5),
 			PricePerNodeMonth: round(nMo, 2),
