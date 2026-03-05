@@ -2,19 +2,17 @@ services:
   postgres:
     image: postgres:16
     container_name: gosim-postgres
-    env_file:
-      - .env
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: gosim
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
     ports:
-      - "${DB_PORT}:5432"
+      - "5432:5432"
     volumes:
       - gosim_pgdata:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gosim"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -23,7 +21,7 @@ services:
     image: redis:7-alpine
     container_name: gosim-redis
     ports:
-      - "${REDIS_PORT}:6379"
+      - "6379:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - gosim_redisdata:/data
