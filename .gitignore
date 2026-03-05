@@ -72,3 +72,6 @@ tmp/
 
 # firebase service account credentials
 firebase-service-account.json
+
+# Docker
+docker-compose.yml
