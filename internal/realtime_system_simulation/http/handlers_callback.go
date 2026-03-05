@@ -22,6 +22,11 @@ type engineRunCallbackBody struct {
 	Metrics          map[string]interface{} `json:"metrics"`
 	TimestampUnixMs  int64                  `json:"timestamp"`
 	Error            string                 `json:"error,omitempty"`  // Error message if any
+	// Optimization / batch fields (optional; present for optimization runs)
+	BestRunID     string   `json:"best_run_id,omitempty"`
+	BestScore     float64  `json:"best_score,omitempty"`
+	Iterations    int32    `json:"iterations,omitempty"`
+	TopCandidates []string `json:"top_candidates,omitempty"`
 }
 
 // EngineRunCallback handles callbacks from the simulation engine when a run changes state.
@@ -97,6 +102,20 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
+	}
+
+	// Optimization metadata (if present on callback)
+	if body.BestRunID != "" {
+		updateMeta["best_run_id"] = body.BestRunID
+	}
+	if body.BestScore != 0 {
+		updateMeta["best_score"] = body.BestScore
+	}
+	if body.Iterations != 0 {
+		updateMeta["iterations"] = body.Iterations
+	}
+	if len(body.TopCandidates) > 0 {
+		updateMeta["top_candidates"] = body.TopCandidates
 	}
 	
 	// Add metrics if provided
@@ -212,6 +231,20 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
+
+	// Optimization metadata (if present on callback)
+	if body.BestRunID != "" {
+		updateMeta["best_run_id"] = body.BestRunID
+	}
+	if body.BestScore != 0 {
+		updateMeta["best_score"] = body.BestScore
+	}
+	if body.Iterations != 0 {
+		updateMeta["iterations"] = body.Iterations
+	}
+	if len(body.TopCandidates) > 0 {
+		updateMeta["top_candidates"] = body.TopCandidates
+	}
 	
 	// Add metrics if provided
 	if len(body.Metrics) > 0 {
@@ -264,6 +297,9 @@ func mapNumericStatusToString(statusCode int) string {
 		return "RUN_STATUS_FAILED"
 	case 5:
 		return "RUN_STATUS_CANCELLED"
+	case 6:
+		// Assuming 6 represents STOPPED in the simulator enum.
+		return "RUN_STATUS_STOPPED"
 	default:
 		return "RUN_STATUS_PENDING"
 	}
@@ -281,6 +317,8 @@ func mapEngineStatusToBackendStatus(engineStatus string) string {
 		return domain.StatusFailed
 	case "RUN_STATUS_CANCELLED":
 		return domain.StatusCancelled
+	case "RUN_STATUS_STOPPED":
+		return domain.StatusStopped
 	default:
 		return domain.StatusPending
 	}
@@ -378,6 +416,19 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, err)
 		}
 	}
+
+	// Persist optimization history for online optimization runs, if provided by the simulator export.
+	// This stores the full history on the parent run so the frontend can access it via GET /runs.
+	if len(exportResp.OptimizationHistory) > 0 {
+		_, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+			Metadata: map[string]interface{}{
+				"optimization_history": exportResp.OptimizationHistory,
+			},
+		})
+		if err != nil {
+			log.Printf("Failed to persist optimization_history for run_id=%s: %v", run.RunID, err)
+		}
+	}
 }
 
 // uploadBestScenarioToS3 fetches the best scenario from the simulator export endpoint and uploads it to S3.
@@ -405,6 +456,17 @@ func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.Simula
 	key := "simulation/" + run.RunID + "/best_scenario.yaml"
 	if err := h.s3Client.PutObject(ctx, key, []byte(scenarioYAML)); err != nil {
 		log.Printf("Failed to upload best_scenario.yaml to S3 for run_id=%s: %v", run.RunID, err)
+		return
+	}
+
+	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
+	if _, err := h.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_runs (run_id) VALUES ($1)
+         ON CONFLICT (run_id) DO NOTHING`,
+		run.RunID,
+	); err != nil {
+		log.Printf("Failed to ensure simulation_runs row for run_id=%s before best_candidate upsert: %v", run.RunID, err)
 		return
 	}
 
