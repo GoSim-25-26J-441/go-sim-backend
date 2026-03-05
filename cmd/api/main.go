@@ -165,7 +165,7 @@ func main() {
 		projectService := projectservice.NewProjectService(projectRepo)
 		diagramService := projectservice.NewDiagramService(diagramRepo)
 
-		projectHandler := projecthttp.New(projectService, chatService, diagramService)
+		projectHandler := projecthttp.New(projectService, chatService, diagramService, s3Client)
 		projectHandler.Register(projectsGroup)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")

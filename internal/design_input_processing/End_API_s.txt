@@ -87,6 +87,19 @@ $body = @{
 } | ConvertTo-Json -Depth 20
 
 
+# (Optional) Upload a diagram image (PNG/JPG) to S3 and get image_object_key
+# Replace PATH_TO_IMAGE with a local file path.
+$imagePath = "C:\PATH_TO_IMAGE\diagram.png"
+$form = @{
+  file = Get-Item $imagePath
+}
+$uploadResponse = Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/image" `
+  -Headers @{ "Authorization" = "Bearer $token" } `
+  -Form $form
+
+$imageKey = $uploadResponse.image_object_key
+
 # Sample body: microservices-style diagram (unique node ids; spec_summary aligned with nodes/edges)
 $body = @{
   source       = "canvas_json"
@@ -124,6 +137,7 @@ $body = @{
       "order-service->mongoDB(db)"
     )
   }
+  image_object_key = $imageKey  # optional: omit if no image uploaded
 } | ConvertTo-Json -Depth 20
 
 Invoke-RestMethod -Method Post `

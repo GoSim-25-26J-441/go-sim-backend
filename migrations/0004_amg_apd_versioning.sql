@@ -1,3 +1,10 @@
+-- AMG-APD versioning is now stored in the unified diagram_versions table
+-- defined in 0002_projects_chats_diagrams.sql. This migration is retained
+-- only for backwards compatibility; the dedicated amg_apd_versions table is
+-- removed if it exists.
+
+DROP TABLE IF EXISTS amg_apd_versions;
+
 -- AMG-APD versioning: store analyses per user_id + chat_id for history, compare, delete
 -- Uses PostgreSQL; connection details from .env (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)
 

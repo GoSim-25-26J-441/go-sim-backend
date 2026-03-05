@@ -37,7 +37,7 @@ Thumbs.db
 /tmp/
 /logs/
 
-# # Environment variables
+# Environment variables
 .env
 .env.local
 
