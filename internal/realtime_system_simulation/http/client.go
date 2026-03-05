@@ -141,6 +141,19 @@ type GetRunResponse struct {
 	} `json:"run"`
 }
 
+// OptimizationStep represents a single optimization step in an online optimization run.
+// It mirrors the payload of the optimization_step SSE event and the optimization_history entries
+// in the simulator's GET /v1/runs/{id} and /v1/runs/{id}/export responses.
+type OptimizationStep struct {
+	IterationIndex int                    `json:"iteration_index"`
+	TargetP95Ms    float64                `json:"target_p95_ms"`
+	ScoreP95Ms     float64                `json:"score_p95_ms"`
+	Reason         string                 `json:"reason"`
+	PreviousConfig map[string]any         `json:"previous_config,omitempty"`
+	CurrentConfig  map[string]any         `json:"current_config,omitempty"`
+	Extra          map[string]interface{} `json:"-"` // reserved for future extension if needed
+}
+
 // ExportRunResponse represents the export data from the simulator.
 // It contains the original input, aggregated metrics, and optional time-series data.
 type ExportRunResponse struct {
@@ -148,8 +161,9 @@ type ExportRunResponse struct {
 		ScenarioYAML string `json:"scenario_yaml"`
 		DurationMs   int64  `json:"duration_ms,omitempty"`
 	} `json:"input"`
-	Metrics    map[string]any `json:"metrics,omitempty"`
-	TimeSeries []struct {
+	Metrics             map[string]any `json:"metrics,omitempty"`
+	OptimizationHistory []OptimizationStep `json:"optimization_history,omitempty"`
+	TimeSeries          []struct {
 		Metric string `json:"metric"`
 		Points []struct {
 			Timestamp string            `json:"timestamp"`

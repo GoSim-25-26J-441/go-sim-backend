@@ -416,6 +416,19 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, err)
 		}
 	}
+
+	// Persist optimization history for online optimization runs, if provided by the simulator export.
+	// This stores the full history on the parent run so the frontend can access it via GET /runs.
+	if len(exportResp.OptimizationHistory) > 0 {
+		_, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+			Metadata: map[string]interface{}{
+				"optimization_history": exportResp.OptimizationHistory,
+			},
+		})
+		if err != nil {
+			log.Printf("Failed to persist optimization_history for run_id=%s: %v", run.RunID, err)
+		}
+	}
 }
 
 // uploadBestScenarioToS3 fetches the best scenario from the simulator export endpoint and uploads it to S3.
