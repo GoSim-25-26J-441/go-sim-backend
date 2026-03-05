@@ -37,7 +37,7 @@ Thumbs.db
 /tmp/
 /logs/
 
-# # Environment variables
+# Environment variables
 .env
 .env.local
 
@@ -72,3 +72,6 @@ tmp/
 
 # firebase service account credentials
 firebase-service-account.json
+
+# Docker
+docker-compose.yml

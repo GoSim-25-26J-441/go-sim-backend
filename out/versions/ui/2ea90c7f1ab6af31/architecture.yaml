@@ -1,0 +1,146 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 300
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: web-ui_split_split
+      kind: rest
+      sync: true
+      to: support
+    - from: web-ui_split_split
+      kind: rest
+      sync: true
+      to: profile
+    - from: ingest-worker
+      kind: rest
+      sync: true
+      to: validator
+    - from: validator
+      kind: rest
+      sync: true
+      to: enricher
+    - from: enricher
+      kind: rest
+      sync: true
+      to: writer
+    - from: billing-api
+      kind: rest
+      sync: true
+      to: finance-db
+    - from: refund-api
+      kind: rest
+      sync: true
+      to: finance-db
+    - from: settlement-api
+      kind: rest
+      sync: true
+      to: finance-db
+    - from: bff
+      kind: rest
+      sync: true
+      to: auth
+    - from: bff
+      kind: rest
+      sync: true
+      to: catalog
+    - from: bff_split
+      kind: rest
+      sync: true
+      to: reviews
+    - from: bff_split
+      kind: rest
+      sync: true
+      to: support
+    - from: bff_split
+      kind: rest
+      sync: true
+      to: profile
+    - from: bff
+      kind: rest
+      sync: true
+      to: bff_split
+    - from: web-ui_split
+      kind: rest
+      sync: true
+      to: web-ui_split_split
+    - from: web-ui
+      kind: rest
+      sync: true
+      to: bff-1
+    - from: bff-1
+      kind: rest
+      sync: true
+      to: web-ui_split
+    - from: bff-1
+      kind: rest
+      sync: true
+      to: bff
+    - from: web-ui_split
+      kind: rest
+      sync: true
+      to: bff-2
+    - from: bff-2
+      kind: rest
+      sync: true
+      to: reviews
+    - from: bff-2
+      kind: rest
+      sync: true
+      to: support
+    - from: bff-2
+      kind: rest
+      sync: true
+      to: profile
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: web-ui
+      type: service
+    - name: auth
+      type: service
+    - name: catalog
+      type: service
+    - name: reviews
+      type: service
+    - name: support
+      type: service
+    - name: profile
+      type: service
+    - name: ingest-worker
+      type: service
+    - name: validator
+      type: service
+    - name: enricher
+      type: service
+    - name: writer
+      type: service
+    - name: billing-api
+      type: service
+    - name: refund-api
+      type: service
+    - name: settlement-api
+      type: service
+    - name: finance-db
+      type: service
+    - name: web-ui_split
+      type: service
+    - name: bff
+      type: service
+    - name: bff_split
+      type: service
+    - name: web-ui_split_split
+      type: service
+    - name: bff-1
+      type: service
+    - name: bff-2
+      type: service
+topics: []
+trace: []

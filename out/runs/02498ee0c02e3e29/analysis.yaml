@@ -1,0 +1,101 @@
+graph:
+    nodes:
+        DATABASE:database:
+            id: DATABASE:database
+            name: database
+            kind: DATABASE
+            attrs: {}
+        SERVICE:auth:
+            id: SERVICE:auth
+            name: auth
+            kind: SERVICE
+            attrs: {}
+        SERVICE:catalog:
+            id: SERVICE:catalog
+            name: catalog
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web:
+            id: SERVICE:web
+            name: web
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:web
+          to: SERVICE:auth
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web
+          to: SERVICE:catalog
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:catalog
+          to: DATABASE:database
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:catalog:
+            - from: SERVICE:catalog
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web:
+            - from: SERVICE:web
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:web
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:database:
+            - from: SERVICE:catalog
+              to: DATABASE:database
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:auth:
+            - from: SERVICE:web
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:catalog:
+            - from: SERVICE:web
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/02498ee0c02e3e29/graph.dot
+svg_path: /app/out/runs/02498ee0c02e3e29/graph.svg
+detections:
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:web
+        - SERVICE:auth
+        - SERVICE:catalog
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 2
+        targets: 2
+        ui: SERVICE:web

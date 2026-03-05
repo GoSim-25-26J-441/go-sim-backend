@@ -1,0 +1,459 @@
+{
+  "graph": {
+    "nodes": {
+      "DATABASE:shared-db": {
+        "id": "DATABASE:shared-db",
+        "name": "shared-db",
+        "kind": "DATABASE"
+      },
+      "SERVICE:auth": {
+        "id": "SERVICE:auth",
+        "name": "auth",
+        "kind": "SERVICE"
+      },
+      "SERVICE:bff": {
+        "id": "SERVICE:bff",
+        "name": "bff",
+        "kind": "SERVICE"
+      },
+      "SERVICE:bff-1": {
+        "id": "SERVICE:bff-1",
+        "name": "bff-1",
+        "kind": "SERVICE"
+      },
+      "SERVICE:bff-2": {
+        "id": "SERVICE:bff-2",
+        "name": "bff-2",
+        "kind": "SERVICE"
+      },
+      "SERVICE:bff_split": {
+        "id": "SERVICE:bff_split",
+        "name": "bff_split",
+        "kind": "SERVICE"
+      },
+      "SERVICE:cart": {
+        "id": "SERVICE:cart",
+        "name": "cart",
+        "kind": "SERVICE"
+      },
+      "SERVICE:catalog": {
+        "id": "SERVICE:catalog",
+        "name": "catalog",
+        "kind": "SERVICE"
+      },
+      "SERVICE:inventory": {
+        "id": "SERVICE:inventory",
+        "name": "inventory",
+        "kind": "SERVICE"
+      },
+      "SERVICE:orders": {
+        "id": "SERVICE:orders",
+        "name": "orders",
+        "kind": "SERVICE"
+      },
+      "SERVICE:orders_split": {
+        "id": "SERVICE:orders_split",
+        "name": "orders_split",
+        "kind": "SERVICE"
+      },
+      "SERVICE:orders_split-1": {
+        "id": "SERVICE:orders_split-1",
+        "name": "orders_split-1",
+        "kind": "SERVICE"
+      },
+      "SERVICE:payments": {
+        "id": "SERVICE:payments",
+        "name": "payments",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web-ui": {
+        "id": "SERVICE:web-ui",
+        "name": "web-ui",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web-ui_split": {
+        "id": "SERVICE:web-ui_split",
+        "name": "web-ui_split",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web-ui_split_split": {
+        "id": "SERVICE:web-ui_split_split",
+        "name": "web-ui_split_split",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:web-ui_split_split",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui_split_split",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:cart",
+        "to": "SERVICE:catalog",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:inventory",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders_split",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:catalog",
+        "to": "DATABASE:shared-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:cart",
+        "to": "DATABASE:shared-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders_split",
+        "to": "DATABASE:shared-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:inventory",
+        "to": "DATABASE:shared-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders_split-1",
+        "to": "SERVICE:orders_split",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:catalog",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:cart",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff_split",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff_split",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff_split",
+        "to": "SERVICE:auth",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui_split",
+        "to": "SERVICE:web-ui_split_split",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:bff_split",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:orders_split-1",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:bff-1",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff-1",
+        "to": "SERVICE:web-ui_split",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff-1",
+        "to": "SERVICE:bff",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui_split",
+        "to": "SERVICE:bff-2",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff-2",
+        "to": "SERVICE:cart",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff-2",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff-2",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/versions/ui/7cfdaf8bc84571ad/graph.dot",
+  "svg_path": "/app/out/versions/ui/7cfdaf8bc84571ad/graph.svg",
+  "detections": [
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:orders"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 5,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:bff_split"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 4,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:bff"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 4,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 4,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:bff-2"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 4,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "reverse_dependency",
+      "severity": "HIGH",
+      "title": "Reverse dependency (backend → UI)",
+      "summary": "Backend service depends on the UI/frontend layer",
+      "nodes": [
+        "SERVICE:bff-1",
+        "SERVICE:web-ui_split"
+      ],
+      "edges": [],
+      "evidence": {
+        "from": "SERVICE:bff-1",
+        "to": "SERVICE:web-ui_split"
+      }
+    },
+    {
+      "kind": "sync_call_chain",
+      "severity": "MEDIUM",
+      "title": "Sync call chain",
+      "summary": "Long synchronous dependency chain can amplify latency/failure impact",
+      "nodes": [
+        "SERVICE:web-ui",
+        "SERVICE:bff-1",
+        "SERVICE:web-ui_split",
+        "SERVICE:web-ui_split_split",
+        "SERVICE:orders",
+        "SERVICE:orders_split-1",
+        "SERVICE:orders_split",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "edges": 7,
+        "min_edges": 4
+      }
+    },
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:web-ui_split",
+        "SERVICE:web-ui_split_split",
+        "SERVICE:bff-2"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 2,
+        "targets": 2,
+        "ui": "SERVICE:web-ui_split"
+      }
+    },
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:web-ui_split_split",
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 2,
+        "targets": 2,
+        "ui": "SERVICE:web-ui_split_split"
+      }
+    }
+  ]
+}

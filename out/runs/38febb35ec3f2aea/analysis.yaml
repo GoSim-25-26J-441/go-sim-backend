@@ -1,0 +1,381 @@
+graph:
+    nodes:
+        DATABASE:user-db:
+            id: DATABASE:user-db
+            name: user-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:admin-console:
+            id: SERVICE:admin-console
+            name: admin-console
+            kind: SERVICE
+            attrs: {}
+        SERVICE:audit-log:
+            id: SERVICE:audit-log
+            name: audit-log
+            kind: SERVICE
+            attrs: {}
+        SERVICE:cache-proxy:
+            id: SERVICE:cache-proxy
+            name: cache-proxy
+            kind: SERVICE
+            attrs: {}
+        SERVICE:discount:
+            id: SERVICE:discount
+            name: discount
+            kind: SERVICE
+            attrs: {}
+        SERVICE:emailer:
+            id: SERVICE:emailer
+            name: emailer
+            kind: SERVICE
+            attrs: {}
+        SERVICE:metrics-agent:
+            id: SERVICE:metrics-agent
+            name: metrics-agent
+            kind: SERVICE
+            attrs: {}
+        SERVICE:notifications:
+            id: SERVICE:notifications
+            name: notifications
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ops-hub:
+            id: SERVICE:ops-hub
+            name: ops-hub
+            kind: SERVICE
+            attrs: {}
+        SERVICE:preferences:
+            id: SERVICE:preferences
+            name: preferences
+            kind: SERVICE
+            attrs: {}
+        SERVICE:pricing:
+            id: SERVICE:pricing
+            name: pricing
+            kind: SERVICE
+            attrs: {}
+        SERVICE:report-export:
+            id: SERVICE:report-export
+            name: report-export
+            kind: SERVICE
+            attrs: {}
+        SERVICE:scheduler:
+            id: SERVICE:scheduler
+            name: scheduler
+            kind: SERVICE
+            attrs: {}
+        SERVICE:sms-gateway:
+            id: SERVICE:sms-gateway
+            name: sms-gateway
+            kind: SERVICE
+            attrs: {}
+        SERVICE:tax:
+            id: SERVICE:tax
+            name: tax
+            kind: SERVICE
+            attrs: {}
+        SERVICE:user-profile:
+            id: SERVICE:user-profile
+            name: user-profile
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:pricing
+          to: SERVICE:discount
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:discount
+          to: SERVICE:tax
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:tax
+          to: SERVICE:pricing
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:scheduler
+          to: SERVICE:ops-hub
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:admin-console
+          to: SERVICE:ops-hub
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ops-hub
+          to: SERVICE:emailer
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ops-hub
+          to: SERVICE:sms-gateway
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ops-hub
+          to: SERVICE:audit-log
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ops-hub
+          to: SERVICE:cache-proxy
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ops-hub
+          to: SERVICE:metrics-agent
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ops-hub
+          to: SERVICE:report-export
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:user-profile
+          to: DATABASE:user-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:preferences
+          to: DATABASE:user-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:notifications
+          to: DATABASE:user-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:admin-console:
+            - from: SERVICE:admin-console
+              to: SERVICE:ops-hub
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:discount:
+            - from: SERVICE:discount
+              to: SERVICE:tax
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:notifications:
+            - from: SERVICE:notifications
+              to: DATABASE:user-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ops-hub:
+            - from: SERVICE:ops-hub
+              to: SERVICE:emailer
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ops-hub
+              to: SERVICE:sms-gateway
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ops-hub
+              to: SERVICE:audit-log
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ops-hub
+              to: SERVICE:cache-proxy
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ops-hub
+              to: SERVICE:metrics-agent
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ops-hub
+              to: SERVICE:report-export
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:preferences:
+            - from: SERVICE:preferences
+              to: DATABASE:user-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:pricing:
+            - from: SERVICE:pricing
+              to: SERVICE:discount
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:scheduler:
+            - from: SERVICE:scheduler
+              to: SERVICE:ops-hub
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:tax:
+            - from: SERVICE:tax
+              to: SERVICE:pricing
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:user-profile:
+            - from: SERVICE:user-profile
+              to: DATABASE:user-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:user-db:
+            - from: SERVICE:user-profile
+              to: DATABASE:user-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:preferences
+              to: DATABASE:user-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:notifications
+              to: DATABASE:user-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:audit-log:
+            - from: SERVICE:ops-hub
+              to: SERVICE:audit-log
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:cache-proxy:
+            - from: SERVICE:ops-hub
+              to: SERVICE:cache-proxy
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:discount:
+            - from: SERVICE:pricing
+              to: SERVICE:discount
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:emailer:
+            - from: SERVICE:ops-hub
+              to: SERVICE:emailer
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:metrics-agent:
+            - from: SERVICE:ops-hub
+              to: SERVICE:metrics-agent
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ops-hub:
+            - from: SERVICE:scheduler
+              to: SERVICE:ops-hub
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:admin-console
+              to: SERVICE:ops-hub
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:pricing:
+            - from: SERVICE:tax
+              to: SERVICE:pricing
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:report-export:
+            - from: SERVICE:ops-hub
+              to: SERVICE:report-export
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:sms-gateway:
+            - from: SERVICE:ops-hub
+              to: SERVICE:sms-gateway
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:tax:
+            - from: SERVICE:discount
+              to: SERVICE:tax
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/38febb35ec3f2aea/graph.dot
+svg_path: /app/out/runs/38febb35ec3f2aea/graph.svg
+detections:
+    - kind: cycles
+      severity: HIGH
+      title: Cyclic dependency
+      summary: A loop of service dependencies was detected
+      nodes:
+        - SERVICE:tax
+        - SERVICE:discount
+        - SERVICE:pricing
+      edges: []
+      evidence:
+        cycle_size: 3
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:ops-hub
+      edges: []
+      evidence:
+        degree: 8
+        threshold: 4

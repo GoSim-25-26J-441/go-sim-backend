@@ -63,6 +63,21 @@ Or specify a different migration file:
 5. Open the file `migrations/0001_auth_users.sql`
 6. Click "Execute" (F5)
 
+## AMG-APD Versioning Table
+
+For the Architecture Model Generation and Anti-Pattern Detection (AMG-APD) versioning feature, run:
+
+```powershell
+psql -h localhost -p 5432 -U postgres -d gosim -f migrations/0006_amg_apd_versioning.sql
+```
+
+Or with the script:
+```powershell
+.\scripts\run-migration.ps1 migrations/0006_amg_apd_versioning.sql
+```
+
+This creates `amg_apd_versions` for storing analyses per user_id and chat_id (default placeholders: TestUser123, TestChat123). The frontend can list versions, get one, delete one, and compare two versions side by side.
+
 ## Connection Parameters
 
 Based on your `.env.example`:

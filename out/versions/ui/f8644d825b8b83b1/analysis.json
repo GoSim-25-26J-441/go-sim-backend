@@ -1,0 +1,124 @@
+{
+  "graph": {
+    "nodes": {
+      "SERVICE:auth": {
+        "id": "SERVICE:auth",
+        "name": "auth",
+        "kind": "SERVICE"
+      },
+      "SERVICE:bff": {
+        "id": "SERVICE:bff",
+        "name": "bff",
+        "kind": "SERVICE"
+      },
+      "SERVICE:catalog": {
+        "id": "SERVICE:catalog",
+        "name": "catalog",
+        "kind": "SERVICE"
+      },
+      "SERVICE:database": {
+        "id": "SERVICE:database",
+        "name": "database",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:auth": {
+        "id": "SERVICE:service:auth",
+        "name": "SERVICE:auth",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:catalog": {
+        "id": "SERVICE:service:catalog",
+        "name": "SERVICE:catalog",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:web": {
+        "id": "SERVICE:service:web",
+        "name": "SERVICE:web",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web": {
+        "id": "SERVICE:web",
+        "name": "web",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:web",
+        "to": "SERVICE:auth",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web",
+        "to": "SERVICE:catalog",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:catalog",
+        "to": "SERVICE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:service:web",
+        "to": "SERVICE:bff",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:service:auth",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:service:catalog",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/versions/ui/f8644d825b8b83b1/graph.dot",
+  "svg_path": "/app/out/versions/ui/f8644d825b8b83b1/graph.svg",
+  "detections": [
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:web",
+        "SERVICE:auth",
+        "SERVICE:catalog"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 2,
+        "targets": 2,
+        "ui": "SERVICE:web"
+      }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:auth" [label="auth", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:cart" [label="cart", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:orders" [label="orders", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:payments" [label="payments", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:shared-db" [label="shared-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:web-ui_split" [label="web-ui_split", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:orders_split" [label="orders_split", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:catalog" [label="catalog", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:inventory" [label="inventory", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:bff" [label="bff", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web-ui" [label="web-ui", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web-ui_split" -> "SERVICE:cart" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:web-ui_split" -> "SERVICE:orders" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:web-ui_split" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:cart" -> "SERVICE:catalog" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:orders" -> "SERVICE:inventory" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:orders_split" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+  "SERVICE:catalog" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#6"];
+  "SERVICE:cart" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#7"];
+  "SERVICE:orders_split" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#8"];
+  "SERVICE:inventory" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#9"];
+  "SERVICE:web-ui" -> "SERVICE:web-ui_split" [label="CALLS [rest] (sync)", tooltip="edge#10"];
+  "SERVICE:orders" -> "SERVICE:orders_split" [label="CALLS [rest] (sync)", tooltip="edge#11"];
+  "SERVICE:web-ui" -> "SERVICE:bff" [label="CALLS [rest] (sync)", tooltip="edge#12"];
+  "SERVICE:bff" -> "SERVICE:auth" [label="CALLS [rest] (sync)", tooltip="edge#13"];
+  "SERVICE:bff" -> "SERVICE:catalog" [label="CALLS [rest] (sync)", tooltip="edge#14"];
+  "SERVICE:bff" -> "SERVICE:cart" [label="CALLS [rest] (sync)", tooltip="edge#15"];
+  "SERVICE:bff" -> "SERVICE:orders" [label="CALLS [rest] (sync)", tooltip="edge#16"];
+  "SERVICE:bff" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#17"];
+}
