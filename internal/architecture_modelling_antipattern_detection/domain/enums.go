@@ -3,8 +3,9 @@ package domain
 type NodeKind string
 
 const (
-	NodeService NodeKind = "SERVICE"
-	NodeDB      NodeKind = "DATABASE"
+	NodeService    NodeKind = "SERVICE"
+	NodeAPIGateway NodeKind = "API_GATEWAY" // BFF / gateway – not counted as UI orchestrator source
+	NodeDB         NodeKind = "DATABASE"
 )
 
 type EdgeKind string

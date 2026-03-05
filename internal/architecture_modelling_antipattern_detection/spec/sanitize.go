@@ -67,7 +67,9 @@ func Sanitize(root map[string]any) {
 				}
 				if t == "db" || t == "datastore" || t == "database" {
 					t = "database"
-				} else {
+				} else if t != "api_gateway" && t != "api-gateway" && t != "gateway" && t != "bff" &&
+					t != "event_topic" && t != "event-topic" && t != "topic" &&
+					t != "external_system" && t != "client" && t != "user_actor" {
 					t = "service"
 				}
 				m["type"] = t
