@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"firebase.google.com/go/v4/auth"
 	"github.com/joho/godotenv"
@@ -14,19 +15,24 @@ import (
 	cronjob "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/cron"
 	asimhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/http"
 	httpapi "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http"
+	amgapd "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/amg_apd"
+
 	apimiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/api/http/middleware"
 	authpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth"
 	authhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/http"
 	authmiddleware "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/middleware"
 	authrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
 	authservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/service"
+
 	diprag "github.com/GoSim-25-26J-441/go-sim-backend/internal/design_input_processing/rag"
+
 	simhttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/http"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
+
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
-	s3storage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/s3"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
+	s3storage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/s3"
 
 	// Projects module (from temp branch)
 	projecthttp "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/http"
@@ -39,7 +45,7 @@ import (
 	chatservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/chat/service"
 )
 
-const serviceName = "go-sim-backend"
+const serviceName = "amg-apd-service"
 
 func main() {
 	_ = godotenv.Load()
@@ -104,13 +110,13 @@ func main() {
 
 	router := gin.Default()
 
-	// Configure CORS middleware
+	// Configure CORS middleware (merged)
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:8080"}
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With", "X-User-Id"}
 	corsConfig.AllowCredentials = true
-	corsConfig.MaxAge = 12 * 60 * 60 // 12 hours
+	corsConfig.MaxAge = 12 * time.Hour
 	router.Use(cors.New(corsConfig))
 
 	healthHandler := httpapi.NewHealthHandler(serviceName, cfg.App.Version)
@@ -118,6 +124,7 @@ func main() {
 
 	scheduler := cronjob.NewScheduler()
 	scheduler.Start()
+	amgapd.Register(router, db)
 
 	api := router.Group("/api/v1")
 
@@ -137,8 +144,8 @@ func main() {
 		authGroup := api.Group("/auth")
 
 		userRepo := authrepo.NewUserRepository(db)
-		authService := authservice.NewAuthService(userRepo)
-		authHandler := authhttp.New(authService)
+		authSvc := authservice.NewAuthService(userRepo)
+		authHandler := authhttp.New(authSvc)
 
 		authGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 		authHandler.Register(authGroup)
@@ -158,7 +165,7 @@ func main() {
 		projectService := projectservice.NewProjectService(projectRepo)
 		diagramService := projectservice.NewDiagramService(diagramRepo)
 
-		projectHandler := projecthttp.New(projectService, chatService, diagramService)
+		projectHandler := projecthttp.New(projectService, chatService, diagramService, s3Client)
 		projectHandler.Register(projectsGroup)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
@@ -172,9 +179,9 @@ func main() {
 
 	// Initialize simulation module (required for both user routes and callback routes)
 	simRunRepo := simrepo.NewRunRepository(redisClient)
-	simService := simservice.NewSimulationService(simRunRepo)
+	simSvc := simservice.NewSimulationService(simRunRepo)
 	simHandler := simhttp.New(
-		simService,
+		simSvc,
 		cfg.Upstreams.SimulationEngineURL,
 		cfg.SimulationCallbacks.CallbackURL,
 		cfg.SimulationCallbacks.CallbackSecret,
@@ -184,8 +191,7 @@ func main() {
 	)
 
 	// Simulation-engine callback routes (called by simulation engine, NOT by end-users)
-	// These routes should NOT require Firebase auth - they're called by the simulator
-	// Authentication is handled via callback secret (X-Simulation-Callback-Secret header)
+	// No Firebase auth; auth via callback secret header
 	simEngineGroup := api.Group("/simulation-engine")
 	simHandler.RegisterEngineCallbackRoutes(simEngineGroup)
 	log.Printf("Simulation engine callback endpoints registered at /api/v1/simulation-engine/runs/callback (no Firebase auth required)")
@@ -195,6 +201,8 @@ func main() {
 	if authClient != nil {
 		// Apply Firebase Auth middleware when available (production)
 		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
+
+		simHandler.Register(simGroup)
 		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
 	} else {
 		// No Firebase: routes still registered; use X-User-Id header for dev (e.g. events SSE)

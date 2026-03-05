@@ -1,0 +1,216 @@
+{
+  "graph": {
+    "nodes": {
+      "DATABASE:finance-db": {
+        "id": "DATABASE:finance-db",
+        "name": "finance-db",
+        "kind": "DATABASE"
+      },
+      "SERVICE:auth": {
+        "id": "SERVICE:auth",
+        "name": "auth",
+        "kind": "SERVICE"
+      },
+      "SERVICE:billing-api": {
+        "id": "SERVICE:billing-api",
+        "name": "billing-api",
+        "kind": "SERVICE"
+      },
+      "SERVICE:catalog": {
+        "id": "SERVICE:catalog",
+        "name": "catalog",
+        "kind": "SERVICE"
+      },
+      "SERVICE:enricher": {
+        "id": "SERVICE:enricher",
+        "name": "enricher",
+        "kind": "SERVICE"
+      },
+      "SERVICE:ingest-worker": {
+        "id": "SERVICE:ingest-worker",
+        "name": "ingest-worker",
+        "kind": "SERVICE"
+      },
+      "SERVICE:profile": {
+        "id": "SERVICE:profile",
+        "name": "profile",
+        "kind": "SERVICE"
+      },
+      "SERVICE:refund-api": {
+        "id": "SERVICE:refund-api",
+        "name": "refund-api",
+        "kind": "SERVICE"
+      },
+      "SERVICE:reviews": {
+        "id": "SERVICE:reviews",
+        "name": "reviews",
+        "kind": "SERVICE"
+      },
+      "SERVICE:settlement-api": {
+        "id": "SERVICE:settlement-api",
+        "name": "settlement-api",
+        "kind": "SERVICE"
+      },
+      "SERVICE:support": {
+        "id": "SERVICE:support",
+        "name": "support",
+        "kind": "SERVICE"
+      },
+      "SERVICE:validator": {
+        "id": "SERVICE:validator",
+        "name": "validator",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web-ui": {
+        "id": "SERVICE:web-ui",
+        "name": "web-ui",
+        "kind": "SERVICE"
+      },
+      "SERVICE:writer": {
+        "id": "SERVICE:writer",
+        "name": "writer",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:auth",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:catalog",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:reviews",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:support",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web-ui",
+        "to": "SERVICE:profile",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ingest-worker",
+        "to": "SERVICE:validator",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:validator",
+        "to": "SERVICE:enricher",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:enricher",
+        "to": "SERVICE:writer",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:billing-api",
+        "to": "DATABASE:finance-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:refund-api",
+        "to": "DATABASE:finance-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:settlement-api",
+        "to": "DATABASE:finance-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/runs/d01ea50d0ce9f97a/graph.dot",
+  "svg_path": "/app/out/runs/d01ea50d0ce9f97a/graph.svg",
+  "detections": [
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:web-ui"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 5,
+        "threshold": 4
+      }
+    },
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:web-ui",
+        "SERVICE:auth",
+        "SERVICE:catalog",
+        "SERVICE:reviews",
+        "SERVICE:support",
+        "SERVICE:profile"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 5,
+        "targets": 5,
+        "ui": "SERVICE:web-ui"
+      }
+    }
+  ]
+}

@@ -1,0 +1,247 @@
+{
+  "graph": {
+    "nodes": {
+      "DATABASE:user-db": {
+        "id": "DATABASE:user-db",
+        "name": "user-db",
+        "kind": "DATABASE"
+      },
+      "SERVICE:admin-console": {
+        "id": "SERVICE:admin-console",
+        "name": "admin-console",
+        "kind": "SERVICE"
+      },
+      "SERVICE:audit-log": {
+        "id": "SERVICE:audit-log",
+        "name": "audit-log",
+        "kind": "SERVICE"
+      },
+      "SERVICE:cache-proxy": {
+        "id": "SERVICE:cache-proxy",
+        "name": "cache-proxy",
+        "kind": "SERVICE"
+      },
+      "SERVICE:discount": {
+        "id": "SERVICE:discount",
+        "name": "discount",
+        "kind": "SERVICE"
+      },
+      "SERVICE:emailer": {
+        "id": "SERVICE:emailer",
+        "name": "emailer",
+        "kind": "SERVICE"
+      },
+      "SERVICE:metrics-agent": {
+        "id": "SERVICE:metrics-agent",
+        "name": "metrics-agent",
+        "kind": "SERVICE"
+      },
+      "SERVICE:notifications": {
+        "id": "SERVICE:notifications",
+        "name": "notifications",
+        "kind": "SERVICE"
+      },
+      "SERVICE:ops-hub": {
+        "id": "SERVICE:ops-hub",
+        "name": "ops-hub",
+        "kind": "SERVICE"
+      },
+      "SERVICE:preferences": {
+        "id": "SERVICE:preferences",
+        "name": "preferences",
+        "kind": "SERVICE"
+      },
+      "SERVICE:pricing": {
+        "id": "SERVICE:pricing",
+        "name": "pricing",
+        "kind": "SERVICE"
+      },
+      "SERVICE:report-export": {
+        "id": "SERVICE:report-export",
+        "name": "report-export",
+        "kind": "SERVICE"
+      },
+      "SERVICE:scheduler": {
+        "id": "SERVICE:scheduler",
+        "name": "scheduler",
+        "kind": "SERVICE"
+      },
+      "SERVICE:sms-gateway": {
+        "id": "SERVICE:sms-gateway",
+        "name": "sms-gateway",
+        "kind": "SERVICE"
+      },
+      "SERVICE:tax": {
+        "id": "SERVICE:tax",
+        "name": "tax",
+        "kind": "SERVICE"
+      },
+      "SERVICE:user-profile": {
+        "id": "SERVICE:user-profile",
+        "name": "user-profile",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:pricing",
+        "to": "SERVICE:discount",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:discount",
+        "to": "SERVICE:tax",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:tax",
+        "to": "SERVICE:pricing",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:scheduler",
+        "to": "SERVICE:ops-hub",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:admin-console",
+        "to": "SERVICE:ops-hub",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ops-hub",
+        "to": "SERVICE:emailer",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ops-hub",
+        "to": "SERVICE:sms-gateway",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ops-hub",
+        "to": "SERVICE:audit-log",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ops-hub",
+        "to": "SERVICE:cache-proxy",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ops-hub",
+        "to": "SERVICE:metrics-agent",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ops-hub",
+        "to": "SERVICE:report-export",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:user-profile",
+        "to": "DATABASE:user-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:preferences",
+        "to": "DATABASE:user-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:notifications",
+        "to": "DATABASE:user-db",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/runs/38febb35ec3f2aea/graph.dot",
+  "svg_path": "/app/out/runs/38febb35ec3f2aea/graph.svg",
+  "detections": [
+    {
+      "kind": "cycles",
+      "severity": "HIGH",
+      "title": "Cyclic dependency",
+      "summary": "A loop of service dependencies was detected",
+      "nodes": [
+        "SERVICE:tax",
+        "SERVICE:discount",
+        "SERVICE:pricing"
+      ],
+      "edges": [],
+      "evidence": {
+        "cycle_size": 3
+      }
+    },
+    {
+      "kind": "god_service",
+      "severity": "MEDIUM",
+      "title": "God service (high centrality)",
+      "summary": "Service has unusually high incoming/outgoing dependencies",
+      "nodes": [
+        "SERVICE:ops-hub"
+      ],
+      "edges": [],
+      "evidence": {
+        "degree": 8,
+        "threshold": 4
+      }
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "graph": {
+    "nodes": {
+      "DATABASE:database": {
+        "id": "DATABASE:database",
+        "name": "database",
+        "kind": "DATABASE"
+      },
+      "SERVICE:bff": {
+        "id": "SERVICE:bff",
+        "name": "bff",
+        "kind": "SERVICE"
+      },
+      "SERVICE:orders": {
+        "id": "SERVICE:orders",
+        "name": "orders",
+        "kind": "SERVICE"
+      },
+      "SERVICE:payments": {
+        "id": "SERVICE:payments",
+        "name": "payments",
+        "kind": "SERVICE"
+      },
+      "SERVICE:restaurants": {
+        "id": "SERVICE:restaurants",
+        "name": "restaurants",
+        "kind": "SERVICE"
+      },
+      "SERVICE:user": {
+        "id": "SERVICE:user",
+        "name": "user",
+        "kind": "SERVICE"
+      },
+      "SERVICE:web page": {
+        "id": "SERVICE:web page",
+        "name": "web page",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:orders",
+        "to": "DATABASE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "DATABASE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:payments",
+        "to": "DATABASE:database",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:restaurants",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:web page",
+        "to": "SERVICE:bff",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:restaurants",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/runs/7227c1e0ca46089d/graph.dot",
+  "svg_path": "/app/out/runs/7227c1e0ca46089d/graph.svg",
+  "detections": [
+    {
+      "kind": "sync_call_chain",
+      "severity": "MEDIUM",
+      "title": "Sync call chain",
+      "summary": "Long synchronous dependency chain can amplify latency/failure impact",
+      "nodes": [
+        "SERVICE:web page",
+        "SERVICE:bff",
+        "SERVICE:restaurants",
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "edges": 4,
+        "min_edges": 4
+      }
+    }
+  ]
+}

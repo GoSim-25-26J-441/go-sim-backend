@@ -1,0 +1,27 @@
+services:
+    - name: service-a
+      calls:
+        - to: service-b
+          endpoints:
+            - GET /b
+          rate_per_min: 10
+          per_item: false
+      databases:
+        reads: []
+        writes: []
+    - name: service-b
+      calls:
+        - to: service-c
+          endpoints:
+            - GET /c
+          rate_per_min: 10
+          per_item: false
+      databases:
+        reads: []
+        writes: []
+    - name: service-c
+      calls: []
+      databases:
+        reads: []
+        writes: []
+databases: []

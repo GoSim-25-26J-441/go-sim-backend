@@ -1,0 +1,182 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 350
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: cart
+      kind: rest
+      sync: true
+      to: catalog
+    - from: orders
+      kind: rest
+      sync: true
+      to: inventory
+    - from: payments
+      kind: rest
+      to: orders
+    - from: catalog
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: cart
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: orders_split
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: inventory
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: orders_split-1
+      kind: rest
+      sync: true
+      to: orders_split
+    - from: bff
+      kind: rest
+      sync: true
+      to: payments
+    - from: bff_split-1
+      kind: rest
+      sync: true
+      to: auth
+    - from: bff_split
+      kind: rest
+      sync: true
+      to: catalog
+    - from: bff_split_split
+      kind: rest
+      sync: true
+      to: cart
+    - from: bff_split_split
+      kind: rest
+      sync: true
+      to: orders
+    - from: orders_split-2
+      kind: rest
+      sync: true
+      to: orders_split-1
+    - from: bff_split-1
+      kind: rest
+      sync: true
+      to: bff_split
+    - from: web-ui
+      kind: rest
+      sync: true
+      to: bff-1
+    - from: bff-1
+      kind: rest
+      sync: true
+      to: bff
+    - from: bff-2
+      kind: rest
+      sync: true
+      to: payments
+    - from: bff-2_split
+      kind: rest
+      sync: true
+      to: cart
+    - from: bff-2_split
+      kind: rest
+      sync: true
+      to: orders
+    - from: bff
+      kind: rest
+      sync: true
+      to: bff_split-1
+    - from: bff_split
+      kind: rest
+      to: bff_split_split
+    - from: orders_split-3
+      kind: rest
+      sync: true
+      to: orders_split-2
+    - from: bff-2
+      kind: rest
+      sync: true
+      to: bff-2_split
+    - from: web-ui_split
+      kind: rest
+      sync: true
+      to: bff-3
+    - from: bff-3
+      kind: rest
+      sync: true
+      to: bff-2
+    - from: web-ui_split_split
+      kind: rest
+      sync: true
+      to: bff-4
+    - from: bff-4
+      kind: rest
+      sync: true
+      to: orders
+    - from: bff-4
+      kind: rest
+      sync: true
+      to: payments
+    - from: orders
+      kind: rest
+      sync: true
+      to: orders_split-3
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: web-ui
+      type: service
+    - name: auth
+      type: service
+    - name: catalog
+      type: service
+    - name: cart
+      type: service
+    - name: orders
+      type: service
+    - name: payments
+      type: service
+    - name: inventory
+      type: service
+    - name: shared-db
+      type: service
+    - name: web-ui_split
+      type: service
+    - name: orders_split
+      type: service
+    - name: bff
+      type: service
+    - name: orders_split-1
+      type: service
+    - name: bff_split
+      type: service
+    - name: web-ui_split_split
+      type: service
+    - name: bff-1
+      type: service
+    - name: bff-2
+      type: service
+    - name: bff_split-1
+      type: service
+    - name: bff_split_split
+      type: service
+    - name: orders_split-2
+      type: service
+    - name: bff-2_split
+      type: service
+    - name: bff-3
+      type: service
+    - name: bff-4
+      type: service
+    - name: orders_split-3
+      type: service
+topics: []
+trace: []

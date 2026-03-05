@@ -1,0 +1,27 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:restaurants" [label="restaurants", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:payments" [label="payments", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:database" [label="database", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:service:web page" [label="SERVICE:web page", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:service:payments" [label="SERVICE:payments", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:user" [label="user", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web page" [label="web page", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:orders" [label="orders", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:bff" [label="bff", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:service:restaurants" [label="SERVICE:restaurants", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:user" -> "SERVICE:web page" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:orders" -> "SERVICE:web page" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:web page" -> "SERVICE:restaurants" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:web page" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:orders" -> "SERVICE:database" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:restaurants" -> "SERVICE:database" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+  "SERVICE:payments" -> "SERVICE:database" [label="CALLS [rest] (sync)", tooltip="edge#6"];
+  "SERVICE:restaurants" -> "SERVICE:orders" [label="CALLS [rest] (sync)", tooltip="edge#7"];
+  "SERVICE:orders" -> "SERVICE:payments" [label="CALLS [rest] (sync)", tooltip="edge#8"];
+  "SERVICE:service:web page" -> "SERVICE:bff" [label="CALLS [rest] (sync)", tooltip="edge#9"];
+  "SERVICE:bff" -> "SERVICE:service:payments" [label="CALLS [rest] (sync)", tooltip="edge#10"];
+  "SERVICE:bff" -> "SERVICE:service:restaurants" [label="CALLS [rest] (sync)", tooltip="edge#11"];
+}
