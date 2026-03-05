@@ -164,3 +164,90 @@ func (h *Handler) latest(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "diagram_version": ver})
 }
+
+// listDiagramImages returns all diagram versions for a project that have an image_object_key.
+func (h *Handler) listDiagramImages(c *gin.Context) {
+	publicID := strings.TrimSpace(c.Param("public_id"))
+	if publicID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id"})
+		return
+	}
+
+	fuid := strings.TrimSpace(c.GetString("firebase_uid"))
+	if fuid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
+		return
+	}
+
+	versions, err := h.diagramService.ListAllVersions(c.Request.Context(), fuid, publicID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	type imageSummary struct {
+		ID             string    `json:"id"`
+		Title          string    `json:"title"`
+		ImageObjectKey string    `json:"image_object_key"`
+		CreatedAt      time.Time `json:"created_at"`
+	}
+
+	var images []imageSummary
+	for _, v := range versions {
+		if strings.TrimSpace(v.ImageObjectKey) == "" {
+			continue
+		}
+		images = append(images, imageSummary{
+			ID:             v.ID,
+			Title:          v.Title,
+			ImageObjectKey: v.ImageObjectKey,
+			CreatedAt:      v.CreatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":     true,
+		"images": images,
+	})
+}
+
+// updateDiagramTitle updates the title of a specific diagram version for the given project.
+func (h *Handler) updateDiagramTitle(c *gin.Context) {
+	publicID := strings.TrimSpace(c.Param("public_id"))
+	versionID := strings.TrimSpace(c.Param("version_id"))
+
+	if publicID == "" || versionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id or version id"})
+		return
+	}
+
+	fuid := strings.TrimSpace(c.GetString("firebase_uid"))
+	if fuid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
+		return
+	}
+
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Title) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid body (title required)"})
+		return
+	}
+
+	ok, err := h.diagramService.UpdateTitle(c.Request.Context(), fuid, publicID, versionID, strings.TrimSpace(req.Title))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "diagram version not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
