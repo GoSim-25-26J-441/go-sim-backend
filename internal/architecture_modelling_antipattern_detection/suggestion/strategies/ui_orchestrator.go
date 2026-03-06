@@ -31,7 +31,7 @@ func (uiOrchestratorStrategy) Apply(spec *parser.YSpec, g *domain.Graph, det dom
 	targets := det.Nodes[1:]
 
 	bff := uniqueServiceName(spec, "bff")
-	ensureService(spec, bff)
+	ensureAPIGateway(spec, bff)
 
 	changed := false
 	var notes []string

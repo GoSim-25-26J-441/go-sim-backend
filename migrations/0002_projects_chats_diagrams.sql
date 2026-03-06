@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS diagram_versions (
   title TEXT NOT NULL DEFAULT 'Untitled',
   version_number INT NOT NULL,
   source TEXT NOT NULL,            -- 'canvas_json' | 'chat_upload' | 'image_ocr' | 'amg_apd'
-  diagram_json JSONB,              -- RAW DIAGRAM JSON OR AMG-APD GRAPH/DETECTIONS ENVELOPE
+  diagram_json JSONB,              -- RAW DIAGRAM JSON; FOR source='amg_apd' USE {"graph": ..., "detections": ...}
   image_object_key TEXT,           -- STORAGE KEY (S3/MINIO/LOCAL)
   spec_summary JSONB,              -- NORMALIZED SUMMARY FOR LLM OR OTHER METADATA
   hash TEXT,                       -- OPTIONAL DEDUPE HASH
@@ -61,6 +61,9 @@ ON diagram_versions(user_firebase_uid);
 
 CREATE INDEX IF NOT EXISTS idx_diagram_versions_hash
 ON diagram_versions(hash);
+
+CREATE INDEX IF NOT EXISTS idx_diagram_versions_user_project_source
+ON diagram_versions(user_firebase_uid, project_public_id, source);
 
 -- NOW THAT diagram_versions EXISTS, ADD FK FOR current_diagram_version_id
 ALTER TABLE projects

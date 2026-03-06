@@ -58,6 +58,8 @@ func normalizeType(t string) string {
 	switch t {
 	case "db", "datastore", "data_store", "data-store", "database":
 		return "database"
+	case "api_gateway", "api-gateway", "gateway", "bff":
+		return "api_gateway"
 	default:
 		if t == "" {
 			return "service"
@@ -67,6 +69,27 @@ func normalizeType(t string) string {
 }
 
 var dbNameLike = regexp.MustCompile(`(^db$)|(^database$)|(\bdb\b)|(\bdatabase\b)|(_db$)|(-db$)`)
+
+func findServiceByName(s *parser.YSpec, name string) *parser.YService {
+	if s == nil {
+		return nil
+	}
+	name = strings.ToLower(strings.TrimSpace(stripEntityPrefix(name)))
+	for i := range s.Services {
+		n := strings.ToLower(strings.TrimSpace(stripEntityPrefix(s.Services[i].Name)))
+		if n == name {
+			return &s.Services[i]
+		}
+	}
+	return nil
+}
+
+func getServiceType(s *parser.YSpec, svc *parser.YService) string {
+	if svc != nil && svc.Type != "" {
+		return svc.Type
+	}
+	return ""
+}
 
 func looksLikeDB(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
@@ -110,7 +133,7 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 			}
 		}
 
-		kindFor := func(name string) domain.NodeKind {
+		kindFor := func(name string, serviceType string) domain.NodeKind {
 			clean := stripEntityPrefix(name)
 			key := strings.ToLower(strings.TrimSpace(clean))
 			if key == "" {
@@ -119,9 +142,11 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 			if dbSet[key] {
 				return domain.NodeDB
 			}
-
 			if looksLikeDB(clean) {
 				return domain.NodeDB
+			}
+			if normalizeType(serviceType) == "api_gateway" {
+				return domain.NodeAPIGateway
 			}
 			return domain.NodeService
 		}
@@ -131,7 +156,7 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 			if strings.TrimSpace(name) == "" {
 				continue
 			}
-			_ = ensureNode(g, kindFor(name), name)
+			_ = ensureNode(g, kindFor(name, svc.Type), name)
 		}
 		for _, ds := range s.Datastores {
 			name := stripEntityPrefix(ds.Name)
@@ -156,8 +181,12 @@ func ToGraph(s *parser.YSpec) *domain.Graph {
 				continue
 			}
 
-			from := ensureNode(g, kindFor(fromName), fromName)
-			to := ensureNode(g, kindFor(toName), toName)
+			fromSvc := findServiceByName(s, fromName)
+			toSvc := findServiceByName(s, toName)
+			fromKind := kindFor(fromName, getServiceType(s, fromSvc))
+			toKind := kindFor(toName, getServiceType(s, toSvc))
+			from := ensureNode(g, fromKind, fromName)
+			to := ensureNode(g, toKind, toName)
 
 			attrs := domain.Attrs{
 				"sync":     dep.Sync,

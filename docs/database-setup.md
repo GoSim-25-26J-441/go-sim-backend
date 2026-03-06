@@ -63,20 +63,22 @@ Or specify a different migration file:
 5. Open the file `migrations/0001_auth_users.sql`
 6. Click "Execute" (F5)
 
-## AMG-APD Versioning Table
+## AMG-APD versioning (diagram_versions)
 
-For the Architecture Model Generation and Anti-Pattern Detection (AMG-APD) versioning feature, run:
+AMG-APD versioning uses the unified `diagram_versions` table from `0002_projects_chats_diagrams.sql` with `source = 'amg_apd'`. Ensure these migrations are applied:
 
 ```powershell
-psql -h localhost -p 5432 -U postgres -d gosim -f migrations/0006_amg_apd_versioning.sql
+psql -h localhost -p 5432 -U postgres -d gosim -f migrations/0002_projects_chats_diagrams.sql
+psql -h localhost -p 5432 -U postgres -d gosim -f migrations/0004_amg_apd_versioning.sql
 ```
 
 Or with the script:
 ```powershell
-.\scripts\run-migration.ps1 migrations/0006_amg_apd_versioning.sql
+.\scripts\run-migration.ps1 migrations/0002_projects_chats_diagrams.sql
+.\scripts\run-migration.ps1 migrations/0004_amg_apd_versioning.sql
 ```
 
-This creates `amg_apd_versions` for storing analyses per user_id and chat_id (default placeholders: TestUser123, TestChat123). The frontend can list versions, get one, delete one, and compare two versions side by side.
+The frontend can list versions, get one, delete one, and compare two versions side by side. For AMG-APD, `diagram_versions.diagram_json` stores `{"graph": ..., "detections": ...}`.
 
 ## Connection Parameters
 

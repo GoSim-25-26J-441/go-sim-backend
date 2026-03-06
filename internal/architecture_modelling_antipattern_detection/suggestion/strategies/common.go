@@ -145,6 +145,22 @@ func ensureService(spec *parser.YSpec, name string) *parser.YService {
 	return &spec.Services[len(spec.Services)-1]
 }
 
+// ensureAPIGateway adds or finds a service and sets its type to api_gateway (BFF/gateway).
+func ensureAPIGateway(spec *parser.YSpec, name string) *parser.YService {
+	n := cleanRef(name)
+	if s := findService(spec, n); s != nil {
+		if s.Type == "" {
+			s.Type = "api_gateway"
+		}
+		return s
+	}
+	spec.Services = append(spec.Services, parser.YService{
+		Name: n,
+		Type: "api_gateway",
+	})
+	return &spec.Services[len(spec.Services)-1]
+}
+
 func ensureDatabase(spec *parser.YSpec, name string) *parser.YService {
 	n := cleanRef(name)
 	if s := findService(spec, n); s != nil {

@@ -22,6 +22,7 @@ func Register(r *gin.Engine, db *sql.DB) {
 	v1.GET("/versions/compare", h.CompareVersions)
 	v1.GET("/versions/:id", h.GetVersion)
 	v1.DELETE("/versions/:id", h.DeleteVersion)
+	v1.GET("/projects/:project_public_id/latest", h.GetLatestForProject)
 
 	v1.POST("/suggestions", SuggestionPreview)
 	v1.POST("/apply-suggestions", SuggestionApply)

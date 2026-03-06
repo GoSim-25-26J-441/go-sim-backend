@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
+	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
@@ -293,6 +294,88 @@ func (h *Handler) GetRun(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"run": run})
+}
+
+// GetRunCandidates returns parsed candidate records for a given simulation run.
+// Response shape is designed to match the agent-facing contract.
+func (h *Handler) GetRunCandidates(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	// Auth: ensure user is authenticated
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+	}
+
+	// Load run to verify ownership and get project_id
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not configured for candidates"})
+		return
+	}
+
+	candidateRepo := simrepo.NewCandidateRepository(h.db)
+	records, err := candidateRepo.ListByRunID(c.Request.Context(), runID)
+	if err != nil {
+		log.Printf("Failed to list candidates for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load candidates"})
+		return
+	}
+
+	// Derive simulation summary section. For now, we expose node count as the
+	// number of distinct labels across candidates' specs (can be refined later).
+	// If no candidates, nodes is 0.
+	nodes := len(records)
+
+	type candidateDTO struct {
+		ID          string                 `json:"id"`
+		Spec        map[string]interface{} `json:"spec"`
+		Metrics     map[string]interface{} `json:"metrics"`
+		SimWorkload map[string]interface{} `json:"sim_workload"`
+		Source      string                 `json:"source"`
+	}
+
+	outCandidates := make([]candidateDTO, 0, len(records))
+	for _, rec := range records {
+		outCandidates = append(outCandidates, candidateDTO{
+			ID:          rec.CandidateID,
+			Spec:        rec.Spec,
+			Metrics:     rec.Metrics,
+			SimWorkload: rec.SimWorkload,
+			Source:      rec.Source,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_id":    run.UserID,
+		"project_id": run.ProjectPublicID,
+		"run_id":     run.RunID,
+		"simulation": gin.H{
+			"nodes": nodes,
+		},
+		"candidates": outCandidates,
+	})
 }
 
 // GetBestCandidate returns best-candidate info for a run, including S3 path and normalized hosts/services.

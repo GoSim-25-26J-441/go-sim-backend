@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
 )
 
 const (
@@ -14,7 +16,7 @@ const (
 	DefaultChatID = "TestChat123"
 )
 
-// VersionRow represents one row in amg_apd_versions.
+// VersionRow represents one row in diagram_versions with source = 'amg_apd'.
 type VersionRow struct {
 	ID             string
 	UserID         string
@@ -31,6 +33,144 @@ type VersionRow struct {
 // Repo persists AMG-APD analyses for versioning and compare.
 type Repo struct {
 	db *sql.DB
+}
+
+// diagramService represents one entry in the "services" array in diagram_json.
+type diagramService struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// diagramDatastore represents one entry in the "datastores" array in diagram_json.
+type diagramDatastore struct {
+	Name string `json:"name"`
+}
+
+// diagramTopic represents one entry in the "topics" array in diagram_json.
+type diagramTopic struct {
+	Name string `json:"name"`
+}
+
+// diagramDependency represents one entry in the "dependencies" array in diagram_json.
+type diagramDependency struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Kind  string `json:"kind"`
+	Sync  bool   `json:"sync"`
+	Label string `json:"label"`
+}
+
+// diagramEnvelope is the full JSON shape stored in diagram_versions.diagram_json.
+// It keeps the original graph/detections fields and adds the requested structure.
+type diagramEnvelope struct {
+	Graph        json.RawMessage   `json:"graph,omitempty"`
+	Detections   json.RawMessage   `json:"detections,omitempty"`
+	Services     []diagramService  `json:"services"`
+	Datastores   []diagramDatastore `json:"datastores"`
+	Topics       []diagramTopic    `json:"topics"`
+	Dependencies []diagramDependency `json:"dependencies"`
+}
+
+// buildDiagramEnvelope converts the analyzed graph JSON plus detections JSON into the
+// combined envelope we persist in diagram_versions.diagram_json.
+func buildDiagramEnvelope(graphJSON, detectionsJSON []byte) (*diagramEnvelope, error) {
+	env := &diagramEnvelope{
+		Services:     []diagramService{},
+		Datastores:   []diagramDatastore{},
+		Topics:       []diagramTopic{},
+		Dependencies: []diagramDependency{},
+	}
+
+	if len(graphJSON) > 0 {
+		env.Graph = json.RawMessage(graphJSON)
+	}
+	if len(detectionsJSON) > 0 {
+		env.Detections = json.RawMessage(detectionsJSON)
+	}
+
+	// If there's no graph JSON, we still return the envelope with empty arrays
+	// so the JSON structure is always present.
+	if len(graphJSON) == 0 {
+		return env, nil
+	}
+
+	var g domain.Graph
+	if err := json.Unmarshal(graphJSON, &g); err != nil {
+		// If the stored graph cannot be parsed, fall back to just graph/detections.
+		return env, nil
+	}
+
+	// Map nodes → services / datastores / topics.
+	for _, n := range g.Nodes {
+		if n == nil {
+			continue
+		}
+		switch n.Kind {
+		case domain.NodeDB:
+			env.Datastores = append(env.Datastores, diagramDatastore{
+				Name: n.Name,
+			})
+		case domain.NodeAPIGateway:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "gateway",
+			})
+		case domain.NodeService:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "service",
+			})
+		default:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "service",
+			})
+		}
+	}
+
+	// Map edges → dependencies.
+	for _, e := range g.Edges {
+		if e == nil {
+			continue
+		}
+
+		fromName := e.From
+		if n, ok := g.Nodes[e.From]; ok && n != nil && n.Name != "" {
+			fromName = n.Name
+		}
+		toName := e.To
+		if n, ok := g.Nodes[e.To]; ok && n != nil && n.Name != "" {
+			toName = n.Name
+		}
+
+		kind := "rest"
+		if e.Attrs != nil {
+			if v, ok := e.Attrs["dep_kind"]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					kind = s
+				}
+			}
+		}
+
+		syncVal := false
+		if e.Attrs != nil {
+			if v, ok := e.Attrs["sync"]; ok {
+				if b, ok := v.(bool); ok {
+					syncVal = b
+				}
+			}
+		}
+
+		env.Dependencies = append(env.Dependencies, diagramDependency{
+			From:  fromName,
+			To:    toName,
+			Kind:  kind,
+			Sync:  syncVal,
+			Label: fmt.Sprintf("%s \u2192 %s", fromName, toName),
+		})
+	}
+
+	return env, nil
 }
 
 func NewRepo(db *sql.DB) *Repo {
@@ -60,18 +200,13 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 		title = fmt.Sprintf("diagramV%d", nextVersion)
 	}
 
-	// Pack graph and detections into diagram_json as a single JSON object.
-	var payload struct {
-		Graph      json.RawMessage `json:"graph,omitempty"`
-		Detections json.RawMessage `json:"detections,omitempty"`
+	// Build full diagram_json payload: graph, detections, and the structured
+	// services/datastores/topics/dependencies JSON used by the simulator.
+	env, err := buildDiagramEnvelope(graphJSON, detectionsJSON)
+	if err != nil {
+		return nil, err
 	}
-	if len(graphJSON) > 0 {
-		payload.Graph = json.RawMessage(graphJSON)
-	}
-	if len(detectionsJSON) > 0 {
-		payload.Detections = json.RawMessage(detectionsJSON)
-	}
-	diagramJSON, err := json.Marshal(payload)
+	diagramJSON, err := json.Marshal(env)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +416,95 @@ func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary,
 	return list, rows.Err()
 }
 
-// ParseGraphAndDetections deserializes graph_json and detections_json from a row into the given pointers.
+// GetLatestByUserProject returns the latest AMG-APD version for a given user and project_public_id.
+func (r *Repo) GetLatestByUserProject(userID, projectPublicID string) (*VersionRow, error) {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+
+	row := &VersionRow{}
+	var diagramJSON []byte
+	var dotContent sql.NullString
+	err := r.db.QueryRow(`
+		SELECT id, user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
+		ORDER BY version_number DESC
+		LIMIT 1
+	`, userID, projectPublicID).Scan(
+		&row.ID, &row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
+		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(diagramJSON) > 0 {
+		var payload struct {
+			Graph      json.RawMessage `json:"graph,omitempty"`
+			Detections json.RawMessage `json:"detections,omitempty"`
+		}
+		if err := json.Unmarshal(diagramJSON, &payload); err == nil {
+			if len(payload.Graph) > 0 {
+				row.GraphJSON = payload.Graph
+			}
+			if len(payload.Detections) > 0 {
+				row.DetectionsJSON = payload.Detections
+			}
+		}
+	}
+	if dotContent.Valid {
+		row.DOTContent = dotContent.String
+	}
+	return row, nil
+}
+
+// UpdateAnalysisByID updates the stored analysis fields for an existing AMG-APD version row.
+// This does NOT create a new version; it overwrites diagram_json/dot_content for the given id,
+// scoped to the given user_id + project_public_id.
+func (r *Repo) UpdateAnalysisByID(id, userID, projectPublicID string, graphJSON, detectionsJSON []byte, dotContent string) error {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+
+	// Rebuild the full diagram_json envelope with the new analysis.
+	env, err := buildDiagramEnvelope(graphJSON, detectionsJSON)
+	if err != nil {
+		return err
+	}
+	diagramJSON, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+
+	res, err := r.db.Exec(`
+		UPDATE diagram_versions
+		SET diagram_json = $1,
+		    dot_content = $2
+		WHERE id = $3
+		  AND user_firebase_uid = $4
+		  AND project_public_id = $5
+		  AND source = 'amg_apd'
+	`, diagramJSON, dotContent, id, userID, projectPublicID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ParseGraphAndDetections deserializes graph and detections from diagram_json (envelope) into the given pointers.
 func ParseGraphAndDetections(row *VersionRow, graphPtr interface{}, detectionsPtr interface{}) error {
 	if len(row.GraphJSON) > 0 {
 		if err := json.Unmarshal(row.GraphJSON, graphPtr); err != nil {
