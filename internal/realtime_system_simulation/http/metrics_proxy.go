@@ -148,6 +148,23 @@ func (h *Handler) StartMetricsStreamProxy(runID string, engineRunID string, inte
 					eventJSON, _ := json.Marshal(forwardEvent)
 					h.redisClient.Publish(ctx, eventChannel, eventJSON)
 
+				case "optimization_step":
+					// Online optimization: single optimization step (config change) per BACKEND_INTEGRATION.md
+					// Forward event so frontend can build a live optimization timeline.
+					forwardEvent := map[string]interface{}{
+						"event":  sseEvent.EventType,
+						"run_id": runID,
+					}
+					var stepData map[string]interface{}
+					if err := json.Unmarshal(sseEvent.Data, &stepData); err == nil {
+						forwardEvent["data"] = stepData
+					} else {
+						forwardEvent["raw_data"] = string(sseEvent.Data)
+						log.Printf("Warning: Failed to parse optimization_step data for run_id=%s: %v", runID, err)
+					}
+					eventJSON, _ := json.Marshal(forwardEvent)
+					h.redisClient.Publish(ctx, eventChannel, eventJSON)
+
 				case "complete":
 					// Simulation completed - forward event and stop proxy
 					forwardEvent := map[string]interface{}{
