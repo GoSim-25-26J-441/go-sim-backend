@@ -11,6 +11,7 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
 type engineRunCallbackBody struct {
@@ -83,6 +84,23 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	}
 
 	backendStatus := mapEngineStatusToBackendStatus(statusStr)
+
+	// Debug logging: summarize payload received from simulator callback.
+	metricKeys := make([]string, 0, len(body.Metrics))
+	for k := range body.Metrics {
+		metricKeys = append(metricKeys, k)
+	}
+	log.Printf(
+		"EngineRunCallback (legacy) received for run_id=%s: status=%s backend_status=%s metrics_keys=%v best_run_id=%s iterations=%d top_candidates=%v error=%s",
+		run.RunID,
+		statusStr,
+		backendStatus,
+		metricKeys,
+		body.BestRunID,
+		body.Iterations,
+		body.TopCandidates,
+		body.Error,
+	)
 	
 	// Preserve existing metadata and merge callback data
 	updateMeta := make(map[string]interface{})
@@ -211,6 +229,23 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	}
 
 	backendStatus := mapEngineStatusToBackendStatus(statusStr)
+
+	// Debug logging: summarize payload received from simulator callback (by ID).
+	metricKeys := make([]string, 0, len(body.Metrics))
+	for k := range body.Metrics {
+		metricKeys = append(metricKeys, k)
+	}
+	log.Printf(
+		"EngineRunCallbackByID received for run_id=%s: status=%s backend_status=%s metrics_keys=%v best_run_id=%s iterations=%d top_candidates=%v error=%s",
+		run.RunID,
+		statusStr,
+		backendStatus,
+		metricKeys,
+		body.BestRunID,
+		body.Iterations,
+		body.TopCandidates,
+		body.Error,
+	)
 	
 	// Preserve existing metadata and merge callback data
 	updateMeta := make(map[string]interface{})
@@ -325,6 +360,34 @@ func mapEngineStatusToBackendStatus(engineStatus string) string {
 	}
 }
 
+// firstFloatFromKeys returns the first value from m that is numeric for the given keys (order matters).
+// Used to normalize engine metric names (e.g. cpu_utilization -> cpu_util_pct) for the frontend.
+func firstFloatFromKeys(m map[string]any, keys ...string) *float64 {
+	if m == nil {
+		return nil
+	}
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok || v == nil {
+			continue
+		}
+		switch x := v.(type) {
+		case float64:
+			return &x
+		case int:
+			f := float64(x)
+			return &f
+		case int32:
+			f := float64(x)
+			return &f
+		case int64:
+			f := float64(x)
+			return &f
+		}
+	}
+	return nil
+}
+
 // persistRunMetrics fetches export data from the simulator and writes summaries and
 // time-series metrics into Postgres. Best-effort: failures are logged and do not
 // affect the callback response.
@@ -432,25 +495,28 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 		}
 	}
 
-	// Persist candidates for this run, if provided by the simulator export.
+	// Persist candidates for this run.
+	// Primary path: use explicit candidates array from export.
+	// Fallback path: if candidates array is empty, synthesize a single candidate from scenario/metrics.
+	if h.db == nil {
+		log.Printf("DB not configured; skipping candidate persistence for run_id=%s", run.RunID)
+		return
+	}
+
+	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
+	if _, err := h.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_runs (run_id) VALUES ($1)
+         ON CONFLICT (run_id) DO NOTHING`,
+		run.RunID,
+	); err != nil {
+		log.Printf("Failed to ensure simulation_runs row for run_id=%s before candidates insert: %v", run.RunID, err)
+		return
+	}
+
+	candidateRepo := repository.NewCandidateRepository(h.db)
+
 	if len(exportResp.Candidates) > 0 {
-		if h.db == nil {
-			log.Printf("DB not configured; skipping candidate persistence for run_id=%s", run.RunID)
-			return
-		}
-
-		// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
-		if _, err := h.db.ExecContext(
-			ctx,
-			`INSERT INTO simulation_runs (run_id) VALUES ($1)
-             ON CONFLICT (run_id) DO NOTHING`,
-			run.RunID,
-		); err != nil {
-			log.Printf("Failed to ensure simulation_runs row for run_id=%s before candidates insert: %v", run.RunID, err)
-			return
-		}
-
-		candidateRepo := repository.NewCandidateRepository(h.db)
 		records := make([]*repository.CandidateRecord, 0, len(exportResp.Candidates))
 		for _, cnd := range exportResp.Candidates {
 			rec := &repository.CandidateRecord{
@@ -466,11 +532,113 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				SimWorkload: cnd.SimWorkload,
 				Source:      cnd.Source,
 			}
+
+			// If S3 is configured and the candidate includes scenario_yaml, upload per-candidate YAML.
+			if h.s3Client != nil && cnd.ScenarioYAML != "" {
+				key := "simulation/" + run.RunID + "/candidates/" + cnd.ID + ".yaml"
+				if err := h.s3Client.PutObject(ctx, key, []byte(cnd.ScenarioYAML)); err != nil {
+					log.Printf("Failed to upload candidate YAML to S3 for run_id=%s candidate_id=%s: %v", run.RunID, cnd.ID, err)
+				} else {
+					rec.S3Path = key
+				}
+			}
+
 			records = append(records, rec)
 		}
 
 		if err := candidateRepo.CreateMany(ctx, records); err != nil {
 			log.Printf("Failed to persist candidates for run_id=%s: %v", run.RunID, err)
+		}
+	} else {
+		// Fallback: synthesize a single candidate from the main scenario + metrics.
+		spec := map[string]any{
+			"label": "scenario",
+		}
+		// Parse scenario YAML to populate vcpu and memory_gb for the table.
+		if exportResp.Input.ScenarioYAML != "" {
+			var scenario struct {
+				Hosts []struct {
+					ID    string `yaml:"id"`
+					Cores int    `yaml:"cores"`
+				} `yaml:"hosts"`
+				Services []struct {
+					ID       string  `yaml:"id"`
+					Replicas int     `yaml:"replicas"`
+					CPUCores float64 `yaml:"cpu_cores"`
+					MemoryMB float64 `yaml:"memory_mb"`
+				} `yaml:"services"`
+			}
+			if err := yaml.Unmarshal([]byte(exportResp.Input.ScenarioYAML), &scenario); err == nil {
+				var vcpu float64
+				var memoryGB float64
+				if len(scenario.Hosts) > 0 {
+					for _, h := range scenario.Hosts {
+						vcpu += float64(h.Cores)
+					}
+					// Hosts often don't expose memory in this YAML; use 16 GB per host if no services.
+					if len(scenario.Services) > 0 {
+						for _, s := range scenario.Services {
+							memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
+						}
+					} else {
+						memoryGB = float64(len(scenario.Hosts)) * 16
+					}
+				} else {
+					for _, s := range scenario.Services {
+						vcpu += float64(s.Replicas) * s.CPUCores
+						memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
+					}
+				}
+				if vcpu > 0 {
+					spec["vcpu"] = vcpu
+				}
+				if memoryGB > 0 {
+					spec["memory_gb"] = memoryGB
+				}
+			}
+		}
+
+		metrics := map[string]any{}
+		for k, v := range exportResp.Metrics {
+			metrics[k] = v
+		}
+		// Normalize common engine metric names to frontend-expected keys.
+		if v := firstFloatFromKeys(exportResp.Metrics, "cpu_util_pct", "cpu_utilization", "cpu_util"); v != nil {
+			metrics["cpu_util_pct"] = *v
+		}
+		if v := firstFloatFromKeys(exportResp.Metrics, "mem_util_pct", "memory_util_pct", "memory_utilization", "mem_util"); v != nil {
+			metrics["mem_util_pct"] = *v
+		}
+
+		simWorkload := map[string]any{}
+		if v, ok := exportResp.Metrics["throughput_rps"]; ok {
+			// Approximate concurrent users from RPS (simple heuristic).
+			simWorkload["concurrent_users"] = v
+		}
+
+		// Reuse best_scenario.yaml key as the candidate YAML source, if S3 is configured.
+		s3Path := ""
+		if h.s3Client != nil {
+			s3Path = "simulation/" + run.RunID + "/best_scenario.yaml"
+		}
+
+		rec := &repository.CandidateRecord{
+			UserID: run.UserID,
+			ProjectPublicID: sql.NullString{
+				String: run.ProjectPublicID,
+				Valid:  run.ProjectPublicID != "",
+			},
+			RunID:       run.RunID,
+			CandidateID: "scenario",
+			Spec:        spec,
+			Metrics:     metrics,
+			SimWorkload: simWorkload,
+			Source:      "scenario_yaml",
+			S3Path:      s3Path,
+		}
+
+		if err := candidateRepo.CreateMany(ctx, []*repository.CandidateRecord{rec}); err != nil {
+			log.Printf("Failed to persist fallback candidate for run_id=%s: %v", run.RunID, err)
 		}
 	}
 }

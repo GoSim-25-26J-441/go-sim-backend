@@ -18,6 +18,7 @@ type CandidateRecord struct {
 	Metrics         map[string]any
 	SimWorkload     map[string]any
 	Source          string
+	S3Path          string
 }
 
 // CandidateRepository handles Postgres operations for simulation candidates.
@@ -49,14 +50,15 @@ func (r *CandidateRepository) CreateMany(ctx context.Context, records []*Candida
 
 	stmt, err := tx.PrepareContext(ctx, `
         INSERT INTO simulation_candidates
-            (user_id, project_public_id, run_id, candidate_id, spec, metrics, sim_workload, source)
+            (user_id, project_public_id, run_id, candidate_id, spec, metrics, sim_workload, source, s3_path)
         VALUES
-            ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8)
+            ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9)
         ON CONFLICT (run_id, candidate_id) DO UPDATE
         SET spec = EXCLUDED.spec,
             metrics = EXCLUDED.metrics,
             sim_workload = EXCLUDED.sim_workload,
             source = EXCLUDED.source,
+            s3_path = EXCLUDED.s3_path,
             updated_at = NOW()
     `)
 	if err != nil {
@@ -88,6 +90,7 @@ func (r *CandidateRepository) CreateMany(ctx context.Context, records []*Candida
 			string(metricsJSON),
 			string(workloadJSON),
 			rec.Source,
+			rec.S3Path,
 		); err != nil {
 			return fmt.Errorf("failed to insert candidate run_id=%s candidate_id=%s: %w", rec.RunID, rec.CandidateID, err)
 		}
@@ -108,7 +111,7 @@ func (r *CandidateRepository) ListByRunID(ctx context.Context, runID string) ([]
 
 	rows, err := r.db.QueryContext(ctx, `
         SELECT id, user_id, project_public_id, run_id, candidate_id,
-               spec, metrics, sim_workload, source
+               spec, metrics, sim_workload, source, s3_path
         FROM simulation_candidates
         WHERE run_id = $1
         ORDER BY candidate_id
@@ -133,6 +136,7 @@ func (r *CandidateRepository) ListByRunID(ctx context.Context, runID string) ([]
 			&metricsJSON,
 			&workloadJSON,
 			&rec.Source,
+			&rec.S3Path,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan simulation_candidates row: %w", err)
 		}
