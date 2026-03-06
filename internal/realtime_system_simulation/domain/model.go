@@ -8,7 +8,7 @@ type SimulationRun struct {
 	UserID          string                 `json:"user_id"`
 	ProjectPublicID string                 `json:"project_id,omitempty"` // Optional: associates run with a project
 	EngineRunID     string                 `json:"engine_run_id"`        // ID from the simulation engine
-	Status          string                 `json:"status"`               // pending, running, completed, failed, cancelled
+	Status          string                 `json:"status"`               // pending, running, completed, failed, cancelled, stopped
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`
 	CompletedAt     *time.Time             `json:"completed_at,omitempty"`
@@ -22,6 +22,7 @@ const (
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
 	StatusCancelled = "cancelled"
+	StatusStopped   = "stopped"
 )
 
 // CreateRunRequest represents data needed to create a new simulation run

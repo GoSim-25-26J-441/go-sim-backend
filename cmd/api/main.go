@@ -196,17 +196,17 @@ func main() {
 	simHandler.RegisterEngineCallbackRoutes(simEngineGroup)
 	log.Printf("Simulation engine callback endpoints registered at /api/v1/simulation-engine/runs/callback (no Firebase auth required)")
 
-	// Simulation routes (user-facing endpoints - require Firebase auth if Firebase is initialized)
+	// Simulation routes (user-facing endpoints)
+	simGroup := api.Group("/simulation")
 	if authClient != nil {
-		simGroup := api.Group("/simulation")
-
-		// Apply Firebase Auth middleware to simulation routes (for user access)
+		// Apply Firebase Auth middleware when available (production)
 		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
 		simHandler.Register(simGroup)
 		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
 	} else {
-		log.Printf("Simulation user endpoints disabled (Firebase not initialized)")
+		// No Firebase: routes still registered; use X-User-Id header for dev (e.g. events SSE)
+		log.Printf("Simulation user endpoints registered at /api/v1/simulation (no Firebase; use X-User-Id for auth)")
 	}
 
 	// Analysis Suggestions routes
