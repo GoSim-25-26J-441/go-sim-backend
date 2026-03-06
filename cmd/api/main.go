@@ -202,7 +202,7 @@ func main() {
 		// Apply Firebase Auth middleware when available (production)
 		simGroup.Use(authmiddleware.FirebaseAuthMiddleware(authClient.(*auth.Client)))
 
-		simHandler.Register(simGroup)
+		//simHandler.Register(simGroup)
 		log.Printf("Simulation user endpoints registered at /api/v1/simulation (Firebase auth required)")
 	} else {
 		// No Firebase: routes still registered; use X-User-Id header for dev (e.g. events SSE)

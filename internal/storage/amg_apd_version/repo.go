@@ -14,7 +14,7 @@ const (
 	DefaultChatID = "TestChat123"
 )
 
-// VersionRow represents one row in amg_apd_versions.
+// VersionRow represents one row in diagram_versions with source = 'amg_apd'.
 type VersionRow struct {
 	ID             string
 	UserID         string
@@ -281,7 +281,7 @@ func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary,
 	return list, rows.Err()
 }
 
-// ParseGraphAndDetections deserializes graph_json and detections_json from a row into the given pointers.
+// ParseGraphAndDetections deserializes graph and detections from diagram_json (envelope) into the given pointers.
 func ParseGraphAndDetections(row *VersionRow, graphPtr interface{}, detectionsPtr interface{}) error {
 	if len(row.GraphJSON) > 0 {
 		if err := json.Unmarshal(row.GraphJSON, graphPtr); err != nil {
