@@ -22,9 +22,10 @@ func (u uiOrchestrator) Detect(g *domain.Graph) ([]domain.Detection, error) {
 
 	isSvc := func(id string) bool {
 		n, ok := g.Nodes[id]
-		return ok && n != nil && n.Kind == domain.NodeService
+		return ok && n != nil && (n.Kind == domain.NodeService || n.Kind == domain.NodeAPIGateway)
 	}
 
+	// Only consider NodeService as orchestrator source; exclude API_GATEWAY (BFF) so we don't flag the fix.
 	var out []domain.Detection
 	for id, n := range g.Nodes {
 		if n == nil || n.Kind != domain.NodeService {

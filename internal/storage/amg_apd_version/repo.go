@@ -14,7 +14,7 @@ const (
 	DefaultChatID = "TestChat123"
 )
 
-// VersionRow represents one row in amg_apd_versions.
+// VersionRow represents one row in diagram_versions with source = 'amg_apd'.
 type VersionRow struct {
 	ID             string
 	UserID         string
@@ -281,7 +281,100 @@ func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary,
 	return list, rows.Err()
 }
 
-// ParseGraphAndDetections deserializes graph_json and detections_json from a row into the given pointers.
+// GetLatestByUserProject returns the latest AMG-APD version for a given user and project_public_id.
+func (r *Repo) GetLatestByUserProject(userID, projectPublicID string) (*VersionRow, error) {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+
+	row := &VersionRow{}
+	var diagramJSON []byte
+	var dotContent sql.NullString
+	err := r.db.QueryRow(`
+		SELECT id, user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
+		ORDER BY version_number DESC
+		LIMIT 1
+	`, userID, projectPublicID).Scan(
+		&row.ID, &row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
+		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(diagramJSON) > 0 {
+		var payload struct {
+			Graph      json.RawMessage `json:"graph,omitempty"`
+			Detections json.RawMessage `json:"detections,omitempty"`
+		}
+		if err := json.Unmarshal(diagramJSON, &payload); err == nil {
+			if len(payload.Graph) > 0 {
+				row.GraphJSON = payload.Graph
+			}
+			if len(payload.Detections) > 0 {
+				row.DetectionsJSON = payload.Detections
+			}
+		}
+	}
+	if dotContent.Valid {
+		row.DOTContent = dotContent.String
+	}
+	return row, nil
+}
+
+// UpdateAnalysisByID updates the stored analysis fields for an existing AMG-APD version row.
+// This does NOT create a new version; it overwrites diagram_json/dot_content for the given id,
+// scoped to the given user_id + project_public_id.
+func (r *Repo) UpdateAnalysisByID(id, userID, projectPublicID string, graphJSON, detectionsJSON []byte, dotContent string) error {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+
+	var payload struct {
+		Graph      json.RawMessage `json:"graph,omitempty"`
+		Detections json.RawMessage `json:"detections,omitempty"`
+	}
+	if len(graphJSON) > 0 {
+		payload.Graph = json.RawMessage(graphJSON)
+	}
+	if len(detectionsJSON) > 0 {
+		payload.Detections = json.RawMessage(detectionsJSON)
+	}
+	diagramJSON, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	res, err := r.db.Exec(`
+		UPDATE diagram_versions
+		SET diagram_json = $1,
+		    dot_content = $2
+		WHERE id = $3
+		  AND user_firebase_uid = $4
+		  AND project_public_id = $5
+		  AND source = 'amg_apd'
+	`, diagramJSON, dotContent, id, userID, projectPublicID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ParseGraphAndDetections deserializes graph and detections from diagram_json (envelope) into the given pointers.
 func ParseGraphAndDetections(row *VersionRow, graphPtr interface{}, detectionsPtr interface{}) error {
 	if len(row.GraphJSON) > 0 {
 		if err := json.Unmarshal(row.GraphJSON, graphPtr); err != nil {
