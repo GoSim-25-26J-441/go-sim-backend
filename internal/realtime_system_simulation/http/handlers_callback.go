@@ -344,9 +344,10 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 	// Persist aggregated metrics into simulation_summaries.metrics
 	if exportResp.Metrics != nil {
 		summaryParams := &repository.SummaryUpsertParams{
-			RunID:       run.RunID,
-			EngineRunID: run.EngineRunID,
-			Metrics:     exportResp.Metrics,
+			RunID:        run.RunID,
+			EngineRunID:  run.EngineRunID,
+			Metrics:      exportResp.Metrics,
+			ScenarioYAML: exportResp.Input.ScenarioYAML,
 			// For now, store an empty summary_data object. This can be extended
 			// later with derived summary fields if needed.
 			SummaryData: map[string]any{},
@@ -513,15 +514,17 @@ func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.Simula
 		return
 	}
 
-	// Persist S3 path in simulation_summaries; create row if needed.
+	// Persist S3 path and scenario_yaml in simulation_summaries; create row if needed.
 	if _, err := h.db.ExecContext(
 		ctx,
-		`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (run_id) DO UPDATE SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path`,
-		run.RunID, run.EngineRunID, key,
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (run_id) DO UPDATE
+         SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
+		run.RunID, run.EngineRunID, key, scenarioYAML,
 	); err != nil {
-		log.Printf("Failed to upsert best_candidate_s3_path for run_id=%s into simulation_summaries: %v", run.RunID, err)
+		log.Printf("Failed to upsert best_candidate_s3_path/scenario_yaml for run_id=%s into simulation_summaries: %v", run.RunID, err)
 		return
 	}
 

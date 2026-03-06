@@ -293,7 +293,27 @@ func (h *Handler) GetRun(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"run": run})
+	// Optionally enrich with stored scenario_yaml from simulation_summaries if DB is configured.
+	var scenarioYAML *string
+	if h.db != nil {
+		var yamlText sql.NullString
+		err := h.db.QueryRowContext(
+			c.Request.Context(),
+			`SELECT scenario_yaml FROM simulation_summaries WHERE run_id = $1`,
+			runID,
+		).Scan(&yamlText)
+		if err == nil && yamlText.Valid && yamlText.String != "" {
+			scenarioYAML = &yamlText.String
+		}
+	}
+
+	// Attach scenario_yaml as a top-level field alongside the run for frontend convenience.
+	resp := gin.H{"run": run}
+	if scenarioYAML != nil {
+		resp["scenario_yaml"] = *scenarioYAML
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetRunCandidates returns parsed candidate records for a given simulation run.

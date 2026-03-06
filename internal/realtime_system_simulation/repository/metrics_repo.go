@@ -24,6 +24,7 @@ type SummaryUpsertParams struct {
 	EngineRunID string
 	Metrics     map[string]any
 	SummaryData map[string]any
+	ScenarioYAML string
 }
 
 // TimeSeriesPoint represents a single timeseries datapoint to persist.
@@ -65,13 +66,14 @@ func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertP
 
 	_, err = r.db.ExecContext(
 		ctx,
-		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data)
-         VALUES ($1, $2, $3::jsonb, $4::jsonb)
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data, scenario_yaml)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
          ON CONFLICT (run_id) DO UPDATE
          SET engine_run_id = EXCLUDED.engine_run_id,
              metrics = EXCLUDED.metrics,
-             summary_data = EXCLUDED.summary_data`,
-		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON),
+             summary_data = EXCLUDED.summary_data,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
+		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert simulation_summaries for run_id=%s: %w", p.RunID, err)
