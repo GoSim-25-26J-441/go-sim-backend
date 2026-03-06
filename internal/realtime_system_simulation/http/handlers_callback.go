@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"log"
 	"net/http"
 	"time"
@@ -427,6 +428,48 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 		})
 		if err != nil {
 			log.Printf("Failed to persist optimization_history for run_id=%s: %v", run.RunID, err)
+		}
+	}
+
+	// Persist candidates for this run, if provided by the simulator export.
+	if len(exportResp.Candidates) > 0 {
+		if h.db == nil {
+			log.Printf("DB not configured; skipping candidate persistence for run_id=%s", run.RunID)
+			return
+		}
+
+		// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
+		if _, err := h.db.ExecContext(
+			ctx,
+			`INSERT INTO simulation_runs (run_id) VALUES ($1)
+             ON CONFLICT (run_id) DO NOTHING`,
+			run.RunID,
+		); err != nil {
+			log.Printf("Failed to ensure simulation_runs row for run_id=%s before candidates insert: %v", run.RunID, err)
+			return
+		}
+
+		candidateRepo := repository.NewCandidateRepository(h.db)
+		records := make([]*repository.CandidateRecord, 0, len(exportResp.Candidates))
+		for _, cnd := range exportResp.Candidates {
+			rec := &repository.CandidateRecord{
+				UserID: run.UserID,
+				ProjectPublicID: sql.NullString{
+					String: run.ProjectPublicID,
+					Valid:  run.ProjectPublicID != "",
+				},
+				RunID:       run.RunID,
+				CandidateID: cnd.ID,
+				Spec:        cnd.Spec,
+				Metrics:     cnd.Metrics,
+				SimWorkload: cnd.SimWorkload,
+				Source:      cnd.Source,
+			}
+			records = append(records, rec)
+		}
+
+		if err := candidateRepo.CreateMany(ctx, records); err != nil {
+			log.Printf("Failed to persist candidates for run_id=%s: %v", run.RunID, err)
 		}
 	}
 }

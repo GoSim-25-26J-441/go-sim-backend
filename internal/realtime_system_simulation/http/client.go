@@ -161,8 +161,15 @@ type ExportRunResponse struct {
 		ScenarioYAML string `json:"scenario_yaml"`
 		DurationMs   int64  `json:"duration_ms,omitempty"`
 	} `json:"input"`
-	Metrics             map[string]any `json:"metrics,omitempty"`
+	Metrics             map[string]any      `json:"metrics,omitempty"`
 	OptimizationHistory []OptimizationStep `json:"optimization_history,omitempty"`
+	Candidates          []struct {
+		ID          string         `json:"id"`
+		Spec        map[string]any `json:"spec"`
+		Metrics     map[string]any `json:"metrics"`
+		SimWorkload map[string]any `json:"sim_workload"`
+		Source      string         `json:"source"`
+	} `json:"candidates,omitempty"`
 	TimeSeries          []struct {
 		Metric string `json:"metric"`
 		Points []struct {
