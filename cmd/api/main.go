@@ -208,7 +208,6 @@ func main() {
 		// No Firebase: routes still registered; use X-User-Id header for dev (e.g. events SSE)
 		log.Printf("Simulation user endpoints registered at /api/v1/simulation (no Firebase; use X-User-Id for auth)")
 	}
-	simHandler.Register(simGroup)
 
 	// Analysis Suggestions routes
 	analysisGroup := api.Group("/analysis-suggestions")
