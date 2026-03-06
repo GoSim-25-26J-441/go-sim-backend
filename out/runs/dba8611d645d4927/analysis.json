@@ -1,0 +1,238 @@
+{
+  "graph": {
+    "nodes": {
+      "DATABASE:payments-db": {
+        "id": "DATABASE:payments-db",
+        "name": "payments-db",
+        "kind": "DATABASE",
+        "attrs": {
+          "owner": "payment-service"
+        }
+      },
+      "DATABASE:users-db": {
+        "id": "DATABASE:users-db",
+        "name": "users-db",
+        "kind": "DATABASE",
+        "attrs": {
+          "owner": "auth-service"
+        }
+      },
+      "SERVICE:api-gateway": {
+        "id": "SERVICE:api-gateway",
+        "name": "api-gateway",
+        "kind": "SERVICE"
+      },
+      "SERVICE:auth-service": {
+        "id": "SERVICE:auth-service",
+        "name": "auth-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:billing-service": {
+        "id": "SERVICE:billing-service",
+        "name": "billing-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:payment-service": {
+        "id": "SERVICE:payment-service",
+        "name": "payment-service",
+        "kind": "SERVICE"
+      },
+      "SERVICE:user-service": {
+        "id": "SERVICE:user-service",
+        "name": "user-service",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:api-gateway",
+        "to": "SERVICE:user-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "GET /users/:id"
+          ],
+          "per_item": false,
+          "rate_per_min": 600
+        }
+      },
+      {
+        "from": "SERVICE:api-gateway",
+        "to": "SERVICE:billing-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /bill"
+          ],
+          "per_item": false,
+          "rate_per_min": 300
+        }
+      },
+      {
+        "from": "SERVICE:user-service",
+        "to": "SERVICE:auth-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /verify"
+          ],
+          "per_item": false,
+          "rate_per_min": 600
+        }
+      },
+      {
+        "from": "SERVICE:user-service",
+        "to": "DATABASE:users-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:auth-service",
+        "to": "DATABASE:users-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:auth-service",
+        "to": "DATABASE:users-db",
+        "kind": "WRITES",
+        "attrs": {
+          "owner": true
+        }
+      },
+      {
+        "from": "SERVICE:billing-service",
+        "to": "SERVICE:payment-service",
+        "kind": "CALLS",
+        "attrs": {
+          "count": 1,
+          "endpoints": [
+            "POST /charge"
+          ],
+          "per_item": false,
+          "rate_per_min": 500
+        }
+      },
+      {
+        "from": "SERVICE:billing-service",
+        "to": "DATABASE:payments-db",
+        "kind": "READS"
+      },
+      {
+        "from": "SERVICE:payment-service",
+        "to": "DATABASE:payments-db",
+        "kind": "WRITES",
+        "attrs": {
+          "owner": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/runs/dba8611d645d4927/graph.dot",
+  "svg_path": "/app/out/runs/dba8611d645d4927/graph.svg",
+  "detections": [
+    {
+      "kind": "chatty_calls",
+      "severity": "MEDIUM",
+      "title": "Chatty call",
+      "summary": "High-frequency or per-item chattiness between services",
+      "nodes": [
+        "SERVICE:api-gateway",
+        "SERVICE:user-service"
+      ],
+      "edges": [
+        0
+      ],
+      "evidence": {
+        "per_item": false,
+        "rate_per_min": 600
+      }
+    },
+    {
+      "kind": "chatty_calls",
+      "severity": "MEDIUM",
+      "title": "Chatty call",
+      "summary": "High-frequency or per-item chattiness between services",
+      "nodes": [
+        "SERVICE:api-gateway",
+        "SERVICE:billing-service"
+      ],
+      "edges": [
+        1
+      ],
+      "evidence": {
+        "per_item": false,
+        "rate_per_min": 300
+      }
+    },
+    {
+      "kind": "chatty_calls",
+      "severity": "MEDIUM",
+      "title": "Chatty call",
+      "summary": "High-frequency or per-item chattiness between services",
+      "nodes": [
+        "SERVICE:user-service",
+        "SERVICE:auth-service"
+      ],
+      "edges": [
+        2
+      ],
+      "evidence": {
+        "per_item": false,
+        "rate_per_min": 600
+      }
+    },
+    {
+      "kind": "chatty_calls",
+      "severity": "MEDIUM",
+      "title": "Chatty call",
+      "summary": "High-frequency or per-item chattiness between services",
+      "nodes": [
+        "SERVICE:billing-service",
+        "SERVICE:payment-service"
+      ],
+      "edges": [
+        6
+      ],
+      "evidence": {
+        "per_item": false,
+        "rate_per_min": 500
+      }
+    },
+    {
+      "kind": "cross_db_read",
+      "severity": "MEDIUM",
+      "title": "Cross-DB read",
+      "summary": "Service reads DB owned by another service",
+      "nodes": [
+        "SERVICE:user-service",
+        "DATABASE:users-db"
+      ],
+      "edges": [
+        3
+      ],
+      "evidence": {
+        "owner": "auth-service",
+        "reader": "user-service"
+      }
+    },
+    {
+      "kind": "cross_db_read",
+      "severity": "MEDIUM",
+      "title": "Cross-DB read",
+      "summary": "Service reads DB owned by another service",
+      "nodes": [
+        "SERVICE:billing-service",
+        "DATABASE:payments-db"
+      ],
+      "edges": [
+        7
+      ],
+      "evidence": {
+        "owner": "payment-service",
+        "reader": "billing-service"
+      }
+    }
+  ]
+}

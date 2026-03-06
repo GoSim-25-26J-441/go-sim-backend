@@ -1,0 +1,137 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// MetricsRepository handles persistence of simulation summaries and time-series metrics.
+type MetricsRepository struct {
+	db *sql.DB
+}
+
+// NewMetricsRepository creates a new MetricsRepository backed by the given DB.
+func NewMetricsRepository(db *sql.DB) *MetricsRepository {
+	return &MetricsRepository{db: db}
+}
+
+// SummaryUpsertParams captures the data needed to upsert a simulation_summaries row.
+type SummaryUpsertParams struct {
+	RunID       string
+	EngineRunID string
+	Metrics     map[string]any
+	SummaryData map[string]any
+}
+
+// TimeSeriesPoint represents a single timeseries datapoint to persist.
+type TimeSeriesPoint struct {
+	RunID       string
+	Time        time.Time
+	TimestampMs int64
+	MetricType  string
+	MetricValue float64
+	ServiceID   string
+	NodeID      string
+	Tags        map[string]any
+}
+
+// UpsertSummary upserts a row in simulation_summaries for the given run.
+func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertParams) error {
+	if r == nil || r.db == nil || p == nil {
+		return fmt.Errorf("metrics repository not properly initialized")
+	}
+
+	metricsJSON, err := json.Marshal(p.Metrics)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metrics JSON: %w", err)
+	}
+	summaryJSON, err := json.Marshal(p.SummaryData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal summary_data JSON: %w", err)
+	}
+
+	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
+	if _, err := r.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_runs (run_id) VALUES ($1)
+         ON CONFLICT (run_id) DO NOTHING`,
+		p.RunID,
+	); err != nil {
+		return fmt.Errorf("failed to ensure simulation_runs row for run_id=%s: %w", p.RunID, err)
+	}
+
+	_, err = r.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb)
+         ON CONFLICT (run_id) DO UPDATE
+         SET engine_run_id = EXCLUDED.engine_run_id,
+             metrics = EXCLUDED.metrics,
+             summary_data = EXCLUDED.summary_data`,
+		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert simulation_summaries for run_id=%s: %w", p.RunID, err)
+	}
+
+	return nil
+}
+
+// InsertTimeSeries inserts a batch of timeseries points into simulation_metrics_timeseries.
+func (r *MetricsRepository) InsertTimeSeries(ctx context.Context, points []TimeSeriesPoint) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("metrics repository not properly initialized")
+	}
+	if len(points) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for timeseries insert: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `
+        INSERT INTO simulation_metrics_timeseries
+            (run_id, time, timestamp_ms, metric_type, metric_value, service_id, node_id, tags)
+        VALUES
+            ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to prepare timeseries insert statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, p := range points {
+		tagsJSON, err := json.Marshal(p.Tags)
+		if err != nil {
+			return fmt.Errorf("failed to marshal tags JSON for run_id=%s metric=%s: %w", p.RunID, p.MetricType, err)
+		}
+		if _, err := stmt.ExecContext(
+			ctx,
+			p.RunID,
+			p.Time,
+			p.TimestampMs,
+			p.MetricType,
+			p.MetricValue,
+			p.ServiceID,
+			p.NodeID,
+			string(tagsJSON),
+		); err != nil {
+			return fmt.Errorf("failed to insert timeseries point for run_id=%s metric=%s: %w", p.RunID, p.MetricType, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit timeseries insert transaction: %w", err)
+	}
+
+	return nil
+}
+

@@ -1,0 +1,58 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 220
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: orders
+      kind: rest
+      sync: true
+      to: inventory
+    - from: orders
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: inventory
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: auth
+      kind: rest
+      sync: true
+      to: shared-db
+    - from: web
+      kind: rest
+      sync: true
+      to: bff
+    - from: bff
+      kind: rest
+      sync: true
+      to: auth
+    - from: bff
+      kind: rest
+      sync: true
+      to: orders
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: web
+      type: service
+    - name: auth
+      type: service
+    - name: orders
+      type: service
+    - name: inventory
+      type: service
+    - name: shared-db
+      type: service
+    - name: bff
+      type: service
+topics: []
+trace: []

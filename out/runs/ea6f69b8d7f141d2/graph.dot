@@ -1,0 +1,16 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:web" [label="web", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:auth" [label="auth", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:orders" [label="orders", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:inventory" [label="inventory", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:shared-db" [label="shared-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:web" -> "SERVICE:auth" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:web" -> "SERVICE:orders" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:orders" -> "SERVICE:inventory" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:orders" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:inventory" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:auth" -> "DATABASE:shared-db" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+}

@@ -1,0 +1,177 @@
+graph:
+    nodes:
+        DATABASE:profile-db:
+            id: DATABASE:profile-db
+            name: profile-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:profile:
+            id: SERVICE:profile
+            name: profile
+            kind: SERVICE
+            attrs: {}
+        SERVICE:recommendations:
+            id: SERVICE:recommendations
+            name: recommendations
+            kind: SERVICE
+            attrs: {}
+        SERVICE:ui:
+            id: SERVICE:ui
+            name: ui
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:ui
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:ui
+          to: SERVICE:recommendations
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:recommendations
+          to: SERVICE:profile
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:profile
+          to: SERVICE:recommendations
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:profile
+          to: DATABASE:profile-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:recommendations
+          to: DATABASE:profile-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:profile:
+            - from: SERVICE:profile
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:profile
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:recommendations:
+            - from: SERVICE:recommendations
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:recommendations
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:ui:
+            - from: SERVICE:ui
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:ui
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:profile-db:
+            - from: SERVICE:profile
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:recommendations
+              to: DATABASE:profile-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:profile:
+            - from: SERVICE:ui
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:recommendations
+              to: SERVICE:profile
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:recommendations:
+            - from: SERVICE:ui
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:profile
+              to: SERVICE:recommendations
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/e67a8ca303ac5fa8/graph.dot
+svg_path: /app/out/runs/e67a8ca303ac5fa8/graph.svg
+detections:
+    - kind: cycles
+      severity: HIGH
+      title: Cyclic dependency
+      summary: A loop of service dependencies was detected
+      nodes:
+        - SERVICE:recommendations
+        - SERVICE:profile
+      edges: []
+      evidence:
+        cycle_size: 2
+    - kind: ping_pong_dependency
+      severity: MEDIUM
+      title: Ping-pong dependency
+      summary: Two services depend on each other (mutual calls)
+      nodes:
+        - SERVICE:recommendations
+        - SERVICE:profile
+      edges: []
+      evidence:
+        a: SERVICE:recommendations
+        b: SERVICE:profile
+    - kind: ui_orchestrator
+      severity: MEDIUM
+      title: UI orchestrator
+      summary: UI directly orchestrates multiple backend services
+      nodes:
+        - SERVICE:ui
+        - SERVICE:profile
+        - SERVICE:recommendations
+      edges: []
+      evidence:
+        min_out: 2
+        sync_targets: 2
+        targets: 2
+        ui: SERVICE:ui

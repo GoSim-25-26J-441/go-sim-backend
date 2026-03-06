@@ -1,0 +1,52 @@
+services:
+    - name: api-gateway
+      calls:
+        - to: user-service
+          endpoints:
+            - GET /users/:id
+          rate_per_min: 60
+          per_item: false
+        - to: billing-service
+          endpoints:
+            - POST /bill
+          rate_per_min: 30
+          per_item: false
+      databases:
+        reads: []
+        writes: []
+    - name: user-service
+      calls:
+        - to: auth-service
+          endpoints:
+            - POST /verify
+          rate_per_min: 60
+          per_item: false
+      databases:
+        reads: []
+        writes: []
+    - name: auth-service
+      calls: []
+      databases:
+        reads:
+            - users-db
+        writes:
+            - users-db
+    - name: billing-service
+      calls:
+        - to: payment-service
+          endpoints:
+            - POST /charge
+          rate_per_min: 50
+          per_item: false
+      databases:
+        reads: []
+        writes: []
+    - name: payment-service
+      calls: []
+      databases:
+        reads: []
+        writes:
+            - payments-db
+databases:
+    - name: users-db
+    - name: payments-db

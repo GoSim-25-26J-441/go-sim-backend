@@ -1,0 +1,37 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:profile" [label="profile", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:ingest-worker" [label="ingest-worker", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:validator" [label="validator", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:writer" [label="writer", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:billing-api" [label="billing-api", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:refund-api" [label="refund-api", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web-ui" [label="web-ui", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:auth" [label="auth", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:catalog" [label="catalog", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:settlement-api" [label="settlement-api", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web-ui_split" [label="web-ui_split", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:bff" [label="bff", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:support" [label="support", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:enricher" [label="enricher", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:finance-db" [label="finance-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:reviews" [label="reviews", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:web-ui_split" -> "SERVICE:reviews" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:web-ui_split" -> "SERVICE:support" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:web-ui_split" -> "SERVICE:profile" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:ingest-worker" -> "SERVICE:validator" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:validator" -> "SERVICE:enricher" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:enricher" -> "SERVICE:writer" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+  "SERVICE:billing-api" -> "DATABASE:finance-db" [label="CALLS [rest] (sync)", tooltip="edge#6"];
+  "SERVICE:refund-api" -> "DATABASE:finance-db" [label="CALLS [rest] (sync)", tooltip="edge#7"];
+  "SERVICE:settlement-api" -> "DATABASE:finance-db" [label="CALLS [rest] (sync)", tooltip="edge#8"];
+  "SERVICE:web-ui" -> "SERVICE:web-ui_split" [label="CALLS [rest] (sync)", tooltip="edge#9"];
+  "SERVICE:web-ui" -> "SERVICE:bff" [label="CALLS [rest] (sync)", tooltip="edge#10"];
+  "SERVICE:bff" -> "SERVICE:auth" [label="CALLS [rest] (sync)", tooltip="edge#11"];
+  "SERVICE:bff" -> "SERVICE:catalog" [label="CALLS [rest] (sync)", tooltip="edge#12"];
+  "SERVICE:bff" -> "SERVICE:reviews" [label="CALLS [rest] (sync)", tooltip="edge#13"];
+  "SERVICE:bff" -> "SERVICE:support" [label="CALLS [rest] (sync)", tooltip="edge#14"];
+  "SERVICE:bff" -> "SERVICE:profile" [label="CALLS [rest] (sync)", tooltip="edge#15"];
+}

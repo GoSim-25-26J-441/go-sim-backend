@@ -21,7 +21,10 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 
 	// Diagram routes
 	rg.POST("/:public_id/diagram", h.createVersion)
+	rg.POST("/:public_id/diagram/image", h.uploadDiagramImage)
 	rg.GET("/:public_id/diagram/latest", h.latest)
+	rg.GET("/:public_id/diagram/images", h.listDiagramImages)
+	rg.PATCH("/:public_id/diagram/:version_id/title", h.updateDiagramTitle)
 
 	// Summary route
 	rg.GET("/:public_id/summary", h.summary)

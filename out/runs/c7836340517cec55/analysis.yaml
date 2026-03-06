@@ -1,0 +1,526 @@
+graph:
+    nodes:
+        DATABASE:orders-db:
+            id: DATABASE:orders-db
+            name: orders-db
+            kind: DATABASE
+            attrs:
+                owner: inventory-service
+        DATABASE:payments-db:
+            id: DATABASE:payments-db
+            name: payments-db
+            kind: DATABASE
+            attrs:
+                owner: billing-service
+        DATABASE:users-db:
+            id: DATABASE:users-db
+            name: users-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:api-gateway:
+            id: SERVICE:api-gateway
+            name: api-gateway
+            kind: SERVICE
+            attrs: {}
+        SERVICE:billing-service:
+            id: SERVICE:billing-service
+            name: billing-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:inventory-service:
+            id: SERVICE:inventory-service
+            name: inventory-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:notification-service:
+            id: SERVICE:notification-service
+            name: notification-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:order-service:
+            id: SERVICE:order-service
+            name: order-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:search-service:
+            id: SERVICE:search-service
+            name: search-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:user-service:
+            id: SERVICE:user-service
+            name: user-service
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:api-gateway
+          to: SERVICE:order-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /orders
+            per_item: false
+            rate_per_min: 300
+        - from: SERVICE:order-service
+          to: SERVICE:inventory-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - GET /inventory/:sku
+            per_item: false
+            rate_per_min: 950
+        - from: SERVICE:order-service
+          to: SERVICE:user-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - GET /users/:id
+            per_item: false
+            rate_per_min: 260
+        - from: SERVICE:order-service
+          to: SERVICE:billing-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /bill
+            per_item: false
+            rate_per_min: 360
+        - from: SERVICE:order-service
+          to: SERVICE:notification-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /notify
+            per_item: false
+            rate_per_min: 220
+        - from: SERVICE:order-service
+          to: SERVICE:search-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - GET /search/recommendations
+            per_item: false
+            rate_per_min: 180
+        - from: SERVICE:order-service
+          to: DATABASE:orders-db
+          kind: READS
+          attrs: {}
+        - from: SERVICE:order-service
+          to: DATABASE:users-db
+          kind: READS
+          attrs: {}
+        - from: SERVICE:order-service
+          to: DATABASE:orders-db
+          kind: WRITES
+          attrs:
+            owner: true
+        - from: SERVICE:inventory-service
+          to: SERVICE:order-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /inventory/reserve
+            per_item: false
+            rate_per_min: 820
+        - from: SERVICE:inventory-service
+          to: SERVICE:billing-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /bill/inventory-fee
+            per_item: false
+            rate_per_min: 320
+        - from: SERVICE:inventory-service
+          to: DATABASE:orders-db
+          kind: READS
+          attrs: {}
+        - from: SERVICE:inventory-service
+          to: DATABASE:orders-db
+          kind: WRITES
+          attrs:
+            owner: true
+        - from: SERVICE:billing-service
+          to: SERVICE:order-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /orders/confirm
+            per_item: false
+            rate_per_min: 260
+        - from: SERVICE:billing-service
+          to: DATABASE:payments-db
+          kind: READS
+          attrs: {}
+        - from: SERVICE:billing-service
+          to: DATABASE:payments-db
+          kind: WRITES
+          attrs:
+            owner: true
+        - from: SERVICE:user-service
+          to: DATABASE:users-db
+          kind: READS
+          attrs: {}
+    out:
+        SERVICE:api-gateway:
+            - from: SERVICE:api-gateway
+              to: SERVICE:order-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /orders
+                per_item: false
+                rate_per_min: 300
+        SERVICE:billing-service:
+            - from: SERVICE:billing-service
+              to: SERVICE:order-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /orders/confirm
+                per_item: false
+                rate_per_min: 260
+            - from: SERVICE:billing-service
+              to: DATABASE:payments-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:billing-service
+              to: DATABASE:payments-db
+              kind: WRITES
+              attrs:
+                owner: true
+        SERVICE:inventory-service:
+            - from: SERVICE:inventory-service
+              to: SERVICE:order-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /inventory/reserve
+                per_item: false
+                rate_per_min: 820
+            - from: SERVICE:inventory-service
+              to: SERVICE:billing-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /bill/inventory-fee
+                per_item: false
+                rate_per_min: 320
+            - from: SERVICE:inventory-service
+              to: DATABASE:orders-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:inventory-service
+              to: DATABASE:orders-db
+              kind: WRITES
+              attrs:
+                owner: true
+        SERVICE:order-service:
+            - from: SERVICE:order-service
+              to: SERVICE:inventory-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /inventory/:sku
+                per_item: false
+                rate_per_min: 950
+            - from: SERVICE:order-service
+              to: SERVICE:user-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /users/:id
+                per_item: false
+                rate_per_min: 260
+            - from: SERVICE:order-service
+              to: SERVICE:billing-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /bill
+                per_item: false
+                rate_per_min: 360
+            - from: SERVICE:order-service
+              to: SERVICE:notification-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /notify
+                per_item: false
+                rate_per_min: 220
+            - from: SERVICE:order-service
+              to: SERVICE:search-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /search/recommendations
+                per_item: false
+                rate_per_min: 180
+            - from: SERVICE:order-service
+              to: DATABASE:orders-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:order-service
+              to: DATABASE:users-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:order-service
+              to: DATABASE:orders-db
+              kind: WRITES
+              attrs:
+                owner: true
+        SERVICE:user-service:
+            - from: SERVICE:user-service
+              to: DATABASE:users-db
+              kind: READS
+              attrs: {}
+    in:
+        DATABASE:orders-db:
+            - from: SERVICE:order-service
+              to: DATABASE:orders-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:order-service
+              to: DATABASE:orders-db
+              kind: WRITES
+              attrs:
+                owner: true
+            - from: SERVICE:inventory-service
+              to: DATABASE:orders-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:inventory-service
+              to: DATABASE:orders-db
+              kind: WRITES
+              attrs:
+                owner: true
+        DATABASE:payments-db:
+            - from: SERVICE:billing-service
+              to: DATABASE:payments-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:billing-service
+              to: DATABASE:payments-db
+              kind: WRITES
+              attrs:
+                owner: true
+        DATABASE:users-db:
+            - from: SERVICE:order-service
+              to: DATABASE:users-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:user-service
+              to: DATABASE:users-db
+              kind: READS
+              attrs: {}
+        SERVICE:billing-service:
+            - from: SERVICE:order-service
+              to: SERVICE:billing-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /bill
+                per_item: false
+                rate_per_min: 360
+            - from: SERVICE:inventory-service
+              to: SERVICE:billing-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /bill/inventory-fee
+                per_item: false
+                rate_per_min: 320
+        SERVICE:inventory-service:
+            - from: SERVICE:order-service
+              to: SERVICE:inventory-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /inventory/:sku
+                per_item: false
+                rate_per_min: 950
+        SERVICE:notification-service:
+            - from: SERVICE:order-service
+              to: SERVICE:notification-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /notify
+                per_item: false
+                rate_per_min: 220
+        SERVICE:order-service:
+            - from: SERVICE:api-gateway
+              to: SERVICE:order-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /orders
+                per_item: false
+                rate_per_min: 300
+            - from: SERVICE:inventory-service
+              to: SERVICE:order-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /inventory/reserve
+                per_item: false
+                rate_per_min: 820
+            - from: SERVICE:billing-service
+              to: SERVICE:order-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /orders/confirm
+                per_item: false
+                rate_per_min: 260
+        SERVICE:search-service:
+            - from: SERVICE:order-service
+              to: SERVICE:search-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /search/recommendations
+                per_item: false
+                rate_per_min: 180
+        SERVICE:user-service:
+            - from: SERVICE:order-service
+              to: SERVICE:user-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /users/:id
+                per_item: false
+                rate_per_min: 260
+dot_path: /app/out/runs/c7836340517cec55/graph.dot
+svg_path: /app/out/runs/c7836340517cec55/graph.svg
+detections:
+    - kind: chatty_calls
+      severity: MEDIUM
+      title: Chatty call
+      summary: High-frequency or per-item chattiness between services
+      nodes:
+        - SERVICE:api-gateway
+        - SERVICE:order-service
+      edges:
+        - 0
+      evidence:
+        per_item: false
+        rate_per_min: 300
+    - kind: chatty_calls
+      severity: MEDIUM
+      title: Chatty call
+      summary: High-frequency or per-item chattiness between services
+      nodes:
+        - SERVICE:order-service
+        - SERVICE:inventory-service
+      edges:
+        - 1
+      evidence:
+        per_item: false
+        rate_per_min: 950
+    - kind: chatty_calls
+      severity: MEDIUM
+      title: Chatty call
+      summary: High-frequency or per-item chattiness between services
+      nodes:
+        - SERVICE:order-service
+        - SERVICE:billing-service
+      edges:
+        - 3
+      evidence:
+        per_item: false
+        rate_per_min: 360
+    - kind: chatty_calls
+      severity: MEDIUM
+      title: Chatty call
+      summary: High-frequency or per-item chattiness between services
+      nodes:
+        - SERVICE:inventory-service
+        - SERVICE:order-service
+      edges:
+        - 9
+      evidence:
+        per_item: false
+        rate_per_min: 820
+    - kind: chatty_calls
+      severity: MEDIUM
+      title: Chatty call
+      summary: High-frequency or per-item chattiness between services
+      nodes:
+        - SERVICE:inventory-service
+        - SERVICE:billing-service
+      edges:
+        - 10
+      evidence:
+        per_item: false
+        rate_per_min: 320
+    - kind: cross_db_read
+      severity: MEDIUM
+      title: Cross-DB read
+      summary: Service reads DB owned by another service
+      nodes:
+        - SERVICE:order-service
+        - DATABASE:orders-db
+      edges:
+        - 6
+      evidence:
+        owner: inventory-service
+        reader: order-service
+    - kind: cycles
+      severity: HIGH
+      title: Cyclic dependency
+      summary: Services mutually depend on each other
+      nodes:
+        - SERVICE:billing-service
+        - SERVICE:inventory-service
+        - SERVICE:order-service
+      edges: []
+      evidence: {}
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Excessive incoming/outgoing dependencies
+      nodes:
+        - SERVICE:order-service
+      edges: []
+      evidence:
+        degree: 11
+    - kind: shared_db_writes
+      severity: HIGH
+      title: Multiple writers to DB
+      summary: More than one service writes to same database
+      nodes:
+        - DATABASE:orders-db
+        - SERVICE:order-service
+        - SERVICE:inventory-service
+      edges: []
+      evidence:
+        writers:
+            - SERVICE:order-service
+            - SERVICE:inventory-service

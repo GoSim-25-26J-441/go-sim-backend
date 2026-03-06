@@ -1,0 +1,174 @@
+graph:
+    nodes:
+        DATABASE:shared-db:
+            id: DATABASE:shared-db
+            name: shared-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:auth:
+            id: SERVICE:auth
+            name: auth
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff:
+            id: SERVICE:bff
+            name: bff
+            kind: SERVICE
+            attrs: {}
+        SERVICE:inventory:
+            id: SERVICE:inventory
+            name: inventory
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders:
+            id: SERVICE:orders
+            name: orders
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web:
+            id: SERVICE:web
+            name: web
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:orders
+          to: SERVICE:inventory
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:inventory
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:auth
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web
+          to: SERVICE:bff
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:auth
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:auth:
+            - from: SERVICE:auth
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff:
+            - from: SERVICE:bff
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:inventory:
+            - from: SERVICE:inventory
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:orders
+              to: SERVICE:inventory
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:orders
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web:
+            - from: SERVICE:web
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:shared-db:
+            - from: SERVICE:orders
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:inventory
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:auth
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:auth:
+            - from: SERVICE:bff
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff:
+            - from: SERVICE:web
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:inventory:
+            - from: SERVICE:orders
+              to: SERVICE:inventory
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:bff
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/versions/ui/f41d7e3d35a6338e/graph.dot
+svg_path: /app/out/versions/ui/f41d7e3d35a6338e/graph.svg
+detections: []
