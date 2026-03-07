@@ -132,6 +132,13 @@ func importAzureCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchS
 	batch := make([][]interface{}, 0, batchSize)
 
 	for _, rec := range records {
+		priceStr := strings.TrimSpace(rec[idx["price_per_hour"]])
+		if priceStr != "" {
+			if v, err := strconv.ParseFloat(priceStr, 64); err == nil && v == 0 {
+				continue
+			}
+		}
+
 		row := []interface{}{
 			strings.TrimSpace(rec[idx["sku_id"]]),                // sku_id
 			"azure",                                              // provider
@@ -212,6 +219,13 @@ func importGCPCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchSiz
 			return fmt.Errorf("csv read error: %w", err)
 		}
 
+		priceStr := strings.TrimSpace(rec[idx["price_per_hour"]])
+		if priceStr != "" {
+			if v, err := strconv.ParseFloat(priceStr, 64); err == nil && v == 0 {
+				continue
+			}
+		}
+
 		row := []interface{}{
 			strings.TrimSpace(rec[idx["sku_id"]]),          // sku_id
 			"gcp",                                          // provider
@@ -288,6 +302,13 @@ func importAWSCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchSiz
 		}
 
 		// read safely using indices
+		priceStr := strings.TrimSpace(rec[idx["price_per_hour"]])
+		if priceStr != "" {
+			if v, err := strconv.ParseFloat(priceStr, 64); err == nil && v == 0 {
+				continue
+			}
+		}
+
 		id := strings.TrimSpace(rec[idx["id"]])
 		sku := strings.TrimSpace(rec[idx["sku_id"]])
 		region := strings.TrimSpace(rec[idx["region"]])

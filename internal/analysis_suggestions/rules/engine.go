@@ -104,11 +104,56 @@ func (e *Engine) EvaluateCandidates(design DesignInput, candidates []Candidate) 
 		out = append(out, cs)
 	}
 
+	targetUsers := design.Workload.ConcurrentUsers
+
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].PassedAllReq == out[j].PassedAllReq {
-			return out[i].WorkloadDistance < out[j].WorkloadDistance
+		ci := out[i]
+		cj := out[j]
+
+		if ci.PassedAllReq != cj.PassedAllReq {
+			return ci.PassedAllReq && !cj.PassedAllReq
 		}
-		return out[i].PassedAllReq && !out[j].PassedAllReq
+
+		simI := ci.Candidate.SimWorkload.ConcurrentUsers
+		simJ := cj.Candidate.SimWorkload.ConcurrentUsers
+
+		meetsI := simI >= targetUsers
+		meetsJ := simJ >= targetUsers
+
+		if meetsI != meetsJ {
+			return meetsI && !meetsJ
+		}
+
+		if targetUsers > 0 {
+			if meetsI && meetsJ {
+				surplusI := simI - targetUsers
+				surplusJ := simJ - targetUsers
+				if surplusI != surplusJ {
+					return surplusI < surplusJ
+				}
+			} else if !meetsI && !meetsJ {
+				shortfallI := targetUsers - simI
+				shortfallJ := targetUsers - simJ
+				if shortfallI != shortfallJ {
+					return shortfallI < shortfallJ
+				}
+			}
+		}
+
+		if ci.Candidate.Spec.VCPU != cj.Candidate.Spec.VCPU {
+			return ci.Candidate.Spec.VCPU < cj.Candidate.Spec.VCPU
+		}
+		if ci.Candidate.Spec.MemoryGB != cj.Candidate.Spec.MemoryGB {
+			return ci.Candidate.Spec.MemoryGB < cj.Candidate.Spec.MemoryGB
+		}
+
+		utilScoreI := math.Abs(ci.Candidate.Metrics.CPUUtilPct-70) + math.Abs(ci.Candidate.Metrics.MemUtilPct-70)
+		utilScoreJ := math.Abs(cj.Candidate.Metrics.CPUUtilPct-70) + math.Abs(cj.Candidate.Metrics.MemUtilPct-70)
+		if utilScoreI != utilScoreJ {
+			return utilScoreI < utilScoreJ
+		}
+
+		return ci.WorkloadDistance < cj.WorkloadDistance
 	})
 
 	return out, nil

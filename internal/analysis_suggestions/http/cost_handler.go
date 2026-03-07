@@ -25,21 +25,75 @@ type CostResponse struct {
 	StoredAt         string                            `json:"stored_at,omitempty"`
 }
 
+const (
+	costCacheKeyPrefix = "analysis:cost:"
+	costCacheTTL       = 10 * time.Minute
+)
+
 type CostHandler struct {
-	db    *sql.DB
-	redis *redis.Client
+	db          *sql.DB
+	redisClient *redis.Client
 }
 
 func NewCostHandler(db *sql.DB, redisClient *redis.Client) *CostHandler {
 	return &CostHandler{
-		db:    db,
-		redis: redisClient,
+		db:          db,
+		redisClient: redisClient,
+	}
+}
+
+func (h *CostHandler) cacheKey(id, provider, region string) string {
+	if provider == "" {
+		provider = "all"
+	}
+	if region == "" {
+		region = "all"
+	}
+	return fmt.Sprintf("%s%s:%s:%s", costCacheKeyPrefix, id, provider, region)
+}
+
+func (h *CostHandler) getCachedCost(ctx context.Context, key string) (*CostResponse, bool) {
+	if h.redisClient == nil {
+		return nil, false
+	}
+
+	data, err := h.redisClient.Get(ctx, key).Result()
+	if err != nil {
+		if err != redis.Nil {
+			log.Printf("redis get error for key %s: %v", key, err)
+		}
+		return nil, false
+	}
+
+	var resp CostResponse
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		log.Printf("failed to unmarshal cached cost for key %s: %v", key, err)
+		return nil, false
+	}
+
+	return &resp, true
+}
+
+func (h *CostHandler) setCachedCost(ctx context.Context, key string, resp *CostResponse) {
+	if h.redisClient == nil {
+		return
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("failed to marshal cost response for cache key %s: %v", key, err)
+		return
+	}
+
+	if err := h.redisClient.Set(ctx, key, data, costCacheTTL).Err(); err != nil {
+		log.Printf("failed to set cost cache for key %s: %v", key, err)
 	}
 }
 
 func (h *CostHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/cost/:id", h.HandleCost)
 	rg.GET("/cost/regions/:provider", h.GetProviderRegions)
+	rg.GET("/cost/:id/regions/:provider", h.GetRegionsForRequest)
 	rg.POST("/cost/:id/provider/:provider", h.HandleCostForProvider)
 }
 
@@ -48,21 +102,6 @@ func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c, 10*time.Second)
 	defer cancel()
 	db := h.db
-
-	cacheKey := fmt.Sprintf("analysis:regions:%s", provider)
-	if h.redis != nil {
-		if cached, err := h.redis.Get(ctx, cacheKey).Result(); err == nil && cached != "" {
-			var cachedRegions []string
-			if err := json.Unmarshal([]byte(cached), &cachedRegions); err == nil {
-				c.JSON(http.StatusOK, gin.H{
-					"provider": provider,
-					"regions":  cachedRegions,
-				})
-				return
-			}
-			log.Printf("redis: failed to unmarshal regions cache for provider %s: %v", provider, err)
-		}
-	}
 
 	table := map[string]string{
 		"aws":   "aws_compute_prices",
@@ -92,16 +131,45 @@ func (h *CostHandler) GetProviderRegions(c *gin.Context) {
 		list = append(list, r)
 	}
 
-	if h.redis != nil {
-		if b, err := json.Marshal(list); err == nil {
-			if err := h.redis.Set(ctx, cacheKey, b, 6*time.Hour).Err(); err != nil {
-				log.Printf("redis: failed to cache regions for provider %s: %v", provider, err)
-			}
-		} else {
-			log.Printf("redis: failed to marshal regions for provider %s: %v", provider, err)
-		}
-	}
+	c.JSON(http.StatusOK, gin.H{
+		"provider": provider,
+		"regions":  list,
+	})
+}
 
+func (h *CostHandler) GetRegionsForRequest(c *gin.Context) {
+	id := c.Param("id")
+	provider := strings.ToLower(c.Param("provider"))
+	if provider != "aws" && provider != "azure" && provider != "gcp" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid provider"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c, 10*time.Second)
+	defer cancel()
+	db := h.db
+
+	var bestJSON []byte
+	if err := db.QueryRowContext(ctx, `SELECT best_candidate::text FROM request_responses WHERE id = $1`, id).Scan(&bestJSON); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Request not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load request"})
+		return
+	}
+	bestCS, err := cc.CandidateScoreFromJSONBytes(bestJSON)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse best candidate"})
+		return
+	}
+	vcpu := bestCS.Candidate.Spec.VCPU
+	mem := bestCS.Candidate.Spec.MemoryGB
+
+	list, err := cc.GetRegionsForCandidateSpec(ctx, db, provider, vcpu, mem)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch regions"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"provider": provider,
 		"regions":  list,
@@ -117,16 +185,10 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 	filterProvider := strings.ToLower(c.Query("provider"))
 	filterRegion := c.Query("region")
 
-	if h.redis != nil {
-		cacheKey := fmt.Sprintf("analysis:cost:all:%s:provider=%s:region=%s", id, filterProvider, filterRegion)
-		if cached, err := h.redis.Get(ctx, cacheKey).Result(); err == nil && cached != "" {
-			var cachedResp CostResponse
-			if err := json.Unmarshal([]byte(cached), &cachedResp); err == nil {
-				c.JSON(http.StatusOK, cachedResp)
-				return
-			}
-			log.Printf("redis: failed to unmarshal cached cost response for id=%s: %v", id, err)
-		}
+	cacheKey := h.cacheKey(id, filterProvider, filterRegion)
+	if cached, ok := h.getCachedCost(ctx, cacheKey); ok {
+		c.JSON(http.StatusOK, cached)
+		return
 	}
 
 	var bestJSON, reqJSON []byte
@@ -183,16 +245,7 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 		StoredAt:         created.UTC().Format(time.RFC3339),
 	}
 
-	if h.redis != nil {
-		cacheKey := fmt.Sprintf("analysis:cost:all:%s:provider=%s:region=%s", id, filterProvider, filterRegion)
-		if b, err := json.Marshal(resp); err == nil {
-			if err := h.redis.Set(ctx, cacheKey, b, 6*time.Hour).Err(); err != nil {
-				log.Printf("redis: failed to cache cost response for id=%s: %v", id, err)
-			}
-		} else {
-			log.Printf("redis: failed to marshal cost response for id=%s: %v", id, err)
-		}
-	}
+	h.setCachedCost(ctx, cacheKey, &resp)
 
 	c.JSON(http.StatusOK, resp)
 }
@@ -211,16 +264,10 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 	defer cancel()
 	db := h.db
 
-	if h.redis != nil {
-		cacheKey := fmt.Sprintf("analysis:cost:provider:%s:%s:%s", id, provider, region)
-		if cached, err := h.redis.Get(ctx, cacheKey).Result(); err == nil && cached != "" {
-			var cachedResp CostResponse
-			if err := json.Unmarshal([]byte(cached), &cachedResp); err == nil {
-				c.JSON(http.StatusOK, cachedResp)
-				return
-			}
-			log.Printf("redis: failed to unmarshal cached provider cost response for id=%s: %v", id, err)
-		}
+	cacheKey := h.cacheKey(id, provider, region)
+	if cached, ok := h.getCachedCost(ctx, cacheKey); ok {
+		c.JSON(http.StatusOK, cached)
+		return
 	}
 
 	var bestJSON, reqJSON []byte
@@ -280,16 +327,7 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 		StoredAt:         created.UTC().Format(time.RFC3339),
 	}
 
-	if h.redis != nil {
-		cacheKey := fmt.Sprintf("analysis:cost:provider:%s:%s:%s", id, provider, region)
-		if b, err := json.Marshal(resp); err == nil {
-			if err := h.redis.Set(ctx, cacheKey, b, 6*time.Hour).Err(); err != nil {
-				log.Printf("redis: failed to cache provider cost response for id=%s: %v", id, err)
-			}
-		} else {
-			log.Printf("redis: failed to marshal provider cost response for id=%s: %v", id, err)
-		}
-	}
+	h.setCachedCost(ctx, cacheKey, &resp)
 
 	c.JSON(http.StatusOK, resp)
 }
