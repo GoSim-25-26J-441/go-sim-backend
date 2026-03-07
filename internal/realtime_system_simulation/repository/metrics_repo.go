@@ -18,12 +18,111 @@ func NewMetricsRepository(db *sql.DB) *MetricsRepository {
 	return &MetricsRepository{db: db}
 }
 
+// SummaryRecord represents a row read from simulation_summaries.
+type SummaryRecord struct {
+	RunID          string
+	EngineRunID    string
+	Metrics        map[string]any
+	SummaryData    map[string]any
+	TotalRequests  sql.NullInt64
+	TotalErrors    sql.NullInt64
+	TotalDurationMs sql.NullInt64
+}
+
+// GetSummaryByRunID reads a summary row for the given run_id from simulation_summaries.
+func (r *MetricsRepository) GetSummaryByRunID(ctx context.Context, runID string) (*SummaryRecord, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("metrics repository not properly initialized")
+	}
+
+	var rec SummaryRecord
+	var metricsJSON, summaryJSON []byte
+
+	err := r.db.QueryRowContext(ctx, `
+        SELECT run_id, engine_run_id, metrics, summary_data,
+               total_requests, total_errors, total_duration_ms
+        FROM simulation_summaries
+        WHERE run_id = $1
+    `, runID).Scan(
+		&rec.RunID,
+		&rec.EngineRunID,
+		&metricsJSON,
+		&summaryJSON,
+		&rec.TotalRequests,
+		&rec.TotalErrors,
+		&rec.TotalDurationMs,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to query simulation_summaries for run_id=%s: %w", runID, err)
+	}
+
+	if err := json.Unmarshal(metricsJSON, &rec.Metrics); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metrics JSON for run_id=%s: %w", runID, err)
+	}
+	if err := json.Unmarshal(summaryJSON, &rec.SummaryData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal summary_data JSON for run_id=%s: %w", runID, err)
+	}
+
+	return &rec, nil
+}
+
+// ListTimeSeriesByRunID returns all timeseries points for the given run_id.
+func (r *MetricsRepository) ListTimeSeriesByRunID(ctx context.Context, runID string) ([]TimeSeriesPoint, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("metrics repository not properly initialized")
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT run_id, time, timestamp_ms, metric_type, metric_value, service_id, node_id, tags
+        FROM simulation_metrics_timeseries
+        WHERE run_id = $1
+        ORDER BY time ASC
+    `, runID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query simulation_metrics_timeseries for run_id=%s: %w", runID, err)
+	}
+	defer rows.Close()
+
+	var out []TimeSeriesPoint
+	for rows.Next() {
+		var p TimeSeriesPoint
+		var tagsJSON []byte
+		if err := rows.Scan(
+			&p.RunID,
+			&p.Time,
+			&p.TimestampMs,
+			&p.MetricType,
+			&p.MetricValue,
+			&p.ServiceID,
+			&p.NodeID,
+			&tagsJSON,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan metrics_timeseries row for run_id=%s: %w", runID, err)
+		}
+		if len(tagsJSON) > 0 {
+			if err := json.Unmarshal(tagsJSON, &p.Tags); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal tags JSON for run_id=%s metric=%s: %w", runID, p.MetricType, err)
+			}
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating metrics_timeseries rows for run_id=%s: %w", runID, err)
+	}
+
+	return out, nil
+}
+
 // SummaryUpsertParams captures the data needed to upsert a simulation_summaries row.
 type SummaryUpsertParams struct {
 	RunID       string
 	EngineRunID string
 	Metrics     map[string]any
 	SummaryData map[string]any
+	ScenarioYAML string
 }
 
 // TimeSeriesPoint represents a single timeseries datapoint to persist.
@@ -65,13 +164,14 @@ func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertP
 
 	_, err = r.db.ExecContext(
 		ctx,
-		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data)
-         VALUES ($1, $2, $3::jsonb, $4::jsonb)
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data, scenario_yaml)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
          ON CONFLICT (run_id) DO UPDATE
          SET engine_run_id = EXCLUDED.engine_run_id,
              metrics = EXCLUDED.metrics,
-             summary_data = EXCLUDED.summary_data`,
-		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON),
+             summary_data = EXCLUDED.summary_data,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
+		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert simulation_summaries for run_id=%s: %w", p.RunID, err)

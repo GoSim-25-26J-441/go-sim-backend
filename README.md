@@ -49,18 +49,20 @@ go test ./tests/integration/...
 
 When S3 is configured (see `.env.example`), the realtime simulation module will:
 
-- On simulation completion, call the simulation-core export endpoint to retrieve the `scenario_yaml`.
-- Upload it to object storage under:
+- On simulation completion, the backend receives a callback and (for **batch optimization** runs) the payload may include `best_run_id` and `top_candidates`.
+- **Batch optimization:** When `best_run_id` or `top_candidates` are present, the backend fetches the best scenario from `GET /v1/runs/{best_run_id}/export` and builds the candidates list by calling `GET /v1/runs/{id}/export` for each unique id in `{best_run_id} ∪ top_candidates`. Each candidate is persisted; the best candidate’s S3 path is stored as `best_scenario.yaml`.
+- **Normal / online runs:** When no optimization IDs are present, the backend calls `GET /v1/runs/{engine_run_id}/export` once and uses that response for the single best scenario and (if present) the export’s `candidates` array or a single synthesized candidate.
+- The best scenario is uploaded to object storage under:
   - `simulation/{run_id}/best_scenario.yaml` (within the configured `S3_BUCKET`).
-- Upsert the S3 object key into Postgres:
+- The S3 object key is upserted into Postgres:
   - `simulation_summaries.best_candidate_s3_path`.
 
-The API exposes this data via:
+The API exposes this data via the unified candidates endpoint:
 
-- `GET /api/v1/simulation/runs/{run_id}/best-candidate`
-  - Returns the stored S3 path and a normalized view of the scenario’s hosts and services.
+- `GET /api/v1/simulation/runs/{run_id}/candidates`
+  - Returns all candidates for the run (array), plus optional `best_candidate_id` and `best_candidate` (S3 path and normalized hosts/services) when a best scenario is stored.
 
-If S3 is not configured (`S3_BUCKET` empty), best-candidate uploads and this endpoint are effectively disabled.
+If S3 is not configured (`S3_BUCKET` empty), best-candidate uploads and the `best_candidate` section in the response are effectively disabled.
 
 ### Project Structure
 
