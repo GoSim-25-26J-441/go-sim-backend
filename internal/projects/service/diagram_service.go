@@ -33,3 +33,8 @@ func (s *DiagramService) GetLatest(ctx context.Context, userID, publicID string)
 func (s *DiagramService) ListAllVersions(ctx context.Context, userID, publicID string) ([]domain.DiagramVersion, error) {
 	return s.repo.ListAllVersions(ctx, userID, publicID)
 }
+
+// UpdateTitle updates the title of a diagram version for a given user and project.
+func (s *DiagramService) UpdateTitle(ctx context.Context, userID, publicID, versionID, title string) (bool, error) {
+	return s.repo.UpdateTitle(ctx, userID, publicID, versionID, title)
+}
