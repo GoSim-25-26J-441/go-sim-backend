@@ -230,6 +230,15 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 		return nil, err
 	}
 
+	// Keep project's current_diagram_version_id in sync so chat (FOLLOW_LATEST) uses this version.
+	if chatID != "" && chatID != DefaultChatID {
+		_, _ = r.db.Exec(`
+			UPDATE projects
+			SET current_diagram_version_id = $1, updated_at = now()
+			WHERE user_firebase_uid = $2 AND public_id = $3 AND deleted_at IS NULL
+		`, id, userID, chatID)
+	}
+
 	row := &VersionRow{
 		ID:             id,
 		UserID:         userID,
