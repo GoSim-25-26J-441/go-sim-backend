@@ -510,3 +510,30 @@ order by version_number desc
 
 	return versions, nil
 }
+
+// UpdateTitle updates the title of a diagram version for a specific user and project.
+func (r *DiagramRepository) UpdateTitle(ctx context.Context, userFirebaseUID, projectPublicID, versionID, title string) (bool, error) {
+	if strings.TrimSpace(userFirebaseUID) == "" {
+		return false, fmt.Errorf("user firebase uid required")
+	}
+	if strings.TrimSpace(projectPublicID) == "" {
+		return false, fmt.Errorf("project public_id required")
+	}
+	if strings.TrimSpace(versionID) == "" {
+		return false, fmt.Errorf("version id required")
+	}
+
+	const q = `
+update diagram_versions
+set title = $1
+where id = $2
+  and project_public_id = $3
+  and user_firebase_uid = $4
+`
+	res, err := r.db.ExecContext(ctx, q, strings.TrimSpace(title), versionID, projectPublicID, userFirebaseUID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
