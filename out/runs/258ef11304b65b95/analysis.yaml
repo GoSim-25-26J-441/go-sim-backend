@@ -1,0 +1,742 @@
+graph:
+    nodes:
+        DATABASE:shared-db:
+            id: DATABASE:shared-db
+            name: shared-db
+            kind: DATABASE
+            attrs: {}
+        SERVICE:auth:
+            id: SERVICE:auth
+            name: auth
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff:
+            id: SERVICE:bff
+            name: bff
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff-1:
+            id: SERVICE:bff-1
+            name: bff-1
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff-2:
+            id: SERVICE:bff-2
+            name: bff-2
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff-2_split:
+            id: SERVICE:bff-2_split
+            name: bff-2_split
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff-3:
+            id: SERVICE:bff-3
+            name: bff-3
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff-4:
+            id: SERVICE:bff-4
+            name: bff-4
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff_split:
+            id: SERVICE:bff_split
+            name: bff_split
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff_split-1:
+            id: SERVICE:bff_split-1
+            name: bff_split-1
+            kind: SERVICE
+            attrs: {}
+        SERVICE:bff_split_split:
+            id: SERVICE:bff_split_split
+            name: bff_split_split
+            kind: SERVICE
+            attrs: {}
+        SERVICE:cart:
+            id: SERVICE:cart
+            name: cart
+            kind: SERVICE
+            attrs: {}
+        SERVICE:catalog:
+            id: SERVICE:catalog
+            name: catalog
+            kind: SERVICE
+            attrs: {}
+        SERVICE:inventory:
+            id: SERVICE:inventory
+            name: inventory
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders:
+            id: SERVICE:orders
+            name: orders
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders_split:
+            id: SERVICE:orders_split
+            name: orders_split
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders_split-1:
+            id: SERVICE:orders_split-1
+            name: orders_split-1
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders_split-2:
+            id: SERVICE:orders_split-2
+            name: orders_split-2
+            kind: SERVICE
+            attrs: {}
+        SERVICE:orders_split-3:
+            id: SERVICE:orders_split-3
+            name: orders_split-3
+            kind: SERVICE
+            attrs: {}
+        SERVICE:payments:
+            id: SERVICE:payments
+            name: payments
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web-ui:
+            id: SERVICE:web-ui
+            name: web-ui
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web-ui_split:
+            id: SERVICE:web-ui_split
+            name: web-ui_split
+            kind: SERVICE
+            attrs: {}
+        SERVICE:web-ui_split_split:
+            id: SERVICE:web-ui_split_split
+            name: web-ui_split_split
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:cart
+          to: SERVICE:catalog
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders
+          to: SERVICE:inventory
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:payments
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: false
+        - from: SERVICE:catalog
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:cart
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders_split
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:inventory
+          to: DATABASE:shared-db
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders_split-1
+          to: SERVICE:orders_split
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:payments
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff_split-1
+          to: SERVICE:auth
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff_split
+          to: SERVICE:catalog
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff_split_split
+          to: SERVICE:cart
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff_split_split
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders_split-2
+          to: SERVICE:orders_split-1
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff_split-1
+          to: SERVICE:bff_split
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web-ui
+          to: SERVICE:bff-1
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-1
+          to: SERVICE:bff
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-2
+          to: SERVICE:payments
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-2_split
+          to: SERVICE:cart
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-2_split
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff
+          to: SERVICE:bff_split-1
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff_split
+          to: SERVICE:bff_split_split
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: false
+        - from: SERVICE:orders_split-3
+          to: SERVICE:orders_split-2
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-2
+          to: SERVICE:bff-2_split
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web-ui_split
+          to: SERVICE:bff-3
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-3
+          to: SERVICE:bff-2
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:web-ui_split_split
+          to: SERVICE:bff-4
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-4
+          to: SERVICE:orders
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:bff-4
+          to: SERVICE:payments
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+        - from: SERVICE:orders
+          to: SERVICE:orders_split-3
+          kind: CALLS
+          attrs:
+            dep_kind: rest
+            sync: true
+    out:
+        SERVICE:bff:
+            - from: SERVICE:bff
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff
+              to: SERVICE:bff_split-1
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-1:
+            - from: SERVICE:bff-1
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-2:
+            - from: SERVICE:bff-2
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-2
+              to: SERVICE:bff-2_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-2_split:
+            - from: SERVICE:bff-2_split
+              to: SERVICE:cart
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-2_split
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-3:
+            - from: SERVICE:bff-3
+              to: SERVICE:bff-2
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-4:
+            - from: SERVICE:bff-4
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-4
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff_split:
+            - from: SERVICE:bff_split
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff_split
+              to: SERVICE:bff_split_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+        SERVICE:bff_split-1:
+            - from: SERVICE:bff_split-1
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff_split-1
+              to: SERVICE:bff_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff_split_split:
+            - from: SERVICE:bff_split_split
+              to: SERVICE:cart
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff_split_split
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:cart:
+            - from: SERVICE:cart
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:cart
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:catalog:
+            - from: SERVICE:catalog
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:inventory:
+            - from: SERVICE:inventory
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:orders
+              to: SERVICE:inventory
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:orders
+              to: SERVICE:orders_split-3
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split:
+            - from: SERVICE:orders_split
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split-1:
+            - from: SERVICE:orders_split-1
+              to: SERVICE:orders_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split-2:
+            - from: SERVICE:orders_split-2
+              to: SERVICE:orders_split-1
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split-3:
+            - from: SERVICE:orders_split-3
+              to: SERVICE:orders_split-2
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:payments:
+            - from: SERVICE:payments
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+        SERVICE:web-ui:
+            - from: SERVICE:web-ui
+              to: SERVICE:bff-1
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web-ui_split:
+            - from: SERVICE:web-ui_split
+              to: SERVICE:bff-3
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:web-ui_split_split:
+            - from: SERVICE:web-ui_split_split
+              to: SERVICE:bff-4
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+    in:
+        DATABASE:shared-db:
+            - from: SERVICE:catalog
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:cart
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:orders_split
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:inventory
+              to: DATABASE:shared-db
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:auth:
+            - from: SERVICE:bff_split-1
+              to: SERVICE:auth
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff:
+            - from: SERVICE:bff-1
+              to: SERVICE:bff
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-1:
+            - from: SERVICE:web-ui
+              to: SERVICE:bff-1
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-2:
+            - from: SERVICE:bff-3
+              to: SERVICE:bff-2
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-2_split:
+            - from: SERVICE:bff-2
+              to: SERVICE:bff-2_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-3:
+            - from: SERVICE:web-ui_split
+              to: SERVICE:bff-3
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff-4:
+            - from: SERVICE:web-ui_split_split
+              to: SERVICE:bff-4
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff_split:
+            - from: SERVICE:bff_split-1
+              to: SERVICE:bff_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff_split-1:
+            - from: SERVICE:bff
+              to: SERVICE:bff_split-1
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:bff_split_split:
+            - from: SERVICE:bff_split
+              to: SERVICE:bff_split_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+        SERVICE:cart:
+            - from: SERVICE:bff_split_split
+              to: SERVICE:cart
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-2_split
+              to: SERVICE:cart
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:catalog:
+            - from: SERVICE:cart
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff_split
+              to: SERVICE:catalog
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:inventory:
+            - from: SERVICE:orders
+              to: SERVICE:inventory
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders:
+            - from: SERVICE:payments
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: false
+            - from: SERVICE:bff_split_split
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-2_split
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-4
+              to: SERVICE:orders
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split:
+            - from: SERVICE:orders_split-1
+              to: SERVICE:orders_split
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split-1:
+            - from: SERVICE:orders_split-2
+              to: SERVICE:orders_split-1
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split-2:
+            - from: SERVICE:orders_split-3
+              to: SERVICE:orders_split-2
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:orders_split-3:
+            - from: SERVICE:orders
+              to: SERVICE:orders_split-3
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+        SERVICE:payments:
+            - from: SERVICE:bff
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-2
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+            - from: SERVICE:bff-4
+              to: SERVICE:payments
+              kind: CALLS
+              attrs:
+                dep_kind: rest
+                sync: true
+dot_path: /app/out/runs/258ef11304b65b95/graph.dot
+svg_path: /app/out/runs/258ef11304b65b95/graph.svg
+detections:
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:orders
+      edges: []
+      evidence:
+        degree: 6
+        threshold: 4
+    - kind: god_service
+      severity: MEDIUM
+      title: God service (high centrality)
+      summary: Service has unusually high incoming/outgoing dependencies
+      nodes:
+        - SERVICE:payments
+      edges: []
+      evidence:
+        degree: 4
+        threshold: 4
+    - kind: sync_call_chain
+      severity: MEDIUM
+      title: Sync call chain
+      summary: Long synchronous dependency chain can amplify latency/failure impact
+      nodes:
+        - SERVICE:web-ui_split
+        - SERVICE:bff-3
+        - SERVICE:bff-2
+        - SERVICE:bff-2_split
+        - SERVICE:orders
+        - SERVICE:orders_split-3
+        - SERVICE:orders_split-2
+        - SERVICE:orders_split-1
+        - SERVICE:orders_split
+      edges: []
+      evidence:
+        edges: 8
+        min_edges: 4

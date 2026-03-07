@@ -1,11 +1,15 @@
 package http
 
 import (
+	"database/sql"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
+	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
 // CreateRunForProject creates a new simulation run for a project (project_id in path)
@@ -28,7 +32,20 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode *bool                  `json:"real_time_mode,omitempty"`
-		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+		ConfigYAML   string                 `json:"config_yaml,omitempty"`
+		Seed         int64                  `json:"seed,omitempty"`
+		Optimization *struct {
+			Objective            string  `json:"objective,omitempty"`
+			MaxIterations        int32   `json:"max_iterations,omitempty"`
+			StepSize             float64 `json:"step_size,omitempty"`
+			EvaluationDurationMs int64   `json:"evaluation_duration_ms,omitempty"`
+			Online               bool    `json:"online,omitempty"`
+			TargetP95LatencyMs   float64 `json:"target_p95_latency_ms,omitempty"`
+			ControlIntervalMs    int64   `json:"control_interval_ms,omitempty"`
+			MinHosts             int32   `json:"min_hosts,omitempty"`
+			MaxHosts             int32   `json:"max_hosts,omitempty"`
+		} `json:"optimization,omitempty"`
+		Metadata map[string]interface{} `json:"metadata,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -47,7 +64,8 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		return
 	}
 
-	if body.ScenarioYAML != "" && body.DurationMs > 0 {
+	online := body.Optimization != nil && body.Optimization.Online
+	if body.ScenarioYAML != "" && (body.DurationMs > 0 || online) {
 		var callbackURL string
 		if h.callbackURL != "" {
 			callbackURL = h.callbackURL + "/" + run.RunID
@@ -55,11 +73,41 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		} else {
 			log.Printf("Warning: SIMULATION_CALLBACK_URL not set - simulation engine will not call back when run completes")
 		}
-		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, body.RealTimeMode, callbackURL, h.callbackSecret)
+		input := &RunInput{
+			ScenarioYAML: body.ScenarioYAML,
+			ConfigYAML:   body.ConfigYAML,
+			DurationMs:   body.DurationMs,
+			Seed:         body.Seed,
+			RealTimeMode: body.RealTimeMode,
+		}
+		if body.Optimization != nil {
+			input.Optimization = &OptimizationConfig{
+				Objective:            body.Optimization.Objective,
+				MaxIterations:        body.Optimization.MaxIterations,
+				StepSize:             body.Optimization.StepSize,
+				EvaluationDurationMs: body.Optimization.EvaluationDurationMs,
+				Online:               body.Optimization.Online,
+				TargetP95LatencyMs:   body.Optimization.TargetP95LatencyMs,
+				ControlIntervalMs:    body.Optimization.ControlIntervalMs,
+				MinHosts:             body.Optimization.MinHosts,
+				MaxHosts:             body.Optimization.MaxHosts,
+			}
+		}
+
+		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
 		if err != nil {
-			c.JSON(http.StatusCreated, gin.H{
-				"run":     run,
-				"warning": "run created in backend but failed to create in simulation engine: " + err.Error(),
+			// Engine run was not created – surface this as an error to the client.
+			// Mark the backend run as failed so it is clearly not active.
+			failedStatus := domain.StatusFailed
+			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+				Status: &failedStatus,
+				Metadata: map[string]interface{}{
+					"engine_error": "failed to create run in simulation engine: " + err.Error(),
+				},
+			})
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":   "failed to create run in simulation engine",
+				"details": err.Error(),
 			})
 			return
 		}
@@ -92,7 +140,19 @@ func (h *Handler) ListRunsForProject(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list runs"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
+
+	runs := make([]*domain.SimulationRun, 0, len(runIDs))
+	for _, id := range runIDs {
+		run, err := h.simService.GetRun(id)
+		if err != nil {
+			// If a specific run cannot be loaded (e.g., expired), skip it but continue.
+			log.Printf("Warning: failed to load run %s for project %s: %v", id, projectID, err)
+			continue
+		}
+		runs = append(runs, run)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"runs": runs})
 }
 
 // CreateRun creates a new simulation run (user-level, no project)
@@ -112,7 +172,20 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode *bool                  `json:"real_time_mode,omitempty"` // Enable real-time mode
-		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+		ConfigYAML   string                 `json:"config_yaml,omitempty"`
+		Seed         int64                  `json:"seed,omitempty"`
+		Optimization *struct {
+			Objective            string  `json:"objective,omitempty"`
+			MaxIterations        int32   `json:"max_iterations,omitempty"`
+			StepSize             float64 `json:"step_size,omitempty"`
+			EvaluationDurationMs int64   `json:"evaluation_duration_ms,omitempty"`
+			Online               bool    `json:"online,omitempty"`
+			TargetP95LatencyMs   float64 `json:"target_p95_latency_ms,omitempty"`
+			ControlIntervalMs    int64   `json:"control_interval_ms,omitempty"`
+			MinHosts             int32   `json:"min_hosts,omitempty"`
+			MaxHosts             int32   `json:"max_hosts,omitempty"`
+		} `json:"optimization,omitempty"`
+		Metadata map[string]interface{} `json:"metadata,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -133,8 +206,10 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		return
 	}
 
-	// If scenario_yaml is provided, create run in simulation engine
-	if body.ScenarioYAML != "" && body.DurationMs > 0 {
+	// If scenario_yaml is provided, create run in simulation engine.
+	// For online optimization runs, duration_ms can be zero; the controller keeps the run alive.
+	online := body.Optimization != nil && body.Optimization.Online
+	if body.ScenarioYAML != "" && (body.DurationMs > 0 || online) {
 		// Generate unique callback URL per run (includes run_id in path for identification)
 		var callbackURL string
 		if h.callbackURL != "" {
@@ -144,13 +219,41 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		} else {
 			log.Printf("Warning: SIMULATION_CALLBACK_URL not set - simulation engine will not call back when run completes")
 		}
-		engineRunID, err := h.engineClient.CreateRun(run.RunID, body.ScenarioYAML, body.DurationMs, body.RealTimeMode, callbackURL, h.callbackSecret)
+		input := &RunInput{
+			ScenarioYAML: body.ScenarioYAML,
+			ConfigYAML:   body.ConfigYAML,
+			DurationMs:   body.DurationMs,
+			Seed:         body.Seed,
+			RealTimeMode: body.RealTimeMode,
+		}
+		if body.Optimization != nil {
+			input.Optimization = &OptimizationConfig{
+				Objective:            body.Optimization.Objective,
+				MaxIterations:        body.Optimization.MaxIterations,
+				StepSize:             body.Optimization.StepSize,
+				EvaluationDurationMs: body.Optimization.EvaluationDurationMs,
+				Online:               body.Optimization.Online,
+				TargetP95LatencyMs:   body.Optimization.TargetP95LatencyMs,
+				ControlIntervalMs:    body.Optimization.ControlIntervalMs,
+				MinHosts:             body.Optimization.MinHosts,
+				MaxHosts:             body.Optimization.MaxHosts,
+			}
+		}
+
+		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
 		if err != nil {
-			// Log error but don't fail the request - the run is already created in backend
-			// The user can retry by updating the run
-			c.JSON(http.StatusCreated, gin.H{
-				"run":     run,
-				"warning": "run created in backend but failed to create in simulation engine: " + err.Error(),
+			// Engine run was not created – surface this as an error to the client.
+			// Mark the backend run as failed so it is clearly not active.
+			failedStatus := domain.StatusFailed
+			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+				Status: &failedStatus,
+				Metadata: map[string]interface{}{
+					"engine_error": "failed to create run in simulation engine: " + err.Error(),
+				},
+			})
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":   "failed to create run in simulation engine",
+				"details": err.Error(),
 			})
 			return
 		}
@@ -167,6 +270,27 @@ func (h *Handler) CreateRun(c *gin.Context) {
 				"warning": "run created in engine but failed to update engine_run_id in backend",
 			})
 			return
+		}
+
+		// Persist scenario_yaml now so GET /runs/:id returns it while the run is still running.
+		if h.db != nil && body.ScenarioYAML != "" {
+			if _, err := h.db.ExecContext(
+				c.Request.Context(),
+				`INSERT INTO simulation_runs (run_id) VALUES ($1) ON CONFLICT (run_id) DO NOTHING`,
+				run.RunID,
+			); err != nil {
+				log.Printf("Failed to ensure simulation_runs row for run_id=%s: %v", run.RunID, err)
+			} else if _, err := h.db.ExecContext(
+				c.Request.Context(),
+				`INSERT INTO simulation_summaries (run_id, engine_run_id, scenario_yaml)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (run_id) DO UPDATE SET
+                   engine_run_id = EXCLUDED.engine_run_id,
+                   scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
+				run.RunID, run.EngineRunID, body.ScenarioYAML,
+			); err != nil {
+				log.Printf("Failed to persist scenario_yaml for run_id=%s: %v", run.RunID, err)
+			}
 		}
 	}
 
@@ -191,7 +315,289 @@ func (h *Handler) GetRun(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"run": run})
+	// Optionally enrich with stored scenario_yaml from simulation_summaries if DB is configured.
+	var scenarioYAML *string
+	if h.db != nil {
+		var yamlText sql.NullString
+		err := h.db.QueryRowContext(
+			c.Request.Context(),
+			`SELECT scenario_yaml FROM simulation_summaries WHERE run_id = $1`,
+			runID,
+		).Scan(&yamlText)
+		if err == nil && yamlText.Valid && yamlText.String != "" {
+			scenarioYAML = &yamlText.String
+		}
+	}
+
+	// Attach scenario_yaml as a top-level field alongside the run for frontend convenience.
+	resp := gin.H{"run": run}
+	if scenarioYAML != nil {
+		resp["scenario_yaml"] = *scenarioYAML
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetRunMetrics returns persisted summary metrics and time-series for a run.
+// This is intended for charting in the frontend after a run completes.
+func (h *Handler) GetRunMetrics(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	// Auth: ensure user is authenticated
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+	}
+
+	// Load run to verify ownership
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not configured for metrics storage"})
+		return
+	}
+
+	metricsRepo := simrepo.NewMetricsRepository(h.db)
+
+	// Load summary (aggregated) metrics
+	summary, err := metricsRepo.GetSummaryByRunID(c.Request.Context(), runID)
+	if err != nil {
+		log.Printf("Failed to load summary metrics for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load summary metrics"})
+		return
+	}
+
+	// Load time-series points
+	points, err := metricsRepo.ListTimeSeriesByRunID(c.Request.Context(), runID)
+	if err != nil {
+		log.Printf("Failed to load metrics timeseries for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load timeseries metrics"})
+		return
+	}
+
+	type pointDTO struct {
+		Time      time.Time            `json:"time"`
+		Value     float64              `json:"value"`
+		ServiceID string               `json:"service_id,omitempty"`
+		NodeID    string               `json:"node_id,omitempty"`
+		Tags      map[string]any       `json:"tags,omitempty"`
+	}
+
+	seriesMap := make(map[string][]pointDTO)
+	for _, p := range points {
+		seriesMap[p.MetricType] = append(seriesMap[p.MetricType], pointDTO{
+			Time:      p.Time,
+			Value:     p.MetricValue,
+			ServiceID: p.ServiceID,
+			NodeID:    p.NodeID,
+			Tags:      p.Tags,
+		})
+	}
+
+	timeseries := make([]gin.H, 0, len(seriesMap))
+	for metric, pts := range seriesMap {
+		timeseries = append(timeseries, gin.H{
+			"metric": metric,
+			"points": pts,
+		})
+	}
+
+	summaryResp := gin.H{}
+	if summary != nil {
+		if summary.Metrics != nil {
+			summaryResp["metrics"] = summary.Metrics
+		}
+		if summary.SummaryData != nil {
+			summaryResp["summary_data"] = summary.SummaryData
+		}
+		if summary.TotalRequests.Valid {
+			summaryResp["total_requests"] = summary.TotalRequests.Int64
+		}
+		if summary.TotalErrors.Valid {
+			summaryResp["total_errors"] = summary.TotalErrors.Int64
+		}
+		if summary.TotalDurationMs.Valid {
+			summaryResp["total_duration_ms"] = summary.TotalDurationMs.Int64
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"run_id":    run.RunID,
+		"summary":   summaryResp,
+		"timeseries": timeseries,
+	})
+}
+
+// parseScenarioYAMLHostsServices parses scenario YAML bytes and returns normalized hosts and services for API response.
+// Returns (nil, nil) on parse error or empty content.
+func parseScenarioYAMLHostsServices(data []byte) (hosts []gin.H, services []gin.H) {
+	var scenario struct {
+		Hosts []struct {
+			ID    string `yaml:"id"`
+			Cores int    `yaml:"cores"`
+		} `yaml:"hosts"`
+		Services []struct {
+			ID       string  `yaml:"id"`
+			Replicas int     `yaml:"replicas"`
+			CPUCores float64 `yaml:"cpu_cores"`
+			MemoryMB float64 `yaml:"memory_mb"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &scenario); err != nil {
+		return nil, nil
+	}
+	for _, hst := range scenario.Hosts {
+		hosts = append(hosts, gin.H{
+			"host_id":   hst.ID,
+			"cpu_cores": hst.Cores,
+			"memory_gb": 16,
+		})
+	}
+	for _, svc := range scenario.Services {
+		services = append(services, gin.H{
+			"service_id":  svc.ID,
+			"replicas":    svc.Replicas,
+			"cpu_cores":   svc.CPUCores,
+			"memory_mb":   svc.MemoryMB,
+		})
+	}
+	return hosts, services
+}
+
+// GetRunCandidates returns parsed candidate records for a given simulation run.
+// Response includes candidates array plus optional best_candidate_id and best_candidate (s3_path, hosts, services) when available.
+func (h *Handler) GetRunCandidates(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	// Auth: ensure user is authenticated
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+	}
+
+	// Load run to verify ownership and get project_id
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not configured for candidates"})
+		return
+	}
+
+	candidateRepo := simrepo.NewCandidateRepository(h.db)
+	records, err := candidateRepo.ListByRunID(c.Request.Context(), runID)
+	if err != nil {
+		log.Printf("Failed to list candidates for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load candidates"})
+		return
+	}
+
+	// Derive simulation summary section. For now, we expose node count as the
+	// number of distinct labels across candidates' specs (can be refined later).
+	// If no candidates, nodes is 0.
+	nodes := len(records)
+
+	type candidateDTO struct {
+		ID          string                 `json:"id"`
+		Spec        map[string]interface{} `json:"spec"`
+		Metrics     map[string]interface{} `json:"metrics"`
+		SimWorkload map[string]interface{} `json:"sim_workload"`
+		Source      string                 `json:"source"`
+		S3Path      string                 `json:"s3_path,omitempty"`
+	}
+
+	outCandidates := make([]candidateDTO, 0, len(records))
+	for _, rec := range records {
+		outCandidates = append(outCandidates, candidateDTO{
+			ID:          rec.CandidateID,
+			Spec:        rec.Spec,
+			Metrics:     rec.Metrics,
+			SimWorkload: rec.SimWorkload,
+			Source:      rec.Source,
+			S3Path:      rec.S3Path,
+		})
+	}
+
+	// Optional: include best-candidate info (s3_path + parsed hosts/services) from simulation_summaries
+	var bestCandidateID string
+	var bestCandidateObj interface{}
+	var bestPath sql.NullString
+	if err := h.db.QueryRowContext(
+		c.Request.Context(),
+		`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = $1`,
+		runID,
+	).Scan(&bestPath); err == nil && bestPath.Valid && bestPath.String != "" {
+		for _, rec := range records {
+			if rec.S3Path == bestPath.String {
+				bestCandidateID = rec.CandidateID
+				break
+			}
+		}
+		if h.s3Client != nil {
+			if data, err := h.s3Client.GetObject(c.Request.Context(), bestPath.String); err == nil {
+				hosts, services := parseScenarioYAMLHostsServices(data)
+				if hosts != nil || services != nil {
+					bestCandidateObj = gin.H{
+						"s3_path":  bestPath.String,
+						"hosts":    hosts,
+						"services": services,
+					}
+				}
+			}
+		}
+	}
+
+	resp := gin.H{
+		"user_id":           run.UserID,
+		"project_id":        run.ProjectPublicID,
+		"run_id":            run.RunID,
+		"simulation":        gin.H{"nodes": nodes},
+		"best_candidate_id": bestCandidateID,
+		"candidates":        outCandidates,
+	}
+	if bestCandidateObj != nil {
+		resp["best_candidate"] = bestCandidateObj
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetRunByEngineID retrieves a simulation run by engine run ID
@@ -245,6 +651,21 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		return
 	}
 
+	// If the client wants to change the run status to a state that requires a live simulator
+	// but this run never got an engine_run_id (engine run was not created), surface an error
+	// instead of silently marking the run as started/completed/cancelled.
+	if body.Status != nil && run.EngineRunID == "" {
+		if *body.Status == domain.StatusRunning ||
+			*body.Status == domain.StatusCompleted ||
+			*body.Status == domain.StatusCancelled ||
+			*body.Status == domain.StatusStopped {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "simulation engine run not created; cannot change status when simulator is not running",
+			})
+			return
+		}
+	}
+
 	// If status is being set to "running" and we have an engine_run_id, start the run in the engine
 	if body.Status != nil && *body.Status == domain.StatusRunning && run.EngineRunID != "" {
 		err := h.engineClient.StartRun(run.EngineRunID)
@@ -261,14 +682,21 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		log.Printf("Started metrics stream proxy for run_id=%s, engine_run_id=%s", runID, run.EngineRunID)
 	}
 
-	// If status is being set to "cancelled" and we have an engine_run_id, stop the run in the engine
-	if body.Status != nil && *body.Status == domain.StatusCancelled && run.EngineRunID != "" {
-		err := h.engineClient.StopRun(run.EngineRunID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "failed to stop run in simulation engine: " + err.Error(),
-			})
-			return
+	// If status is being set to "cancelled" or "completed" and we have an engine_run_id, stop the run in the engine.
+	// - "cancelled": user aborts the run.
+	// - "completed": user stops an online/indefinite run (end successfully).
+	// - "stopped": explicit stop status from simulator contract.
+	if body.Status != nil && run.EngineRunID != "" {
+		if *body.Status == domain.StatusCancelled ||
+			*body.Status == domain.StatusCompleted ||
+			*body.Status == domain.StatusStopped {
+			err := h.engineClient.StopRun(run.EngineRunID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": "failed to stop run in simulation engine: " + err.Error(),
+				})
+				return
+			}
 		}
 	}
 
@@ -311,7 +739,78 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list runs"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"runs": runIDs})
+
+	runs := make([]*domain.SimulationRun, 0, len(runIDs))
+	for _, id := range runIDs {
+		run, err := h.simService.GetRun(id)
+		if err != nil {
+			// If a specific run cannot be loaded (e.g., expired), skip it but continue.
+			log.Printf("Warning: failed to load run %s for user %s: %v", id, userID, err)
+			continue
+		}
+		runs = append(runs, run)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"runs": runs})
+}
+
+// UpdateConfiguration updates the configuration (services, workload, policies) for a running simulation.
+// It proxies configuration changes to simulation-core PATCH /v1/runs/{run_id}/configuration.
+func (h *Handler) UpdateConfiguration(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	var body UpdateRunConfigurationRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+
+	// Require at least one change to be specified
+	if len(body.Services) == 0 && len(body.Workload) == 0 && body.Policies == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one of services, workload, or policies must be provided"})
+		return
+	}
+
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.EngineRunID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run has no engine association"})
+		return
+	}
+
+	// Verify user has access
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+	}
+	if userID == "" || run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if err := h.engineClient.UpdateRunConfiguration(run.EngineRunID, &body); err != nil {
+		log.Printf("Failed to update configuration for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to update configuration in simulation engine: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "configuration updated successfully",
+		"run_id":  runID,
+	})
 }
 
 // UpdateWorkload updates the workload rate for a running simulation.

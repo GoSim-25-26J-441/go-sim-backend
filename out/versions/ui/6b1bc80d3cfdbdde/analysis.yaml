@@ -1,0 +1,206 @@
+graph:
+    nodes:
+        DATABASE:payments-db:
+            id: DATABASE:payments-db
+            name: payments-db
+            kind: DATABASE
+            attrs:
+                owner: payment-service
+        DATABASE:users-db:
+            id: DATABASE:users-db
+            name: users-db
+            kind: DATABASE
+            attrs:
+                owner: auth-service
+        SERVICE:api-gateway:
+            id: SERVICE:api-gateway
+            name: api-gateway
+            kind: SERVICE
+            attrs: {}
+        SERVICE:auth-service:
+            id: SERVICE:auth-service
+            name: auth-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:billing-service:
+            id: SERVICE:billing-service
+            name: billing-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:payment-service:
+            id: SERVICE:payment-service
+            name: payment-service
+            kind: SERVICE
+            attrs: {}
+        SERVICE:user-service:
+            id: SERVICE:user-service
+            name: user-service
+            kind: SERVICE
+            attrs: {}
+    edges:
+        - from: SERVICE:api-gateway
+          to: SERVICE:user-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - GET /users/:id
+            per_item: false
+            rate_per_min: 60
+        - from: SERVICE:api-gateway
+          to: SERVICE:billing-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /bill
+            per_item: false
+            rate_per_min: 30
+        - from: SERVICE:user-service
+          to: SERVICE:auth-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /verify
+            per_item: false
+            rate_per_min: 60
+        - from: SERVICE:auth-service
+          to: DATABASE:users-db
+          kind: READS
+          attrs: {}
+        - from: SERVICE:auth-service
+          to: DATABASE:users-db
+          kind: WRITES
+          attrs:
+            owner: true
+        - from: SERVICE:billing-service
+          to: SERVICE:payment-service
+          kind: CALLS
+          attrs:
+            count: 1
+            endpoints:
+                - POST /charge
+            per_item: false
+            rate_per_min: 50
+        - from: SERVICE:payment-service
+          to: DATABASE:payments-db
+          kind: WRITES
+          attrs:
+            owner: true
+    out:
+        SERVICE:api-gateway:
+            - from: SERVICE:api-gateway
+              to: SERVICE:user-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /users/:id
+                per_item: false
+                rate_per_min: 60
+            - from: SERVICE:api-gateway
+              to: SERVICE:billing-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /bill
+                per_item: false
+                rate_per_min: 30
+        SERVICE:auth-service:
+            - from: SERVICE:auth-service
+              to: DATABASE:users-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:auth-service
+              to: DATABASE:users-db
+              kind: WRITES
+              attrs:
+                owner: true
+        SERVICE:billing-service:
+            - from: SERVICE:billing-service
+              to: SERVICE:payment-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /charge
+                per_item: false
+                rate_per_min: 50
+        SERVICE:payment-service:
+            - from: SERVICE:payment-service
+              to: DATABASE:payments-db
+              kind: WRITES
+              attrs:
+                owner: true
+        SERVICE:user-service:
+            - from: SERVICE:user-service
+              to: SERVICE:auth-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /verify
+                per_item: false
+                rate_per_min: 60
+    in:
+        DATABASE:payments-db:
+            - from: SERVICE:payment-service
+              to: DATABASE:payments-db
+              kind: WRITES
+              attrs:
+                owner: true
+        DATABASE:users-db:
+            - from: SERVICE:auth-service
+              to: DATABASE:users-db
+              kind: READS
+              attrs: {}
+            - from: SERVICE:auth-service
+              to: DATABASE:users-db
+              kind: WRITES
+              attrs:
+                owner: true
+        SERVICE:auth-service:
+            - from: SERVICE:user-service
+              to: SERVICE:auth-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /verify
+                per_item: false
+                rate_per_min: 60
+        SERVICE:billing-service:
+            - from: SERVICE:api-gateway
+              to: SERVICE:billing-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /bill
+                per_item: false
+                rate_per_min: 30
+        SERVICE:payment-service:
+            - from: SERVICE:billing-service
+              to: SERVICE:payment-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - POST /charge
+                per_item: false
+                rate_per_min: 50
+        SERVICE:user-service:
+            - from: SERVICE:api-gateway
+              to: SERVICE:user-service
+              kind: CALLS
+              attrs:
+                count: 1
+                endpoints:
+                    - GET /users/:id
+                per_item: false
+                rate_per_min: 60
+dot_path: /app/out/versions/ui/6b1bc80d3cfdbdde/graph.dot
+svg_path: /app/out/versions/ui/6b1bc80d3cfdbdde/graph.svg
+detections: []

@@ -63,6 +63,23 @@ Or specify a different migration file:
 5. Open the file `migrations/0001_auth_users.sql`
 6. Click "Execute" (F5)
 
+## AMG-APD versioning (diagram_versions)
+
+AMG-APD versioning uses the unified `diagram_versions` table from `0002_projects_chats_diagrams.sql` with `source = 'amg_apd'`. Ensure these migrations are applied:
+
+```powershell
+psql -h localhost -p 5432 -U postgres -d gosim -f migrations/0002_projects_chats_diagrams.sql
+psql -h localhost -p 5432 -U postgres -d gosim -f migrations/0004_amg_apd_versioning.sql
+```
+
+Or with the script:
+```powershell
+.\scripts\run-migration.ps1 migrations/0002_projects_chats_diagrams.sql
+.\scripts\run-migration.ps1 migrations/0004_amg_apd_versioning.sql
+```
+
+The frontend can list versions, get one, delete one, and compare two versions side by side. For AMG-APD, `diagram_versions.diagram_json` stores `{"graph": ..., "detections": ...}`.
+
 ## Connection Parameters
 
 Based on your `.env.example`:

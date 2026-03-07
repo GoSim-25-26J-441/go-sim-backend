@@ -1,0 +1,15 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:recommendations" [label="recommendations", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:profile-db" [label="profile-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:ui" [label="ui", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:profile" [label="profile", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:ui" -> "SERVICE:profile" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:ui" -> "SERVICE:recommendations" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:recommendations" -> "SERVICE:profile" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:profile" -> "SERVICE:recommendations" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:profile" -> "DATABASE:profile-db" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:recommendations" -> "DATABASE:profile-db" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+}

@@ -1,0 +1,19 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:user-service" [label="user-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:auth-service" [label="auth-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:billing-service" [label="billing-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:payment-service" [label="payment-service", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:users-db" [label="users-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "DATABASE:payments-db" [label="payments-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:api-gateway" [label="api-gateway", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:api-gateway" -> "SERVICE:user-service" [label="calls (1 ep), 60rpm", tooltip="edge#0"];
+  "SERVICE:api-gateway" -> "SERVICE:billing-service" [label="calls (1 ep), 30rpm", tooltip="edge#1"];
+  "SERVICE:user-service" -> "SERVICE:auth-service" [label="calls (1 ep), 60rpm", tooltip="edge#2"];
+  "SERVICE:auth-service" -> "DATABASE:users-db" [label="READS", tooltip="edge#3"];
+  "SERVICE:auth-service" -> "DATABASE:users-db" [label="WRITES", tooltip="edge#4"];
+  "SERVICE:billing-service" -> "SERVICE:payment-service" [label="calls (1 ep), 50rpm", tooltip="edge#5"];
+  "SERVICE:payment-service" -> "DATABASE:payments-db" [label="WRITES", tooltip="edge#6"];
+}

@@ -87,6 +87,19 @@ $body = @{
 } | ConvertTo-Json -Depth 20
 
 
+# (Optional) Upload a diagram image (PNG/JPG) to S3 and get image_object_key
+# Replace PATH_TO_IMAGE with a local file path.
+$imagePath = "C:\PATH_TO_IMAGE\diagram.png"
+$form = @{
+  file = Get-Item $imagePath
+}
+$uploadResponse = Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/image" `
+  -Headers @{ "Authorization" = "Bearer $token" } `
+  -Form $form
+
+$imageKey = $uploadResponse.image_object_key
+
 # Sample body: microservices-style diagram (unique node ids; spec_summary aligned with nodes/edges)
 $body = @{
   source       = "canvas_json"
@@ -124,6 +137,7 @@ $body = @{
       "order-service->mongoDB(db)"
     )
   }
+  image_object_key = $imageKey  # optional: omit if no image uploaded
 } | ConvertTo-Json -Depth 20
 
 Invoke-RestMethod -Method Post `
@@ -350,3 +364,30 @@ Invoke-RestMethod -Method Post `
 # }
 
 
+# -----------------------------------------------------------------------------
+# Diagram images & titles (per project)
+# -----------------------------------------------------------------------------
+
+# List all diagram images for a project (returns only versions that have image_object_key)
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/images" `
+  -Headers @{ "Authorization" = "Bearer $token" }
+
+# Response example:
+# {
+#   "ok": true,
+#   "images": [
+#     {
+#       "id": "dver-12345-6789",
+#       "title": "diagramV1",
+#       "image_object_key": "arcfind-includes/diagrams/PROJECT_PUBLIC_ID/dimg_....png",
+#       "created_at": "2026-03-05T12:00:00Z"
+#     }
+#   ]
+# }
+
+# Update the title for a specific diagram version (e.g. to match the image)
+Invoke-RestMethod -Method Patch `
+  -Uri "http://localhost:8000/api/v1/projects/PROJECT_PUBLIC_ID/diagram/DVER_ID/title" `
+  -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+  -Body '{"title":"My custom diagram title"}'

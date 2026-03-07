@@ -1,0 +1,44 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 80
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: catalog
+      kind: rest
+      sync: true
+      to: database
+    - from: web
+      kind: rest
+      sync: true
+      to: bff
+    - from: bff
+      kind: rest
+      sync: true
+      to: auth
+    - from: bff
+      kind: rest
+      sync: true
+      to: catalog
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: web
+      type: service
+    - name: auth
+      type: service
+    - name: catalog
+      type: service
+    - name: database
+      type: service
+    - name: bff
+      type: service
+topics: []
+trace: []

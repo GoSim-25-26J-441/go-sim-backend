@@ -1,0 +1,41 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 120
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: payments
+      kind: rest
+      to: orders
+    - from: ui
+      kind: rest
+      sync: true
+      to: bff
+    - from: bff
+      kind: rest
+      sync: true
+      to: orders
+    - from: bff
+      kind: rest
+      sync: true
+      to: payments
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: ui
+      type: service
+    - name: orders
+      type: service
+    - name: payments
+      type: service
+    - name: bff
+      type: service
+topics: []
+trace: []

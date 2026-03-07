@@ -1,0 +1,35 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+  labelloc="t"; label="Architecture"; fontname="Helvetica";
+  "SERVICE:emailer" [label="emailer", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:cache-proxy" [label="cache-proxy", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:preferences" [label="preferences", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:tax" [label="tax", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:scheduler" [label="scheduler", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:admin-console" [label="admin-console", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:sms-gateway" [label="sms-gateway", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:metrics-agent" [label="metrics-agent", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:notifications" [label="notifications", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:discount" [label="discount", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:ops-hub" [label="ops-hub", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:pricing" [label="pricing", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:audit-log" [label="audit-log", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:report-export" [label="report-export", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "SERVICE:user-profile" [label="user-profile", shape=box,style="rounded,filled",fillcolor="#eef6ff"];
+  "DATABASE:user-db" [label="user-db", shape=cylinder,style="filled",fillcolor="#fff3cd"];
+  "SERVICE:pricing" -> "SERVICE:discount" [label="CALLS [rest] (sync)", tooltip="edge#0"];
+  "SERVICE:discount" -> "SERVICE:tax" [label="CALLS [rest] (sync)", tooltip="edge#1"];
+  "SERVICE:tax" -> "SERVICE:pricing" [label="CALLS [rest] (sync)", tooltip="edge#2"];
+  "SERVICE:scheduler" -> "SERVICE:ops-hub" [label="CALLS [rest] (sync)", tooltip="edge#3"];
+  "SERVICE:admin-console" -> "SERVICE:ops-hub" [label="CALLS [rest] (sync)", tooltip="edge#4"];
+  "SERVICE:ops-hub" -> "SERVICE:emailer" [label="CALLS [rest] (sync)", tooltip="edge#5"];
+  "SERVICE:ops-hub" -> "SERVICE:sms-gateway" [label="CALLS [rest] (sync)", tooltip="edge#6"];
+  "SERVICE:ops-hub" -> "SERVICE:audit-log" [label="CALLS [rest] (sync)", tooltip="edge#7"];
+  "SERVICE:ops-hub" -> "SERVICE:cache-proxy" [label="CALLS [rest] (sync)", tooltip="edge#8"];
+  "SERVICE:ops-hub" -> "SERVICE:metrics-agent" [label="CALLS [rest] (sync)", tooltip="edge#9"];
+  "SERVICE:ops-hub" -> "SERVICE:report-export" [label="CALLS [rest] (sync)", tooltip="edge#10"];
+  "SERVICE:user-profile" -> "DATABASE:user-db" [label="CALLS [rest] (sync)", tooltip="edge#11"];
+  "SERVICE:preferences" -> "DATABASE:user-db" [label="CALLS [rest] (sync)", tooltip="edge#12"];
+  "SERVICE:notifications" -> "DATABASE:user-db" [label="CALLS [rest] (sync)", tooltip="edge#13"];
+}

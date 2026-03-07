@@ -10,16 +10,19 @@ type DiagramVersion struct {
 	ProjectPublicID string          `json:"project_public_id"`
 	UserFirebaseUID string          `json:"user_firebase_uid"`
 	VersionNumber   int             `json:"version_number"`
+	Title           string          `json:"title"`
 	Source          string          `json:"source"`
 	Hash            string          `json:"hash,omitempty"`
 	ImageObjectKey  string          `json:"image_object_key,omitempty"`
 	DiagramJSON     json.RawMessage `json:"diagram_json,omitempty"`
 	SpecSummary     json.RawMessage `json:"spec_summary,omitempty"`
+	YAMLContent     string          `json:"yaml_content,omitempty"`
 	CreatedAt       time.Time       `json:"created_at"`
 }
 
 type CreateVersionInput struct {
 	Source         string
+	Title          string
 	DiagramJSON    json.RawMessage
 	ImageObjectKey string
 	SpecSummary    json.RawMessage

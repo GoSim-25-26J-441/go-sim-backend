@@ -1,0 +1,131 @@
+apis:
+    - name: REST
+      protocol: rest
+configs:
+    slo:
+        target_rps: 280
+conflicts: []
+constraints: {}
+datastores: []
+dependencies:
+    - from: pricing
+      kind: rest
+      sync: true
+      to: discount
+    - from: discount
+      kind: rest
+      sync: true
+      to: tax
+    - from: scheduler
+      kind: rest
+      sync: true
+      to: ops-hub
+    - from: admin-console
+      kind: rest
+      sync: true
+      to: ops-hub
+    - from: ops-hub
+      kind: rest
+      sync: true
+      to: emailer
+    - from: ops-hub_split-2
+      kind: rest
+      sync: true
+      to: sms-gateway
+    - from: ops-hub_split-1
+      kind: rest
+      sync: true
+      to: audit-log
+    - from: ops-hub_split
+      kind: rest
+      sync: true
+      to: cache-proxy
+    - from: ops-hub_split_split
+      kind: rest
+      sync: true
+      to: metrics-agent
+    - from: ops-hub_split_split
+      kind: rest
+      sync: true
+      to: report-export
+    - from: user-profile
+      kind: rest
+      sync: true
+      to: user-db
+    - from: preferences
+      kind: rest
+      sync: true
+      to: user-db
+    - from: notifications
+      kind: rest
+      sync: true
+      to: user-db
+    - from: ops-hub_split-1
+      kind: rest
+      to: ops-hub_split
+    - from: ops-hub_split-2
+      kind: rest
+      sync: true
+      to: ops-hub_split-1
+    - from: ops-hub_split
+      kind: rest
+      sync: true
+      to: ops-hub_split_split
+    - from: ops-hub_split-3
+      kind: rest
+      sync: true
+      to: ops-hub_split-2
+    - from: ops-hub
+      kind: rest
+      sync: true
+      to: ops-hub_split-3
+deploymentHints: {}
+gaps: []
+metadata:
+    generator: sample
+    schemaVersion: 0.1.0
+services:
+    - name: pricing
+      type: service
+    - name: discount
+      type: service
+    - name: tax
+      type: service
+    - name: scheduler
+      type: service
+    - name: admin-console
+      type: service
+    - name: ops-hub
+      type: service
+    - name: emailer
+      type: service
+    - name: sms-gateway
+      type: service
+    - name: audit-log
+      type: service
+    - name: cache-proxy
+      type: service
+    - name: metrics-agent
+      type: service
+    - name: report-export
+      type: service
+    - name: user-profile
+      type: service
+    - name: preferences
+      type: service
+    - name: notifications
+      type: service
+    - name: user-db
+      type: service
+    - name: ops-hub_split
+      type: service
+    - name: ops-hub_split-1
+      type: service
+    - name: ops-hub_split_split
+      type: service
+    - name: ops-hub_split-2
+      type: service
+    - name: ops-hub_split-3
+      type: service
+topics: []
+trace: []

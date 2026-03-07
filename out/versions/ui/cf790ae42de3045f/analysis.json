@@ -1,0 +1,176 @@
+{
+  "graph": {
+    "nodes": {
+      "SERVICE:bff": {
+        "id": "SERVICE:bff",
+        "name": "bff",
+        "kind": "SERVICE"
+      },
+      "SERVICE:orders": {
+        "id": "SERVICE:orders",
+        "name": "orders",
+        "kind": "SERVICE"
+      },
+      "SERVICE:payments": {
+        "id": "SERVICE:payments",
+        "name": "payments",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:orders": {
+        "id": "SERVICE:service:orders",
+        "name": "SERVICE:orders",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:payments": {
+        "id": "SERVICE:service:payments",
+        "name": "SERVICE:payments",
+        "kind": "SERVICE"
+      },
+      "SERVICE:service:ui": {
+        "id": "SERVICE:service:ui",
+        "name": "SERVICE:ui",
+        "kind": "SERVICE"
+      },
+      "SERVICE:ui": {
+        "id": "SERVICE:ui",
+        "name": "ui",
+        "kind": "SERVICE"
+      }
+    },
+    "edges": [
+      {
+        "from": "SERVICE:ui",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:ui",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:orders",
+        "to": "SERVICE:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:payments",
+        "to": "SERVICE:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:service:ui",
+        "to": "SERVICE:bff",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:service:orders",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      },
+      {
+        "from": "SERVICE:bff",
+        "to": "SERVICE:service:payments",
+        "kind": "CALLS",
+        "attrs": {
+          "dep_kind": "rest",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "dot_path": "/app/out/versions/ui/cf790ae42de3045f/graph.dot",
+  "svg_path": "/app/out/versions/ui/cf790ae42de3045f/graph.svg",
+  "detections": [
+    {
+      "kind": "cycles",
+      "severity": "HIGH",
+      "title": "Cyclic dependency",
+      "summary": "A loop of service dependencies was detected",
+      "nodes": [
+        "SERVICE:payments",
+        "SERVICE:orders"
+      ],
+      "edges": [],
+      "evidence": {
+        "cycle_size": 2
+      }
+    },
+    {
+      "kind": "ping_pong_dependency",
+      "severity": "MEDIUM",
+      "title": "Ping-pong dependency",
+      "summary": "Two services depend on each other (mutual calls)",
+      "nodes": [
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "a": "SERVICE:orders",
+        "b": "SERVICE:payments"
+      }
+    },
+    {
+      "kind": "tight_coupling",
+      "severity": "HIGH",
+      "title": "Tight coupling (synchronous mutual dependency)",
+      "summary": "Services rely heavily on each other via synchronous calls",
+      "nodes": [
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "ab": 1,
+        "ba": 1,
+        "min_bidir": 1,
+        "ra": 1,
+        "ratio": 0.7,
+        "rb": 1
+      }
+    },
+    {
+      "kind": "ui_orchestrator",
+      "severity": "MEDIUM",
+      "title": "UI orchestrator",
+      "summary": "UI directly orchestrates multiple backend services",
+      "nodes": [
+        "SERVICE:ui",
+        "SERVICE:orders",
+        "SERVICE:payments"
+      ],
+      "edges": [],
+      "evidence": {
+        "min_out": 2,
+        "sync_targets": 2,
+        "targets": 2,
+        "ui": "SERVICE:ui"
+      }
+    }
+  ]
+}
