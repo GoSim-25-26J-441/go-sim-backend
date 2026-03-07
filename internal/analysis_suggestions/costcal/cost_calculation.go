@@ -43,9 +43,11 @@ type ClusterCostResult struct {
 	PurchaseType      string `json:"purchase_type"`
 	LeaseContractType string `json:"lease_contract_length"`
 
-	InstanceType string `json:"instance_type"`
-	Region       string `json:"region"`
-	Nodes        int    `json:"nodes"`
+	InstanceType string  `json:"instance_type"`
+	Region       string  `json:"region"`
+	Nodes        int     `json:"nodes"`
+	VCPUs        int     `json:"vcpus"`
+	MemoryGB     float64 `json:"memory_gb"`
 
 	PricePerNodeHour  float64 `json:"price_per_node_hour"`
 	PricePerNodeMonth float64 `json:"price_per_node_month"`
@@ -162,16 +164,16 @@ func CalculateClusterCosts(
 		cpTier, cpHour, _ := GetControlPlanePrice(ctx, db, provider)
 		cpMonth := cpHour * HoursPerMonth()
 
-		if !nodeCost.FoundMatches {
-			results[provider] = list
-			continue
-		}
-
 		if provider == providerRegionOverride && region != "" {
 			recalculatedCost, err := CalculateCostsForProviderInRegion(ctx, db, provider, best, region)
 			if err == nil && recalculatedCost.FoundMatches {
 				nodeCost = recalculatedCost
 			}
+		}
+
+		if !nodeCost.FoundMatches {
+			results[provider] = list
+			continue
 		}
 
 		selectedRegion := nodeCost.Region
@@ -210,6 +212,8 @@ func CalculateClusterCosts(
 				InstanceType:      nodeCost.InstanceType,
 				Region:            selectedRegion,
 				Nodes:             nodeCount,
+				VCPUs:             nodeCost.MatchedVCPU,
+				MemoryGB:          nodeCost.MatchedMemoryGB,
 
 				PricePerNodeHour:  round(nHr, 5),
 				PricePerNodeMonth: round(nMo, 2),
@@ -299,6 +303,8 @@ func CalculateClusterCostsForProvider(
 			InstanceType:      nodeCost.InstanceType,
 			Region:            nodeCost.Region,
 			Nodes:             nodeCount,
+			VCPUs:             nodeCost.MatchedVCPU,
+			MemoryGB:          nodeCost.MatchedMemoryGB,
 
 			PricePerNodeHour:  round(nHr, 5),
 			PricePerNodeMonth: round(nMo, 2),
@@ -339,25 +345,58 @@ type priceRow struct {
 }
 
 // MATCH functions
+func nextMemoryTier(mem float64) float64 {
+	tiers := []float64{0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512}
+	for _, t := range tiers {
+		if t > mem {
+			return t
+		}
+	}
+	return mem * 2
+}
+
+// nextVCPUTier returns the smallest standard vCPU count that is >= vcpu.
+func nextVCPUTier(vcpu int) int {
+	tiers := []int{1, 2, 4, 8, 16, 32, 48, 64, 96, 128, 192}
+	for _, t := range tiers {
+		if t >= vcpu {
+			return t
+		}
+	}
+	return vcpu
+}
+
+// candidateSpecCombinations returns a priority-ordered list of (vcpu, mem) pairs to try.
+func candidateSpecCombinations(vcpu int, mem float64) [][2]interface{} {
+	nv := nextVCPUTier(vcpu)
+	nm := nextMemoryTier(mem)
+	combos := [][2]interface{}{{vcpu, mem}}
+
+	if nm != mem {
+		combos = append(combos, [2]interface{}{vcpu, nm})
+	}
+	if nv != vcpu {
+		combos = append(combos, [2]interface{}{nv, mem})
+		if nm != mem {
+			combos = append(combos, [2]interface{}{nv, nm})
+		}
+	}
+	return combos
+}
+
 func calcForProvider(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64) (CostResult, error) {
 	cr := CostResult{Provider: provider}
 
-	exactMatches, err := findExactMatches(ctx, db, provider, table, vcpu, mem)
-	if err != nil {
-		return cr, fmt.Errorf("finding exact matches failed: %w", err)
-	}
-
-	if len(exactMatches) > 0 {
-		return processExactMatches(exactMatches, provider, vcpu, mem), nil
-	}
-
-	nearestMatches, err := findNearestMatches(ctx, db, provider, table, vcpu, mem)
-	if err != nil {
-		return cr, fmt.Errorf("finding nearest matches failed: %w", err)
-	}
-
-	if len(nearestMatches) > 0 {
-		return processNearestMatches(nearestMatches, provider, vcpu, mem), nil
+	for _, combo := range candidateSpecCombinations(vcpu, mem) {
+		v := combo[0].(int)
+		m := combo[1].(float64)
+		matches, err := findExactMatches(ctx, db, provider, table, v, m)
+		if err != nil {
+			return cr, fmt.Errorf("finding matches for %d vCPU / %.0f GB failed: %w", v, m, err)
+		}
+		if len(matches) > 0 {
+			return processExactMatches(matches, provider, v, m), nil
+		}
 	}
 
 	cr.FoundMatches = false
@@ -370,26 +409,18 @@ func calcForProvider(ctx context.Context, db *sql.DB, provider, table string, vc
 func calcForProviderInRegion(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64, region string) (CostResult, error) {
 	cr := CostResult{Provider: provider}
 
-	exactMatches, err := findExactMatchesInRegion(ctx, db, provider, table, vcpu, mem, region)
-	if err != nil {
-		return cr, fmt.Errorf("finding exact matches in region failed: %w", err)
-	}
-
-	if len(exactMatches) > 0 {
-		result := processExactMatches(exactMatches, provider, vcpu, mem)
-		result.Region = region
-		return result, nil
-	}
-
-	nearestMatches, err := findNearestMatchesInRegion(ctx, db, provider, table, vcpu, mem, region)
-	if err != nil {
-		return cr, fmt.Errorf("finding nearest matches in region failed: %w", err)
-	}
-
-	if len(nearestMatches) > 0 {
-		result := processNearestMatches(nearestMatches, provider, vcpu, mem)
-		result.Region = region
-		return result, nil
+	for _, combo := range candidateSpecCombinations(vcpu, mem) {
+		v := combo[0].(int)
+		m := combo[1].(float64)
+		matches, err := findExactMatchesInRegion(ctx, db, provider, table, v, m, region)
+		if err != nil {
+			return cr, fmt.Errorf("finding matches for %d vCPU / %.0f GB in region failed: %w", v, m, err)
+		}
+		if len(matches) > 0 {
+			result := processExactMatches(matches, provider, v, m)
+			result.Region = region
+			return result, nil
+		}
 	}
 
 	cr.FoundMatches = false
@@ -528,6 +559,49 @@ func findExactMatchesInRegion(ctx context.Context, db *sql.DB, provider, table s
 	return matches, nil
 }
 
+// GetRegionsWithExactMatch returns regions where the provider has at least one price row
+func GetRegionsWithExactMatch(ctx context.Context, db *sql.DB, provider string, vcpu int, mem float64) ([]string, error) {
+	table := map[string]string{
+		"aws":   "aws_compute_prices",
+		"azure": "azure_compute_prices",
+		"gcp":   "gcp_compute_prices",
+	}[provider]
+	if table == "" {
+		return nil, fmt.Errorf("unknown provider: %s", provider)
+	}
+	query := `SELECT DISTINCT region FROM ` + table + ` WHERE vcpu = $1 AND memory_gb = $2 AND region IS NOT NULL ORDER BY region`
+	rows, err := db.QueryContext(ctx, query, vcpu, mem)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []string
+	for rows.Next() {
+		var r string
+		if err := rows.Scan(&r); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, nil
+}
+
+// GetRegionsForCandidateSpec tries each spec combination (exact → next memory →
+func GetRegionsForCandidateSpec(ctx context.Context, db *sql.DB, provider string, vcpu int, mem float64) ([]string, error) {
+	for _, combo := range candidateSpecCombinations(vcpu, mem) {
+		v := combo[0].(int)
+		m := combo[1].(float64)
+		list, err := GetRegionsWithExactMatch(ctx, db, provider, v, m)
+		if err != nil {
+			return nil, err
+		}
+		if len(list) > 0 {
+			return list, nil
+		}
+	}
+	return nil, nil
+}
+
 func findNearestMatches(ctx context.Context, db *sql.DB, provider, table string, vcpu int, mem float64) ([]priceRow, error) {
 	query := ""
 
@@ -537,11 +611,12 @@ func findNearestMatches(ctx context.Context, db *sql.DB, provider, table string,
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, instance_family, NULL,
-			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			       abs(memory_gb - $2) as dist
 			FROM aws_compute_prices
-			WHERE price_per_hour IS NOT NULL 
+			WHERE vcpu = $1
+			  AND price_per_hour IS NOT NULL 
 			  AND price_per_hour <= 10
-			ORDER BY dist ASC, price_per_hour ASC
+			ORDER BY abs(memory_gb - $2) ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	case "azure":
@@ -549,10 +624,11 @@ func findNearestMatches(ctx context.Context, db *sql.DB, provider, table string,
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, service_family, NULL,
-			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			       abs(memory_gb - $2) as dist
 			FROM azure_compute_prices
-			WHERE price_per_hour IS NOT NULL
-			ORDER BY dist ASC, price_per_hour ASC
+			WHERE vcpu = $1
+			  AND price_per_hour IS NOT NULL
+			ORDER BY abs(memory_gb - $2) ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	case "gcp":
@@ -560,11 +636,12 @@ func findNearestMatches(ctx context.Context, db *sql.DB, provider, table string,
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, NULL, resource_family, usage_type,
-			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			       abs(memory_gb - $2) as dist
 			FROM gcp_compute_prices
-			WHERE price_per_hour IS NOT NULL 
+			WHERE vcpu = $1
+			  AND price_per_hour IS NOT NULL 
 			  AND price_per_hour <= 10
-			ORDER BY dist ASC, price_per_hour ASC
+			ORDER BY abs(memory_gb - $2) ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	default:
@@ -604,12 +681,12 @@ func findNearestMatchesInRegion(ctx context.Context, db *sql.DB, provider, table
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, instance_family, NULL,
-			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			       abs(memory_gb - $2) as dist
 			FROM aws_compute_prices
-			WHERE region = $3 
+			WHERE vcpu = $1 AND region = $3
 			  AND price_per_hour IS NOT NULL 
 			  AND price_per_hour <= 10
-			ORDER BY dist ASC, price_per_hour ASC
+			ORDER BY abs(memory_gb - $2) ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	case "azure":
@@ -617,11 +694,11 @@ func findNearestMatchesInRegion(ctx context.Context, db *sql.DB, provider, table
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, lease_contract_length, service_family, NULL,
-			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			       abs(memory_gb - $2) as dist
 			FROM azure_compute_prices
-			WHERE region = $3 
+			WHERE vcpu = $1 AND region = $3
 			  AND price_per_hour IS NOT NULL
-			ORDER BY dist ASC, price_per_hour ASC
+			ORDER BY abs(memory_gb - $2) ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	case "gcp":
@@ -629,12 +706,12 @@ func findNearestMatchesInRegion(ctx context.Context, db *sql.DB, provider, table
 			SELECT sku_id, instance_type, region, vcpu, memory_gb, price_per_hour, currency, unit,
 			       to_char(fetched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       purchase_option, NULL, resource_family, usage_type,
-			       (abs(vcpu - $1) + abs(memory_gb - $2)) as dist
+			       abs(memory_gb - $2) as dist
 			FROM gcp_compute_prices
-			WHERE region = $3 
+			WHERE vcpu = $1 AND region = $3
 			  AND price_per_hour IS NOT NULL 
 			  AND price_per_hour <= 10
-			ORDER BY dist ASC, price_per_hour ASC
+			ORDER BY abs(memory_gb - $2) ASC, price_per_hour ASC
 			LIMIT 20
 		`
 	default:
@@ -813,28 +890,43 @@ func processNearestMatches(matches []priceRow, provider string, targetVCPU int, 
 		}
 	}
 
-	// Find the instance with the lowest price for On-Demand
+	// Find the best instance by OnDemand price.
 	var bestInstance string
-	lowestPrice := math.MaxFloat64
+	bestPrice := -1.0
+	if provider != "azure" {
+		bestPrice = math.MaxFloat64
+	}
 
 	for instanceType, rows := range instanceGroups {
 		for _, row := range rows {
-			if row.PriceHour != nil && *row.PriceHour < lowestPrice {
-				isOnDemand := false
-				if row.PurchaseOption != nil {
-					po := strings.ToLower(*row.PurchaseOption)
-					isOnDemand = strings.Contains(po, "ondemand") ||
-						strings.Contains(po, "payg") ||
-						strings.Contains(po, "consumption") ||
-						po == "on_demand" ||
-						strings.Contains(po, "on demand") ||
-						po == ""
-				} else {
-					isOnDemand = true
-				}
+			if row.PriceHour == nil {
+				continue
+			}
+			isOnDemand := false
+			if row.PurchaseOption != nil {
+				po := strings.ToLower(*row.PurchaseOption)
+				isOnDemand = strings.Contains(po, "ondemand") ||
+					strings.Contains(po, "payg") ||
+					strings.Contains(po, "consumption") ||
+					po == "on_demand" ||
+					strings.Contains(po, "on demand") ||
+					po == ""
+			} else {
+				isOnDemand = true
+			}
+			if !isOnDemand {
+				continue
+			}
 
-				if isOnDemand {
-					lowestPrice = *row.PriceHour
+			price := *row.PriceHour
+			if provider == "azure" {
+				if price > bestPrice && price <= 10 {
+					bestPrice = price
+					bestInstance = instanceType
+				}
+			} else {
+				if price < bestPrice {
+					bestPrice = price
 					bestInstance = instanceType
 				}
 			}
@@ -935,7 +1027,6 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 				strings.Contains(po, "commitment") || strings.Contains(po, "reservation"):
 				optionType = "Reserved"
 
-				// Parse lease contract length
 				if row.LeaseContractLength != nil {
 					leaseLength = *row.LeaseContractLength
 				}
@@ -988,7 +1079,6 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 
 		monthlyCost := pricePerHour * HoursPerMonth()
 
-		// Round the values
 		pricePerHour = math.Round(pricePerHour*100000) / 100000
 		monthlyCost = math.Round(monthlyCost*100) / 100
 
@@ -1004,8 +1094,17 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 		if note != "" {
 			po.Note = note
 		}
-		if existing, ok := optionMap[key]; ok && existing.PricePerHour <= po.PricePerHour {
-			continue
+
+		if existing, ok := optionMap[key]; ok {
+			if provider == "azure" && optionType == "OnDemand" {
+				if existing.PricePerHour >= po.PricePerHour {
+					continue
+				}
+			} else {
+				if existing.PricePerHour <= po.PricePerHour {
+					continue
+				}
+			}
 		}
 		optionMap[key] = po
 		if optionType == "OnDemand" {
