@@ -307,14 +307,14 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	// fetch the scenario export from the simulator and upload it to S3 under
 	// simulation/{run_id}/best_scenario.yaml. Then persist the S3 path in simulation_summaries.
 	if h.s3Client != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
-		go h.uploadBestScenarioToS3(context.Background(), run, backendStatus)
+		go h.uploadBestScenarioToS3(context.Background(), run, backendStatus, body.BestRunID)
 	}
 
 	// Metrics persistence: when run reaches a terminal state and DB is configured,
 	// fetch aggregated metrics and time-series from the simulator export endpoint and
 	// persist them into simulation_summaries and simulation_metrics_timeseries.
 	if h.db != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
-		go h.persistRunMetrics(context.Background(), run)
+		go h.persistRunMetrics(context.Background(), run, body.BestRunID, body.TopCandidates)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
@@ -388,122 +388,196 @@ func firstFloatFromKeys(m map[string]any, keys ...string) *float64 {
 	return nil
 }
 
+// buildSpecMetricsWorkloadFromScenarioAndMetrics builds spec, metrics, and simWorkload
+// from a scenario YAML string and metrics map (e.g. from an export response). Used by
+// both the single-export fallback and the batch per-candidate export path.
+func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics map[string]any) (spec map[string]any, metricsOut map[string]any, simWorkload map[string]any) {
+	spec = map[string]any{"label": "scenario"}
+	if scenarioYAML != "" {
+		var scenario struct {
+			Hosts []struct {
+				ID    string `yaml:"id"`
+				Cores int    `yaml:"cores"`
+			} `yaml:"hosts"`
+			Services []struct {
+				ID       string  `yaml:"id"`
+				Replicas int     `yaml:"replicas"`
+				CPUCores float64 `yaml:"cpu_cores"`
+				MemoryMB float64 `yaml:"memory_mb"`
+			} `yaml:"services"`
+		}
+		if err := yaml.Unmarshal([]byte(scenarioYAML), &scenario); err == nil {
+			var vcpu float64
+			var memoryGB float64
+			if len(scenario.Hosts) > 0 {
+				for _, h := range scenario.Hosts {
+					vcpu += float64(h.Cores)
+				}
+				if len(scenario.Services) > 0 {
+					for _, s := range scenario.Services {
+						memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
+					}
+				} else {
+					memoryGB = float64(len(scenario.Hosts)) * 16
+				}
+			} else {
+				for _, s := range scenario.Services {
+					vcpu += float64(s.Replicas) * s.CPUCores
+					memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
+				}
+			}
+			if vcpu > 0 {
+				spec["vcpu"] = vcpu
+			}
+			if memoryGB > 0 {
+				spec["memory_gb"] = memoryGB
+			}
+		}
+	}
+	metricsOut = map[string]any{}
+	for k, v := range metrics {
+		metricsOut[k] = v
+	}
+	if v := firstFloatFromKeys(metrics, "cpu_util_pct", "cpu_utilization", "cpu_util"); v != nil {
+		metricsOut["cpu_util_pct"] = *v
+	}
+	if v := firstFloatFromKeys(metrics, "mem_util_pct", "memory_util_pct", "memory_utilization", "mem_util"); v != nil {
+		metricsOut["mem_util_pct"] = *v
+	}
+	simWorkload = map[string]any{}
+	if v, ok := metrics["throughput_rps"]; ok {
+		simWorkload["concurrent_users"] = v
+	}
+	return spec, metricsOut, simWorkload
+}
+
+// uniqueCandidateIDs returns bestRunID (if non-empty) first, then each of topCandidates
+// deduplicated and in order. Used for batch optimization to decide which run IDs to export.
+func uniqueCandidateIDs(bestRunID string, topCandidates []string) []string {
+	seen := make(map[string]bool)
+	var ids []string
+	if bestRunID != "" {
+		ids = append(ids, bestRunID)
+		seen[bestRunID] = true
+	}
+	for _, id := range topCandidates {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // persistRunMetrics fetches export data from the simulator and writes summaries and
 // time-series metrics into Postgres. Best-effort: failures are logged and do not
-// affect the callback response.
-func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationRun) {
-	if h.db == nil || run == nil || run.EngineRunID == "" || run.RunID == "" {
+// affect the callback response. For batch optimization (bestRunID or topCandidates set),
+// candidates are built by calling export for each unique candidate run ID.
+func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationRun, bestRunID string, topCandidates []string) {
+	if h.db == nil || run == nil || run.RunID == "" {
+		return
+	}
+	if run.EngineRunID == "" && (bestRunID == "" && len(topCandidates) == 0) {
 		return
 	}
 
-	exportResp, err := h.engineClient.ExportRun(run.EngineRunID)
-	if err != nil {
-		log.Printf("Failed to export metrics for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
-		return
+	// Parent export for run-level metrics, time-series, and optimization history.
+	// For normal/online we use it for candidates too; for batch we only use it for summary/TS.
+	var exportResp *ExportRunResponse
+	var exportErr error
+	if run.EngineRunID != "" {
+		exportResp, exportErr = h.engineClient.ExportRun(run.EngineRunID)
+		if exportErr != nil {
+			log.Printf("Failed to export metrics for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, exportErr)
+			// For batch we might still persist candidates from per-id exports
+			if bestRunID == "" && len(topCandidates) == 0 {
+				return
+			}
+		}
 	}
 
 	metricsRepo := repository.NewMetricsRepository(h.db)
 
-	// Persist aggregated metrics into simulation_summaries.metrics
-	if exportResp.Metrics != nil {
-		summaryParams := &repository.SummaryUpsertParams{
-			RunID:        run.RunID,
-			EngineRunID:  run.EngineRunID,
-			Metrics:      exportResp.Metrics,
-			ScenarioYAML: exportResp.Input.ScenarioYAML,
-			// For now, store an empty summary_data object. This can be extended
-			// later with derived summary fields if needed.
-			SummaryData: map[string]any{},
-		}
-		if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
-			log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)
-		}
-	}
-
-	// Persist time-series metrics into simulation_metrics_timeseries
-	if len(exportResp.TimeSeries) > 0 {
-		points := make([]repository.TimeSeriesPoint, 0)
-
-		for _, series := range exportResp.TimeSeries {
-			metricName := series.Metric
-			for _, p := range series.Points {
-				if p.Timestamp == "" {
-					continue
-				}
-				parsedTime, err := time.Parse(time.RFC3339Nano, p.Timestamp)
-				if err != nil {
-					log.Printf("Failed to parse metrics timestamp for run_id=%s metric=%s: %v", run.RunID, metricName, err)
-					continue
-				}
-
-				labels := p.Labels
-				if labels == nil {
-					labels = map[string]string{}
-				}
-
-				// Derive service_id from labels; prefer explicit service_id, fall back to "service".
-				serviceID := labels["service_id"]
-				if serviceID == "" {
-					if v, ok := labels["service"]; ok {
-						serviceID = v
-					}
-				}
-
-				// Derive node_id from labels; prefer explicit host_id, fall back to "host" or "instance".
-				nodeID := labels["host_id"]
-				if nodeID == "" {
-					if v, ok := labels["host"]; ok {
-						nodeID = v
-					} else if v, ok := labels["instance"]; ok {
-						nodeID = v
-					}
-				}
-
-				tags := make(map[string]any, len(labels))
-				for k, v := range labels {
-					tags[k] = v
-				}
-
-				points = append(points, repository.TimeSeriesPoint{
-					RunID:       run.RunID,
-					Time:        parsedTime,
-					TimestampMs: parsedTime.UnixMilli(),
-					MetricType:  metricName,
-					MetricValue: p.Value,
-					ServiceID:   serviceID,
-					NodeID:      nodeID,
-					Tags:        tags,
-				})
+	if exportResp != nil {
+		// Persist aggregated metrics into simulation_summaries.metrics
+		if exportResp.Metrics != nil {
+			summaryParams := &repository.SummaryUpsertParams{
+				RunID:        run.RunID,
+				EngineRunID:  run.EngineRunID,
+				Metrics:      exportResp.Metrics,
+				ScenarioYAML: exportResp.Input.ScenarioYAML,
+				SummaryData:  map[string]any{},
+			}
+			if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
+				log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)
 			}
 		}
 
-		if err := metricsRepo.InsertTimeSeries(ctx, points); err != nil {
-			log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, err)
+		// Persist time-series metrics
+		if len(exportResp.TimeSeries) > 0 {
+			points := make([]repository.TimeSeriesPoint, 0)
+			for _, series := range exportResp.TimeSeries {
+				metricName := series.Metric
+				for _, p := range series.Points {
+					if p.Timestamp == "" {
+						continue
+					}
+					parsedTime, err := time.Parse(time.RFC3339Nano, p.Timestamp)
+					if err != nil {
+						log.Printf("Failed to parse metrics timestamp for run_id=%s metric=%s: %v", run.RunID, metricName, err)
+						continue
+					}
+					labels := p.Labels
+					if labels == nil {
+						labels = map[string]string{}
+					}
+					serviceID := labels["service_id"]
+					if serviceID == "" {
+						if v, ok := labels["service"]; ok {
+							serviceID = v
+						}
+					}
+					nodeID := labels["host_id"]
+					if nodeID == "" {
+						if v, ok := labels["host"]; ok {
+							nodeID = v
+						} else if v, ok := labels["instance"]; ok {
+							nodeID = v
+						}
+					}
+					tags := make(map[string]any, len(labels))
+					for k, v := range labels {
+						tags[k] = v
+					}
+					points = append(points, repository.TimeSeriesPoint{
+						RunID:       run.RunID,
+						Time:        parsedTime,
+						TimestampMs: parsedTime.UnixMilli(),
+						MetricType:  metricName,
+						MetricValue: p.Value,
+						ServiceID:   serviceID,
+						NodeID:      nodeID,
+						Tags:        tags,
+					})
+				}
+			}
+			if err := metricsRepo.InsertTimeSeries(ctx, points); err != nil {
+				log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, err)
+			}
+		}
+
+		// Persist optimization history
+		if len(exportResp.OptimizationHistory) > 0 {
+			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
+				Metadata: map[string]interface{}{
+					"optimization_history": exportResp.OptimizationHistory,
+				},
+			})
 		}
 	}
 
-	// Persist optimization history for online optimization runs, if provided by the simulator export.
-	// This stores the full history on the parent run so the frontend can access it via GET /runs.
-	if len(exportResp.OptimizationHistory) > 0 {
-		_, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
-			Metadata: map[string]interface{}{
-				"optimization_history": exportResp.OptimizationHistory,
-			},
-		})
-		if err != nil {
-			log.Printf("Failed to persist optimization_history for run_id=%s: %v", run.RunID, err)
-		}
-	}
-
-	// Persist candidates for this run.
-	// Primary path: use explicit candidates array from export.
-	// Fallback path: if candidates array is empty, synthesize a single candidate from scenario/metrics.
-	if h.db == nil {
-		log.Printf("DB not configured; skipping candidate persistence for run_id=%s", run.RunID)
-		return
-	}
-
-	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
+	// Ensure simulation_runs row and candidate repo for candidate persistence
 	if _, err := h.db.ExecContext(
 		ctx,
 		`INSERT INTO simulation_runs (run_id) VALUES ($1)
@@ -513,9 +587,57 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 		log.Printf("Failed to ensure simulation_runs row for run_id=%s before candidates insert: %v", run.RunID, err)
 		return
 	}
-
 	candidateRepo := repository.NewCandidateRepository(h.db)
 
+	isBatch := bestRunID != "" || len(topCandidates) > 0
+	if isBatch {
+		ids := uniqueCandidateIDs(bestRunID, topCandidates)
+		records := make([]*repository.CandidateRecord, 0, len(ids))
+		bestScenarioKey := "simulation/" + run.RunID + "/best_scenario.yaml"
+		for _, id := range ids {
+			exp, err := h.engineClient.ExportRun(id)
+			if err != nil {
+				log.Printf("Failed to export candidate for run_id=%s candidate_id=%s: %v", run.RunID, id, err)
+				continue
+			}
+			spec, metricsOut, simWorkload := buildSpecMetricsWorkloadFromScenarioAndMetrics(exp.Input.ScenarioYAML, exp.Metrics)
+			rec := &repository.CandidateRecord{
+				UserID: run.UserID,
+				ProjectPublicID: sql.NullString{
+					String: run.ProjectPublicID,
+					Valid:  run.ProjectPublicID != "",
+				},
+				RunID:       run.RunID,
+				CandidateID: id,
+				Spec:        spec,
+				Metrics:     metricsOut,
+				SimWorkload: simWorkload,
+				Source:      "export",
+			}
+			if id == bestRunID {
+				rec.S3Path = bestScenarioKey
+			} else if h.s3Client != nil && exp.Input.ScenarioYAML != "" {
+				key := "simulation/" + run.RunID + "/candidates/" + id + ".yaml"
+				if err := h.s3Client.PutObject(ctx, key, []byte(exp.Input.ScenarioYAML)); err != nil {
+					log.Printf("Failed to upload candidate YAML to S3 for run_id=%s candidate_id=%s: %v", run.RunID, id, err)
+				} else {
+					rec.S3Path = key
+				}
+			}
+			records = append(records, rec)
+		}
+		if len(records) > 0 {
+			if err := candidateRepo.CreateMany(ctx, records); err != nil {
+				log.Printf("Failed to persist candidates for run_id=%s: %v", run.RunID, err)
+			}
+		}
+		return
+	}
+
+	// Non-batch: use single parent export for candidates
+	if exportResp == nil {
+		return
+	}
 	if len(exportResp.Candidates) > 0 {
 		records := make([]*repository.CandidateRecord, 0, len(exportResp.Candidates))
 		for _, cnd := range exportResp.Candidates {
@@ -551,77 +673,11 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 		}
 	} else {
 		// Fallback: synthesize a single candidate from the main scenario + metrics.
-		spec := map[string]any{
-			"label": "scenario",
-		}
-		// Parse scenario YAML to populate vcpu and memory_gb for the table.
-		if exportResp.Input.ScenarioYAML != "" {
-			var scenario struct {
-				Hosts []struct {
-					ID    string `yaml:"id"`
-					Cores int    `yaml:"cores"`
-				} `yaml:"hosts"`
-				Services []struct {
-					ID       string  `yaml:"id"`
-					Replicas int     `yaml:"replicas"`
-					CPUCores float64 `yaml:"cpu_cores"`
-					MemoryMB float64 `yaml:"memory_mb"`
-				} `yaml:"services"`
-			}
-			if err := yaml.Unmarshal([]byte(exportResp.Input.ScenarioYAML), &scenario); err == nil {
-				var vcpu float64
-				var memoryGB float64
-				if len(scenario.Hosts) > 0 {
-					for _, h := range scenario.Hosts {
-						vcpu += float64(h.Cores)
-					}
-					// Hosts often don't expose memory in this YAML; use 16 GB per host if no services.
-					if len(scenario.Services) > 0 {
-						for _, s := range scenario.Services {
-							memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
-						}
-					} else {
-						memoryGB = float64(len(scenario.Hosts)) * 16
-					}
-				} else {
-					for _, s := range scenario.Services {
-						vcpu += float64(s.Replicas) * s.CPUCores
-						memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
-					}
-				}
-				if vcpu > 0 {
-					spec["vcpu"] = vcpu
-				}
-				if memoryGB > 0 {
-					spec["memory_gb"] = memoryGB
-				}
-			}
-		}
-
-		metrics := map[string]any{}
-		for k, v := range exportResp.Metrics {
-			metrics[k] = v
-		}
-		// Normalize common engine metric names to frontend-expected keys.
-		if v := firstFloatFromKeys(exportResp.Metrics, "cpu_util_pct", "cpu_utilization", "cpu_util"); v != nil {
-			metrics["cpu_util_pct"] = *v
-		}
-		if v := firstFloatFromKeys(exportResp.Metrics, "mem_util_pct", "memory_util_pct", "memory_utilization", "mem_util"); v != nil {
-			metrics["mem_util_pct"] = *v
-		}
-
-		simWorkload := map[string]any{}
-		if v, ok := exportResp.Metrics["throughput_rps"]; ok {
-			// Approximate concurrent users from RPS (simple heuristic).
-			simWorkload["concurrent_users"] = v
-		}
-
-		// Reuse best_scenario.yaml key as the candidate YAML source, if S3 is configured.
+		spec, metricsOut, simWorkload := buildSpecMetricsWorkloadFromScenarioAndMetrics(exportResp.Input.ScenarioYAML, exportResp.Metrics)
 		s3Path := ""
 		if h.s3Client != nil {
 			s3Path = "simulation/" + run.RunID + "/best_scenario.yaml"
 		}
-
 		rec := &repository.CandidateRecord{
 			UserID: run.UserID,
 			ProjectPublicID: sql.NullString{
@@ -631,12 +687,11 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			RunID:       run.RunID,
 			CandidateID: "scenario",
 			Spec:        spec,
-			Metrics:     metrics,
+			Metrics:     metricsOut,
 			SimWorkload: simWorkload,
 			Source:      "scenario_yaml",
 			S3Path:      s3Path,
 		}
-
 		if err := candidateRepo.CreateMany(ctx, []*repository.CandidateRecord{rec}); err != nil {
 			log.Printf("Failed to persist fallback candidate for run_id=%s: %v", run.RunID, err)
 		}
@@ -644,24 +699,32 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 }
 
 // uploadBestScenarioToS3 fetches the best scenario from the simulator export endpoint and uploads it to S3.
+// For batch optimization bestRunID is set and we export that run; otherwise we export run.EngineRunID (normal/online).
 // It then stores the S3 path in the simulation_summaries table for the given run.
-func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.SimulationRun, status string) {
+func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.SimulationRun, status string, bestRunID string) {
 	if h.s3Client == nil || h.db == nil {
 		return
 	}
-	if run == nil || run.EngineRunID == "" || run.RunID == "" {
+	if run == nil || run.RunID == "" {
+		return
+	}
+	exportRunID := run.EngineRunID
+	if bestRunID != "" {
+		exportRunID = bestRunID
+	}
+	if exportRunID == "" {
 		return
 	}
 
-	exportResp, err := h.engineClient.ExportRun(run.EngineRunID)
+	exportResp, err := h.engineClient.ExportRun(exportRunID)
 	if err != nil {
-		log.Printf("Failed to export run from simulator for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
+		log.Printf("Failed to export run from simulator for run_id=%s, export_run_id=%s: %v", run.RunID, exportRunID, err)
 		return
 	}
 
 	scenarioYAML := exportResp.Input.ScenarioYAML
 	if scenarioYAML == "" {
-		log.Printf("Export for run_id=%s, engine_run_id=%s did not contain scenario_yaml", run.RunID, run.EngineRunID)
+		log.Printf("Export for run_id=%s, export_run_id=%s did not contain scenario_yaml", run.RunID, exportRunID)
 		return
 	}
 

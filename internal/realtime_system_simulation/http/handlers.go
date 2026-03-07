@@ -271,6 +271,27 @@ func (h *Handler) CreateRun(c *gin.Context) {
 			})
 			return
 		}
+
+		// Persist scenario_yaml now so GET /runs/:id returns it while the run is still running.
+		if h.db != nil && body.ScenarioYAML != "" {
+			if _, err := h.db.ExecContext(
+				c.Request.Context(),
+				`INSERT INTO simulation_runs (run_id) VALUES ($1) ON CONFLICT (run_id) DO NOTHING`,
+				run.RunID,
+			); err != nil {
+				log.Printf("Failed to ensure simulation_runs row for run_id=%s: %v", run.RunID, err)
+			} else if _, err := h.db.ExecContext(
+				c.Request.Context(),
+				`INSERT INTO simulation_summaries (run_id, engine_run_id, scenario_yaml)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (run_id) DO UPDATE SET
+                   engine_run_id = EXCLUDED.engine_run_id,
+                   scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
+				run.RunID, run.EngineRunID, body.ScenarioYAML,
+			); err != nil {
+				log.Printf("Failed to persist scenario_yaml for run_id=%s: %v", run.RunID, err)
+			}
+		}
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"run": run})
@@ -427,8 +448,44 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 	})
 }
 
+// parseScenarioYAMLHostsServices parses scenario YAML bytes and returns normalized hosts and services for API response.
+// Returns (nil, nil) on parse error or empty content.
+func parseScenarioYAMLHostsServices(data []byte) (hosts []gin.H, services []gin.H) {
+	var scenario struct {
+		Hosts []struct {
+			ID    string `yaml:"id"`
+			Cores int    `yaml:"cores"`
+		} `yaml:"hosts"`
+		Services []struct {
+			ID       string  `yaml:"id"`
+			Replicas int     `yaml:"replicas"`
+			CPUCores float64 `yaml:"cpu_cores"`
+			MemoryMB float64 `yaml:"memory_mb"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &scenario); err != nil {
+		return nil, nil
+	}
+	for _, hst := range scenario.Hosts {
+		hosts = append(hosts, gin.H{
+			"host_id":   hst.ID,
+			"cpu_cores": hst.Cores,
+			"memory_gb": 16,
+		})
+	}
+	for _, svc := range scenario.Services {
+		services = append(services, gin.H{
+			"service_id":  svc.ID,
+			"replicas":    svc.Replicas,
+			"cpu_cores":   svc.CPUCores,
+			"memory_mb":   svc.MemoryMB,
+		})
+	}
+	return hosts, services
+}
+
 // GetRunCandidates returns parsed candidate records for a given simulation run.
-// Response shape is designed to match the agent-facing contract.
+// Response includes candidates array plus optional best_candidate_id and best_candidate (s3_path, hosts, services) when available.
 func (h *Handler) GetRunCandidates(c *gin.Context) {
 	runID := c.Param("id")
 	if runID == "" {
@@ -500,126 +557,47 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user_id":    run.UserID,
-		"project_id": run.ProjectPublicID,
-		"run_id":     run.RunID,
-		"simulation": gin.H{
-			"nodes": nodes,
-		},
-		"candidates": outCandidates,
-	})
-}
-
-// GetBestCandidate returns best-candidate info for a run, including S3 path and normalized hosts/services.
-func (h *Handler) GetBestCandidate(c *gin.Context) {
-	runID := c.Param("id")
-	if runID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
-		return
-	}
-
-	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not configured for simulation summaries"})
-		return
-	}
-
-	// Look up S3 path for best candidate scenario
-	var s3Path sql.NullString
-	err := h.db.QueryRowContext(
+	// Optional: include best-candidate info (s3_path + parsed hosts/services) from simulation_summaries
+	var bestCandidateID string
+	var bestCandidateObj interface{}
+	var bestPath sql.NullString
+	if err := h.db.QueryRowContext(
 		c.Request.Context(),
 		`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = $1`,
 		runID,
-	).Scan(&s3Path)
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "best candidate not available for this run"})
-		return
-	}
-	if err != nil {
-		log.Printf("Failed to query best_candidate_s3_path for run_id=%s: %v", runID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load best candidate info"})
-		return
-	}
-	if !s3Path.Valid || s3Path.String == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "best candidate not available for this run"})
-		return
-	}
-
-	if h.s3Client == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "S3 client not configured; best candidate storage is disabled"})
-		return
-	}
-
-	// Fetch scenario.yaml from S3
-	data, err := h.s3Client.GetObject(c.Request.Context(), s3Path.String)
-	if err != nil {
-		log.Printf("Failed to fetch best candidate scenario from S3 for run_id=%s, key=%s: %v", runID, s3Path.String, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch best candidate scenario from storage"})
-		return
+	).Scan(&bestPath); err == nil && bestPath.Valid && bestPath.String != "" {
+		for _, rec := range records {
+			if rec.S3Path == bestPath.String {
+				bestCandidateID = rec.CandidateID
+				break
+			}
+		}
+		if h.s3Client != nil {
+			if data, err := h.s3Client.GetObject(c.Request.Context(), bestPath.String); err == nil {
+				hosts, services := parseScenarioYAMLHostsServices(data)
+				if hosts != nil || services != nil {
+					bestCandidateObj = gin.H{
+						"s3_path":  bestPath.String,
+						"hosts":    hosts,
+						"services": services,
+					}
+				}
+			}
+		}
 	}
 
-	// Minimal scenario struct just for hosts/services extraction
-	type scenarioYAML struct {
-		Hosts []struct {
-			ID    string `yaml:"id"`
-			Cores int    `yaml:"cores"`
-		} `yaml:"hosts"`
-		Services []struct {
-			ID       string  `yaml:"id"`
-			Replicas int     `yaml:"replicas"`
-			CPUCores float64 `yaml:"cpu_cores"`
-			MemoryMB float64 `yaml:"memory_mb"`
-		} `yaml:"services"`
+	resp := gin.H{
+		"user_id":           run.UserID,
+		"project_id":        run.ProjectPublicID,
+		"run_id":            run.RunID,
+		"simulation":        gin.H{"nodes": nodes},
+		"best_candidate_id": bestCandidateID,
+		"candidates":        outCandidates,
 	}
-
-	var scenario scenarioYAML
-	if err := yaml.Unmarshal(data, &scenario); err != nil {
-		log.Printf("Failed to parse best candidate scenario YAML for run_id=%s: %v", runID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse best candidate scenario"})
-		return
+	if bestCandidateObj != nil {
+		resp["best_candidate"] = bestCandidateObj
 	}
-
-	// Normalize hosts/services for API response
-	type bestCandidateHost struct {
-		HostID   string  `json:"host_id"`
-		CPUCores int     `json:"cpu_cores"`
-		MemoryGB float64 `json:"memory_gb"`
-	}
-	type bestCandidateService struct {
-		ServiceID string  `json:"service_id"`
-		Replicas  int     `json:"replicas"`
-		CPUCores  float64 `json:"cpu_cores"`
-		MemoryMB  float64 `json:"memory_mb"`
-	}
-
-	hosts := make([]bestCandidateHost, 0, len(scenario.Hosts))
-	for _, hst := range scenario.Hosts {
-		hosts = append(hosts, bestCandidateHost{
-			HostID:   hst.ID,
-			CPUCores: hst.Cores,
-			// For now, memory_gb is fixed at 16 as per engine defaults; can be extended later.
-			MemoryGB: 16,
-		})
-	}
-
-	services := make([]bestCandidateService, 0, len(scenario.Services))
-	for _, svc := range scenario.Services {
-		services = append(services, bestCandidateService{
-			ServiceID: svc.ID,
-			Replicas:  svc.Replicas,
-			CPUCores:  svc.CPUCores,
-			MemoryMB:  svc.MemoryMB,
-		})
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"run_id": runID,
-		"best_candidate": gin.H{
-			"s3_path":  s3Path.String,
-			"hosts":    hosts,
-			"services": services,
-		},
-	})
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetRunByEngineID retrieves a simulation run by engine run ID
