@@ -177,6 +177,36 @@ func ensureDatabase(spec *parser.YSpec, name string) *parser.YService {
 	return &spec.Services[len(spec.Services)-1]
 }
 
+// removeService removes a service/database node from spec.Services by name.
+func removeService(spec *parser.YSpec, name string) bool {
+	if spec == nil {
+		return false
+	}
+	n := cleanRef(name)
+	for i := range spec.Services {
+		if eqRef(spec.Services[i].Name, n) {
+			spec.Services = append(spec.Services[:i], spec.Services[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// removeDatabase removes a database node from spec.Databases by name.
+func removeDatabase(spec *parser.YSpec, name string) bool {
+	if spec == nil || len(spec.Databases) == 0 {
+		return false
+	}
+	n := cleanRef(name)
+	for i := range spec.Databases {
+		if eqRef(spec.Databases[i].Name, n) {
+			spec.Databases = append(spec.Databases[:i], spec.Databases[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 func uniqueServiceName(spec *parser.YSpec, base string) string {
 	base = cleanRef(base)
 	if base == "" {

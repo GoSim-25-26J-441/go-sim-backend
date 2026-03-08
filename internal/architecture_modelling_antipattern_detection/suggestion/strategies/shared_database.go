@@ -65,6 +65,10 @@ func (sharedDatabase) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Dete
 
 	if changed {
 		notes = append(notes, fmt.Sprintf("Split shared DB %s into per-service DB nodes.", cleanRef(db)))
+		// Remove the original shared database so it no longer appears as an orphan on the canvas
+		if removeService(spec, db) || removeDatabase(spec, db) {
+			notes = append(notes, fmt.Sprintf("Removed orphaned shared DB %s.", cleanRef(db)))
+		}
 	}
 	return changed, notes
 }
