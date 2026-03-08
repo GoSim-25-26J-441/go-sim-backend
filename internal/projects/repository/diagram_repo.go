@@ -250,7 +250,7 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	return string(b), nil
 }
 
-// generateYAMLFromSpecSummary converts the flat spec_summary JSON into a richer YAML structure.
+// generateYAMLFromSpecSummary converts the flat spec_summary JSON into the full YAML structure.
 // Input spec_summary JSON (what we store in spec_summary column):
 //
 //	{
@@ -259,20 +259,9 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 //	  "dependencies": ["user-1->service-1(rest)"]
 //	}
 //
-// Output YAML (what we store in yaml_content):
-//
-//	services:
-//	  - name: user-1
-//	    type: service
-//	  - name: service-1
-//	    type: service
-//	datastores:
-//	  - db-1
-//	dependencies:
-//	  - from: user-1
-//	    to: service-1
-//	    kind: rest
-//	    sync: true
+// Output YAML (what we store in yaml_content): apis, configs, conflicts, constraints,
+// datastores: [], dependencies, deploymentHints, gaps, metadata, services (including
+// type: database for former datastores), topics, trace.
 func generateYAMLFromSpecSummary(specText string) (string, error) {
 	if strings.TrimSpace(specText) == "" {
 		return "", nil
@@ -290,7 +279,6 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		return "", err
 	}
 
-	// YAML representation types.
 	type yamlService struct {
 		Name string `yaml:"name"`
 		Type string `yaml:"type"`
@@ -301,29 +289,59 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		Kind string `yaml:"kind"`
 		Sync bool   `yaml:"sync"`
 	}
-	type yamlSpec struct {
-		Services     []yamlService    `yaml:"services"`
-		Datastores   []string         `yaml:"datastores"`
-		Dependencies []yamlDependency `yaml:"dependencies"`
+	type yamlAPI struct {
+		Name     string `yaml:"name"`
+		Protocol string `yaml:"protocol"`
 	}
 
-	var ys yamlSpec
+	// Full YAML structure: databases go under services with type: database; datastores stays empty.
+	type fullYAMLSpec struct {
+		APIs            []yamlAPI        `yaml:"apis"`
+		Configs          map[string]any       `yaml:"configs"`
+		Conflicts        []any                `yaml:"conflicts"`
+		Constraints      map[string]any       `yaml:"constraints"`
+		Datastores       []any                `yaml:"datastores"`
+		Dependencies     []yamlDependency     `yaml:"dependencies"`
+		DeploymentHints  map[string]any      `yaml:"deploymentHints"`
+		Gaps             []any                `yaml:"gaps"`
+		Metadata         map[string]any       `yaml:"metadata"`
+		Services         []yamlService        `yaml:"services"`
+		Topics           []any                `yaml:"topics"`
+		Trace            []any                `yaml:"trace"`
+	}
 
-	// Map services: treat all as type "service" for now.
+	ys := fullYAMLSpec{
+		APIs:            []yamlAPI{{Name: "REST", Protocol: "rest"}},
+		Configs:         map[string]any{"slo": map[string]any{"target_rps": 180}},
+		Conflicts:       []any{},
+		Constraints:     map[string]any{},
+		Datastores:      []any{},
+		Dependencies:    nil,
+		DeploymentHints: map[string]any{},
+		Gaps:            []any{},
+		Metadata:        map[string]any{"generator": "sample", "schemaVersion": "0.1.0"},
+		Services:        nil,
+		Topics:          []any{},
+		Trace:           []any{},
+	}
+
+	// Services first (type: service), then former datastores (type: database).
 	for _, s := range ss.Services {
 		name := strings.TrimSpace(s)
 		if name == "" {
 			continue
 		}
-		ys.Services = append(ys.Services, yamlService{
-			Name: name,
-			Type: "service",
-		})
+		ys.Services = append(ys.Services, yamlService{Name: name, Type: "service"})
+	}
+	for _, d := range ss.Datastores {
+		name := strings.TrimSpace(d)
+		if name == "" {
+			continue
+		}
+		ys.Services = append(ys.Services, yamlService{Name: name, Type: "database"})
 	}
 
-	ys.Datastores = append(ys.Datastores, ss.Datastores...)
-
-	// Parse dependencies strings of form "from->to(kind)".
+	// Parse dependencies "from->to(kind)".
 	for _, d := range ss.Dependencies {
 		d = strings.TrimSpace(d)
 		if d == "" {
@@ -332,14 +350,10 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		from := ""
 		to := ""
 		kind := "rest"
-
-		// Split "from->to(kind)"
 		parts := strings.SplitN(d, "->", 2)
 		if len(parts) == 2 {
 			from = strings.TrimSpace(parts[0])
 			right := strings.TrimSpace(parts[1])
-
-			// Extract kind inside parentheses, if present.
 			if idx := strings.Index(right, "("); idx >= 0 {
 				to = strings.TrimSpace(right[:idx])
 				if j := strings.Index(right[idx+1:], ")"); j >= 0 {
