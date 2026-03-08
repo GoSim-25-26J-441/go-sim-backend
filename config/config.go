@@ -92,15 +92,15 @@ type S3Config struct {
 }
 
 type Config struct {
-	Server    ServerConfig
-	Database  DatabaseConfig
-	App       AppConfig
-	Auth      AuthConfig
-	Upstreams UpstreamsConfig
-	LLM       LLMConfig
-	RAG       RAGConfig
-	Firebase  FirebaseConfig
-	Redis              RedisConfig
+	Server              ServerConfig
+	Database            DatabaseConfig
+	App                 AppConfig
+	Auth                AuthConfig
+	Upstreams           UpstreamsConfig
+	LLM                 LLMConfig
+	RAG                 RAGConfig
+	Firebase            FirebaseConfig
+	Redis               RedisConfig
 	SimulationCallbacks SimulationCallbacksConfig
 	S3                  S3Config
 }
@@ -128,8 +128,8 @@ func Load() (*Config, error) {
 			Version:     getEnv("APP_VERSION", "1.0.0"),
 		},
 		Auth: AuthConfig{
-			LinkByEmail:                         getEnvAsBool("AUTH_LINK_BY_EMAIL", false),
-			RequireEmailVerifiedForLinkByEmail:  getEnvAsBool("AUTH_LINK_REQUIRE_EMAIL_VERIFIED", true),
+			LinkByEmail:                        getEnvAsBool("AUTH_LINK_BY_EMAIL", false),
+			RequireEmailVerifiedForLinkByEmail: getEnvAsBool("AUTH_LINK_REQUIRE_EMAIL_VERIFIED", true),
 		},
 		Upstreams: UpstreamsConfig{
 			LLMSvcURL:           getEnv("LLM_SVC_URL", "http://localhost:8081"),
