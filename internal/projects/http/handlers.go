@@ -81,6 +81,10 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 
+	if h.OnProjectDeleted != nil {
+		h.OnProjectDeleted(userID, publicID)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

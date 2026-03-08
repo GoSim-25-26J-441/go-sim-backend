@@ -388,6 +388,24 @@ func (r *Repo) DeleteByIDForUserChat(id, userID, chatID string) (bool, error) {
 	return n > 0, nil
 }
 
+// DeleteByProject deletes all AMG-APD versions for the given user and project (e.g. when project is deleted).
+func (r *Repo) DeleteByProject(userID, projectPublicID string) (int64, error) {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		return 0, nil
+	}
+	res, err := r.db.Exec(`
+		DELETE FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
+	`, userID, projectPublicID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // VersionSummary is a lightweight summary for list responses.
 type VersionSummary struct {
 	ID            string    `json:"id"`
@@ -477,6 +495,25 @@ func (r *Repo) GetLatestByUserProject(userID, projectPublicID string) (*VersionR
 // row (any source) for the given user and project that has non-empty yaml_content.
 // Used when no AMG-APD version exists yet, to run analysis from project/diagram YAML.
 func (r *Repo) GetLatestYAMLByUserProject(userID, projectPublicID string) (yamlContent, title string, err error) {
+	id, yaml, t, err := r.GetLatestDiagramRowByUserProject(userID, projectPublicID)
+	if err != nil || id == "" {
+		return "", "", err
+	}
+	_ = id
+	if yaml != "" {
+		if t != "" {
+			title = t
+		} else {
+			title = "Uploaded"
+		}
+		return yaml, title, nil
+	}
+	return "", "", nil
+}
+
+// GetLatestDiagramRowByUserProject returns id, yaml_content, title of the latest diagram_versions
+// row (any source) for the given user and project that has non-empty yaml_content.
+func (r *Repo) GetLatestDiagramRowByUserProject(userID, projectPublicID string) (id, yamlContent, title string, err error) {
 	if userID == "" {
 		userID = DefaultUserID
 	}
@@ -485,27 +522,28 @@ func (r *Repo) GetLatestYAMLByUserProject(userID, projectPublicID string) (yamlC
 	}
 	var yaml, t sql.NullString
 	err = r.db.QueryRow(`
-		SELECT yaml_content, title
+		SELECT id, yaml_content, title
 		FROM diagram_versions
 		WHERE user_firebase_uid = $1 AND project_public_id = $2
 		  AND yaml_content IS NOT NULL AND trim(yaml_content) != ''
 		ORDER BY version_number DESC
 		LIMIT 1
-	`, userID, projectPublicID).Scan(&yaml, &t)
+	`, userID, projectPublicID).Scan(&id, &yaml, &t)
 	if err == sql.ErrNoRows {
-		return "", "", nil
+		return "", "", "", nil
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if yaml.Valid && yaml.String != "" {
-		title = "Uploaded"
 		if t.Valid && t.String != "" {
 			title = t.String
+		} else {
+			title = "Uploaded"
 		}
-		return yaml.String, title, nil
+		return id, yaml.String, title, nil
 	}
-	return "", "", nil
+	return "", "", "", nil
 }
 
 // UpdateAnalysisByID updates the stored analysis fields for an existing AMG-APD version row.
@@ -546,6 +584,83 @@ func (r *Repo) UpdateAnalysisByID(id, userID, projectPublicID string, graphJSON,
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// UpdateDiagramVersionAnalysisByID updates diagram_json, dot_content, and source to 'amg_apd'
+// for the given diagram_versions row (any source). Used when "Check Anti-Patterns" from chat
+// updates the current version in place instead of creating a new one.
+func (r *Repo) UpdateDiagramVersionAnalysisByID(id, userID, projectPublicID string, graphJSON, detectionsJSON []byte, dotContent string) error {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+	env, err := buildDiagramEnvelope(graphJSON, detectionsJSON)
+	if err != nil {
+		return err
+	}
+	diagramJSON, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	res, err := r.db.Exec(`
+		UPDATE diagram_versions
+		SET diagram_json = $1, dot_content = $2, source = 'amg_apd'
+		WHERE id = $3 AND user_firebase_uid = $4 AND project_public_id = $5
+	`, diagramJSON, dotContent, id, userID, projectPublicID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// GetByIDForUserProject returns a diagram_versions row by id and user+project (any source).
+// Used by update-version-analysis to load the row to update.
+func (r *Repo) GetByIDForUserProject(id, userID, projectPublicID string) (*VersionRow, error) {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+	row := &VersionRow{ID: id}
+	var diagramJSON []byte
+	var dotContent sql.NullString
+	err := r.db.QueryRow(`
+		SELECT user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		FROM diagram_versions
+		WHERE id = $1 AND user_firebase_uid = $2 AND project_public_id = $3
+	`, id, userID, projectPublicID).Scan(&row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
+		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(diagramJSON) > 0 {
+		var payload struct {
+			Graph      json.RawMessage `json:"graph,omitempty"`
+			Detections json.RawMessage `json:"detections,omitempty"`
+		}
+		if err := json.Unmarshal(diagramJSON, &payload); err == nil {
+			if len(payload.Graph) > 0 {
+				row.GraphJSON = payload.Graph
+			}
+			if len(payload.Detections) > 0 {
+				row.DetectionsJSON = payload.Detections
+			}
+		}
+	}
+	if dotContent.Valid {
+		row.DOTContent = dotContent.String
+	}
+	return row, nil
 }
 
 // ParseGraphAndDetections deserializes graph and detections from diagram_json (envelope) into the given pointers.

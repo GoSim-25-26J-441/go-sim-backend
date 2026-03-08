@@ -9,14 +9,17 @@ import (
 )
 
 // Register mounts AMG-APD routes. Pass db for versioning/storage (uses Postgres from .env).
-// user_id and chat_id are read from headers X-User-Id, X-Chat-Id (default TestUser123, TestChat123).
-func Register(r *gin.Engine, db *sql.DB) {
+// versionRepo can be nil to create one from db; pass a repo when sharing with other handlers (e.g. project delete cascade).
+func Register(r *gin.Engine, db *sql.DB, versionRepo *amg_apd_version.Repo) {
+	if versionRepo == nil {
+		versionRepo = amg_apd_version.NewRepo(db)
+	}
 	v1 := r.Group("/api/v1/amg-apd")
-	versionRepo := amg_apd_version.NewRepo(db)
 	h := NewHandlers(versionRepo)
 
 	v1.POST("/analyze-raw", h.AnalyzeRaw)
 	v1.POST("/analyze", h.AnalyzeUpload)
+	v1.POST("/update-version-analysis", h.UpdateVersionAnalysis)
 
 	v1.GET("/versions", h.ListVersions)
 	v1.GET("/versions/compare", h.CompareVersions)

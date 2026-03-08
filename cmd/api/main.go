@@ -31,6 +31,7 @@ import (
 	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
+	amgapdversion "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/amg_apd_version"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 	s3storage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/s3"
 
@@ -124,7 +125,7 @@ func main() {
 
 	scheduler := cronjob.NewScheduler()
 	scheduler.Start()
-	amgapd.Register(router, db)
+	amgapd.Register(router, db, nil)
 
 	api := router.Group("/api/v1")
 
@@ -157,6 +158,7 @@ func main() {
 
 		projectRepo := projectrepo.NewProjectRepository(db)
 		diagramRepo := projectrepo.NewDiagramRepository(db)
+		amgApdVersionRepo := amgapdversion.NewRepo(db)
 
 		chatRepo := chatrepo.NewChatRepository(db)
 		llmClient := chat.NewLLMClient(cfg.Upstreams.LLMSvcURL, cfg.Upstreams.LLMAPIKey)
@@ -166,6 +168,9 @@ func main() {
 		diagramService := projectservice.NewDiagramService(diagramRepo)
 
 		projectHandler := projecthttp.New(projectService, chatService, diagramService, s3Client)
+		projectHandler.OnProjectDeleted = func(userID, projectPublicID string) {
+			_, _ = amgApdVersionRepo.DeleteByProject(userID, projectPublicID)
+		}
 		projectHandler.Register(projectsGroup)
 
 		log.Printf("Projects endpoints registered at /api/v1/projects (Firebase auth required)")
