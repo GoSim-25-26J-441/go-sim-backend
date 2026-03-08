@@ -79,11 +79,13 @@ func TestSimulationEngineClient_GetRun(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"run": map[string]interface{}{
-				"id":                 "run-123",
-				"status":             "RUN_STATUS_RUNNING",
-				"created_at_unix_ms": 1705312200000,
-				"started_at_unix_ms": 1705312201000,
-				"ended_at_unix_ms":   0,
+				"id":                     "run-123",
+				"status":                 "RUN_STATUS_RUNNING",
+				"created_at_unix_ms":     1705312200000,
+				"started_at_unix_ms":    1705312201000,
+				"ended_at_unix_ms":      0,
+				"real_duration_ms":      5000,
+				"simulation_duration_ms": 5000,
 			},
 		})
 	}))
@@ -96,6 +98,39 @@ func TestSimulationEngineClient_GetRun(t *testing.T) {
 	assert.Equal(t, "run-123", resp.Run.ID)
 	assert.Equal(t, "RUN_STATUS_RUNNING", resp.Run.Status)
 	assert.Equal(t, int64(1705312201000), resp.Run.StartedAt)
+	assert.Equal(t, int64(5000), resp.Run.RealDurationMs)
+	assert.Equal(t, int64(5000), resp.Run.SimulationDurationMs)
+}
+
+func TestSimulationEngineClient_ExportRun_WithRunDurations(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/v1/runs/run-123/export", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"run": map[string]interface{}{
+				"real_duration_ms":       5000,
+				"simulation_duration_ms": 5000,
+			},
+			"input": map[string]interface{}{
+				"scenario_yaml": "hosts: []",
+				"duration_ms":   5000,
+			},
+			"metrics": map[string]interface{}{"total_requests": float64(100)},
+		})
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	resp, err := client.ExportRun("run-123")
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Run, "export run object should be set")
+	assert.Equal(t, int64(5000), resp.Run.RealDurationMs)
+	assert.Equal(t, int64(5000), resp.Run.SimulationDurationMs)
+	assert.Equal(t, "hosts: []", resp.Input.ScenarioYAML)
+	assert.Equal(t, int64(5000), resp.Input.DurationMs)
 }
 
 func TestSimulationEngineClient_GetRun_404(t *testing.T) {

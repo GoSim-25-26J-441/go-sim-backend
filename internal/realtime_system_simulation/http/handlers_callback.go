@@ -14,6 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// persistenceTimeout is the max time for callback persistence (export fetch + DB + S3).
+// Use a detached context so client disconnect does not cancel the work.
+const persistenceTimeout = 30 * time.Second
+
 // engineRunCallbackBody is the payload from the simulation engine. The engine does NOT send
 // scenario YAML in the callback; it sends only run IDs (best_run_id, top_candidates). The backend
 // must call GET /v1/runs/{id}/export for each ID to obtain input.scenario_yaml.
@@ -162,8 +166,10 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	}
 
 	// Terminal state: same as EngineRunCallbackByID — fetch via export and persist synchronously.
+	// Use a detached context with timeout so client disconnect does not cancel DB/S3 work.
 	if backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning && (h.db != nil || h.s3Client != nil) {
-		ctx := c.Request.Context()
+		ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+		defer cancel()
 		h.persistRunMetrics(ctx, run, body.BestRunID, body.TopCandidates)
 		isBatch := body.BestRunID != "" || len(body.TopCandidates) > 0
 		if h.s3Client != nil && !isBatch {
@@ -318,8 +324,10 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 
 	// Terminal state: fetch scenario YAML via GET /v1/runs/{id}/export (engine does not send YAML in callback)
 	// and persist candidates + best scenario synchronously so the response is sent after data is stored.
+	// Use a detached context with timeout so client disconnect does not cancel DB/S3 work.
 	if backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning && (h.db != nil || h.s3Client != nil) {
-		ctx := c.Request.Context()
+		ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+		defer cancel()
 		h.persistRunMetrics(ctx, run, body.BestRunID, body.TopCandidates)
 		isBatch := body.BestRunID != "" || len(body.TopCandidates) > 0
 		if h.s3Client != nil && !isBatch {
@@ -516,12 +524,30 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 	if exportResp != nil {
 		// Persist aggregated metrics into simulation_summaries.metrics
 		if exportResp.Metrics != nil {
+			var totalDurationMs *int64
+			if exportResp.Run != nil && exportResp.Run.SimulationDurationMs > 0 {
+				totalDurationMs = &exportResp.Run.SimulationDurationMs
+			} else if exportResp.Run != nil && exportResp.Run.RealDurationMs > 0 {
+				totalDurationMs = &exportResp.Run.RealDurationMs
+			} else if exportResp.Input.DurationMs > 0 {
+				totalDurationMs = &exportResp.Input.DurationMs
+			}
+			summaryData := map[string]any{}
+			if exportResp.Run != nil {
+				if exportResp.Run.RealDurationMs > 0 {
+					summaryData["real_duration_ms"] = exportResp.Run.RealDurationMs
+				}
+				if exportResp.Run.SimulationDurationMs > 0 {
+					summaryData["simulation_duration_ms"] = exportResp.Run.SimulationDurationMs
+				}
+			}
 			summaryParams := &repository.SummaryUpsertParams{
-				RunID:        run.RunID,
-				EngineRunID:  run.EngineRunID,
-				Metrics:      exportResp.Metrics,
-				ScenarioYAML: exportResp.Input.ScenarioYAML,
-				SummaryData:  map[string]any{},
+				RunID:           run.RunID,
+				EngineRunID:     run.EngineRunID,
+				Metrics:        exportResp.Metrics,
+				ScenarioYAML:   exportResp.Input.ScenarioYAML,
+				SummaryData:     summaryData,
+				TotalDurationMs: totalDurationMs,
 			}
 			if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
 				log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)

@@ -2,11 +2,14 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"testing"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,22 +35,77 @@ func TestMetricsRepository_UpsertSummary_CreatesSimulationRunsAndSummary(t *test
 			driver.Value(engineRunID),
 			sqlmock.AnyArg(), // metrics JSON
 			sqlmock.AnyArg(), // summary_data JSON
+			driver.Value(""), // scenario_yaml
+			nil,               // total_duration_ms
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err = repo.UpsertSummary(context.Background(), &SummaryUpsertParams{
-		RunID:       runID,
-		EngineRunID: engineRunID,
+		RunID:        runID,
+		EngineRunID:  engineRunID,
 		Metrics: map[string]any{
 			"request_latency_ms": map[string]any{
 				"p95": 120.0,
 			},
 		},
-		SummaryData: map[string]any{
-			"note": "test summary",
-		},
+		SummaryData:  map[string]any{"note": "test summary"},
+		ScenarioYAML: "",
 	})
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMetricsRepository_UpsertSummary_PersistsTotalDurationMs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := NewMetricsRepository(db)
+	runID := "run-456"
+	engineRunID := "engine-456"
+	totalDurationMs := int64(5000)
+
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value(""),
+			driver.Value(totalDurationMs),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err = repo.UpsertSummary(context.Background(), &SummaryUpsertParams{
+		RunID:           runID,
+		EngineRunID:     engineRunID,
+		Metrics:         map[string]any{"n": 1},
+		SummaryData:     map[string]any{},
+		ScenarioYAML:    "",
+		TotalDurationMs: &totalDurationMs,
+	})
+	require.NoError(t, err)
+
+	metricsJSON, _ := json.Marshal(map[string]any{"n": 1})
+	summaryJSON, _ := json.Marshal(map[string]any{})
+	mock.ExpectQuery(`SELECT run_id, engine_run_id, metrics, summary_data`).
+		WithArgs(runID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"run_id", "engine_run_id", "metrics", "summary_data",
+			"total_requests", "total_errors", "total_duration_ms",
+		}).AddRow(
+			runID, engineRunID, metricsJSON, summaryJSON,
+			sql.NullInt64{}, sql.NullInt64{}, sql.NullInt64{Int64: totalDurationMs, Valid: true},
+		))
+
+	summary, err := repo.GetSummaryByRunID(context.Background(), runID)
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	assert.True(t, summary.TotalDurationMs.Valid)
+	assert.Equal(t, totalDurationMs, summary.TotalDurationMs.Int64)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -86,6 +144,9 @@ func TestMetricsRepository_InsertTimeSeries_InsertsBatch(t *testing.T) {
 		},
 	}
 
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value("run-123")).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectBegin()
 	mock.ExpectPrepare(`INSERT INTO simulation_metrics_timeseries`)
 	mock.ExpectExec(`INSERT INTO simulation_metrics_timeseries`).

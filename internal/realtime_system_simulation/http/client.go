@@ -132,12 +132,14 @@ func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, du
 // GetRunResponse represents the response from getting a run
 type GetRunResponse struct {
 	Run struct {
-		ID        string `json:"id"`
-		Status    string `json:"status"`
-		CreatedAt int64  `json:"created_at_unix_ms"`
-		StartedAt int64  `json:"started_at_unix_ms"`
-		EndedAt   int64  `json:"ended_at_unix_ms"`
-		Error     string `json:"error,omitempty"`
+		ID                  string `json:"id"`
+		Status              string `json:"status"`
+		CreatedAt           int64  `json:"created_at_unix_ms"`
+		StartedAt           int64  `json:"started_at_unix_ms"`
+		EndedAt             int64  `json:"ended_at_unix_ms"`
+		Error               string `json:"error,omitempty"`
+		RealDurationMs      int64  `json:"real_duration_ms,omitempty"`
+		SimulationDurationMs int64  `json:"simulation_duration_ms,omitempty"`
 	} `json:"run"`
 }
 
@@ -154,9 +156,17 @@ type OptimizationStep struct {
 	Extra          map[string]interface{} `json:"-"` // reserved for future extension if needed
 }
 
+// ExportRunRun is the run object in the simulator's export response (convertRunToJSON).
+// It includes duration fields when the run has ended and/or input had duration_ms.
+type ExportRunRun struct {
+	RealDurationMs       int64 `json:"real_duration_ms,omitempty"`
+	SimulationDurationMs int64 `json:"simulation_duration_ms,omitempty"`
+}
+
 // ExportRunResponse represents the export data from the simulator.
 // It contains the original input, aggregated metrics, and optional time-series data.
 type ExportRunResponse struct {
+	Run  *ExportRunRun `json:"run,omitempty"`
 	Input struct {
 		ScenarioYAML string `json:"scenario_yaml"`
 		DurationMs   int64  `json:"duration_ms,omitempty"`
