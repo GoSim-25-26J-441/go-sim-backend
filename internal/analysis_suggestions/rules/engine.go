@@ -283,6 +283,7 @@ LIMIT 1;
 		var designOnlyID string
 		var existingReqJSON []byte
 		err = db.QueryRowContext(ctx, checkDesignOnlySQL, userID, projectIDVal).Scan(&designOnlyID, &existingReqJSON)
+		_ = designOnlyID
 		if err != nil && err != sql.ErrNoRows {
 			return "", fmt.Errorf("db lookup (design-only) failed: %v", err)
 		}
@@ -296,19 +297,13 @@ LIMIT 1;
 				reqObj.Design = effectiveDesign
 				reqJSON, _ = json.Marshal(reqObj)
 			}
-
-			const updateDesignOnlySQL = `
-UPDATE request_responses
-SET run_id = $1,
-    request = $2::jsonb,
-    response = $3::jsonb,
-    best_candidate = $4::jsonb,
-    created_at = now()
-WHERE id = $5
+			const insertRunSQL = `
+INSERT INTO request_responses (user_id, project_id, run_id, request, response, best_candidate, created_at)
+VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, now())
 RETURNING id;
 `
-			if err := db.QueryRowContext(ctx, updateDesignOnlySQL, runIDVal, string(reqJSON), string(respJSON), string(bestJSON), designOnlyID).Scan(&id); err != nil {
-				return "", fmt.Errorf("db update (design-only) failed: %v", err)
+			if err := db.QueryRowContext(ctx, insertRunSQL, userID, projectIDVal, runIDVal, string(reqJSON), string(respJSON), string(bestJSON)).Scan(&id); err != nil {
+				return "", fmt.Errorf("db insert (run) failed: %v", err)
 			}
 			return id, nil
 		}
