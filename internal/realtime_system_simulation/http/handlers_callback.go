@@ -16,7 +16,8 @@ import (
 
 // persistenceTimeout is the max time for callback persistence (export fetch + DB + S3).
 // Use a detached context so client disconnect does not cancel the work.
-const persistenceTimeout = 30 * time.Second
+// Should be >= engine callback timeout (e.g. 60s) plus buffer for slow exports/S3.
+const persistenceTimeout = 90 * time.Second
 
 // engineRunCallbackBody is the payload from the simulation engine. The engine does NOT send
 // scenario YAML in the callback; it sends only run IDs (best_run_id, top_candidates). The backend
