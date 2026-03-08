@@ -57,7 +57,6 @@ SELECT 1
 FROM request_responses
 WHERE user_id = $1
   AND project_id IS NOT DISTINCT FROM $2
-  AND run_id IS NULL
 LIMIT 1;
 `
 	var one int
@@ -83,7 +82,6 @@ SELECT request
 FROM request_responses
 WHERE user_id = $1
   AND project_id IS NOT DISTINCT FROM $2
-  AND run_id IS NULL
 ORDER BY created_at DESC
 LIMIT 1;
 `
@@ -101,6 +99,29 @@ LIMIT 1;
 	}
 
 	return stored.Design, nil
+}
+
+func ensureDesignForProject(ctx context.Context, db *sql.DB, userID, projectID string, design rules.DesignInput) error {
+	reqEnvelope := map[string]any{
+		"design":     design,
+		"simulation": map[string]any{"nodes": 0},
+		"candidates": []any{},
+	}
+	reqJSON, err := json.Marshal(reqEnvelope)
+	if err != nil {
+		return err
+	}
+	projectIDVal := interface{}(projectID)
+	if projectID == "" {
+		projectIDVal = nil
+	}
+	const insertSQL = `
+INSERT INTO request_responses (user_id, project_id, run_id, request, response, best_candidate, created_at)
+VALUES ($1, $2, NULL, $3::jsonb, '[]'::jsonb, '{}'::jsonb, now())
+RETURNING id;
+`
+	var id string
+	return db.QueryRowContext(ctx, insertSQL, userID, projectIDVal, string(reqJSON)).Scan(&id)
 }
 
 func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
@@ -123,11 +144,21 @@ func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify design: " + err.Error()})
 			return
 		}
-		if !hasDesign {
+		if !hasDesign && isZeroDesign(req.Design) {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "no design found for this project; call POST /analysis-suggestions/design with this project_id first",
+				"error": "no design found for this project; call POST /analysis-suggestions/design with this project_id first, or send design in the suggest body",
 			})
 			return
+		}
+		if !hasDesign && !isZeroDesign(req.Design) {
+			ctxEnsure, cancelEnsure := context.WithTimeout(c.Request.Context(), 5*time.Second)
+			if err := ensureDesignForProject(ctxEnsure, h.db, req.UserID, req.ProjectID, req.Design); err != nil {
+				cancelEnsure()
+				log.Printf("ensure design for project: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store design: " + err.Error()})
+				return
+			}
+			cancelEnsure()
 		}
 	}
 
