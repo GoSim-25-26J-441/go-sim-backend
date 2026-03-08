@@ -57,7 +57,6 @@ SELECT 1
 FROM request_responses
 WHERE user_id = $1
   AND project_id IS NOT DISTINCT FROM $2
-  AND run_id IS NULL
 LIMIT 1;
 `
 	var one int
@@ -83,7 +82,6 @@ SELECT request
 FROM request_responses
 WHERE user_id = $1
   AND project_id IS NOT DISTINCT FROM $2
-  AND run_id IS NULL
 ORDER BY created_at DESC
 LIMIT 1;
 `
