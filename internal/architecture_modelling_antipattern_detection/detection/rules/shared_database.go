@@ -31,13 +31,24 @@ func (s sharedDB) Detect(g *domain.Graph) ([]domain.Detection, error) {
 		return ok && n.Kind == domain.NodeService
 	}
 
+	// Consider both NodeService (db-like name) and NodeDB as the "database" node.
+	isDBNode := func(id string, n *domain.Node) bool {
+		if n == nil {
+			return false
+		}
+		if n.Kind == domain.NodeDB {
+			return true
+		}
+		if n.Kind == domain.NodeService && isDBName(id) {
+			return true
+		}
+		return false
+	}
+
 	var out []domain.Detection
 
 	for id, n := range g.Nodes {
-		if n.Kind != domain.NodeService {
-			continue
-		}
-		if !isDBName(id) {
+		if !isDBNode(id, n) {
 			continue
 		}
 

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
 )
 
 const (
@@ -31,6 +33,144 @@ type VersionRow struct {
 // Repo persists AMG-APD analyses for versioning and compare.
 type Repo struct {
 	db *sql.DB
+}
+
+// diagramService represents one entry in the "services" array in diagram_json.
+type diagramService struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// diagramDatastore represents one entry in the "datastores" array in diagram_json.
+type diagramDatastore struct {
+	Name string `json:"name"`
+}
+
+// diagramTopic represents one entry in the "topics" array in diagram_json.
+type diagramTopic struct {
+	Name string `json:"name"`
+}
+
+// diagramDependency represents one entry in the "dependencies" array in diagram_json.
+type diagramDependency struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Kind  string `json:"kind"`
+	Sync  bool   `json:"sync"`
+	Label string `json:"label"`
+}
+
+// diagramEnvelope is the full JSON shape stored in diagram_versions.diagram_json.
+// It keeps the original graph/detections fields and adds the requested structure.
+type diagramEnvelope struct {
+	Graph        json.RawMessage   `json:"graph,omitempty"`
+	Detections   json.RawMessage   `json:"detections,omitempty"`
+	Services     []diagramService  `json:"services"`
+	Datastores   []diagramDatastore `json:"datastores"`
+	Topics       []diagramTopic    `json:"topics"`
+	Dependencies []diagramDependency `json:"dependencies"`
+}
+
+// buildDiagramEnvelope converts the analyzed graph JSON plus detections JSON into the
+// combined envelope we persist in diagram_versions.diagram_json.
+func buildDiagramEnvelope(graphJSON, detectionsJSON []byte) (*diagramEnvelope, error) {
+	env := &diagramEnvelope{
+		Services:     []diagramService{},
+		Datastores:   []diagramDatastore{},
+		Topics:       []diagramTopic{},
+		Dependencies: []diagramDependency{},
+	}
+
+	if len(graphJSON) > 0 {
+		env.Graph = json.RawMessage(graphJSON)
+	}
+	if len(detectionsJSON) > 0 {
+		env.Detections = json.RawMessage(detectionsJSON)
+	}
+
+	// If there's no graph JSON, we still return the envelope with empty arrays
+	// so the JSON structure is always present.
+	if len(graphJSON) == 0 {
+		return env, nil
+	}
+
+	var g domain.Graph
+	if err := json.Unmarshal(graphJSON, &g); err != nil {
+		// If the stored graph cannot be parsed, fall back to just graph/detections.
+		return env, nil
+	}
+
+	// Map nodes → services / datastores / topics.
+	for _, n := range g.Nodes {
+		if n == nil {
+			continue
+		}
+		switch n.Kind {
+		case domain.NodeDB:
+			env.Datastores = append(env.Datastores, diagramDatastore{
+				Name: n.Name,
+			})
+		case domain.NodeAPIGateway:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "gateway",
+			})
+		case domain.NodeService:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "service",
+			})
+		default:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "service",
+			})
+		}
+	}
+
+	// Map edges → dependencies.
+	for _, e := range g.Edges {
+		if e == nil {
+			continue
+		}
+
+		fromName := e.From
+		if n, ok := g.Nodes[e.From]; ok && n != nil && n.Name != "" {
+			fromName = n.Name
+		}
+		toName := e.To
+		if n, ok := g.Nodes[e.To]; ok && n != nil && n.Name != "" {
+			toName = n.Name
+		}
+
+		kind := "rest"
+		if e.Attrs != nil {
+			if v, ok := e.Attrs["dep_kind"]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					kind = s
+				}
+			}
+		}
+
+		syncVal := false
+		if e.Attrs != nil {
+			if v, ok := e.Attrs["sync"]; ok {
+				if b, ok := v.(bool); ok {
+					syncVal = b
+				}
+			}
+		}
+
+		env.Dependencies = append(env.Dependencies, diagramDependency{
+			From:  fromName,
+			To:    toName,
+			Kind:  kind,
+			Sync:  syncVal,
+			Label: fmt.Sprintf("%s \u2192 %s", fromName, toName),
+		})
+	}
+
+	return env, nil
 }
 
 func NewRepo(db *sql.DB) *Repo {
@@ -60,18 +200,13 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 		title = fmt.Sprintf("diagramV%d", nextVersion)
 	}
 
-	// Pack graph and detections into diagram_json as a single JSON object.
-	var payload struct {
-		Graph      json.RawMessage `json:"graph,omitempty"`
-		Detections json.RawMessage `json:"detections,omitempty"`
+	// Build full diagram_json payload: graph, detections, and the structured
+	// services/datastores/topics/dependencies JSON used by the simulator.
+	env, err := buildDiagramEnvelope(graphJSON, detectionsJSON)
+	if err != nil {
+		return nil, err
 	}
-	if len(graphJSON) > 0 {
-		payload.Graph = json.RawMessage(graphJSON)
-	}
-	if len(detectionsJSON) > 0 {
-		payload.Detections = json.RawMessage(detectionsJSON)
-	}
-	diagramJSON, err := json.Marshal(payload)
+	diagramJSON, err := json.Marshal(env)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +228,15 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 	`, id, userID, chatID, nextVersion, title, yamlContent, diagramJSON, dotContent)
 	if err != nil {
 		return nil, err
+	}
+
+	// Keep project's current_diagram_version_id in sync so chat (FOLLOW_LATEST) uses this version.
+	if chatID != "" && chatID != DefaultChatID {
+		_, _ = r.db.Exec(`
+			UPDATE projects
+			SET current_diagram_version_id = $1, updated_at = now()
+			WHERE user_firebase_uid = $2 AND public_id = $3 AND deleted_at IS NULL
+		`, id, userID, chatID)
 	}
 
 	row := &VersionRow{
@@ -329,6 +473,41 @@ func (r *Repo) GetLatestByUserProject(userID, projectPublicID string) (*VersionR
 	return row, nil
 }
 
+// GetLatestYAMLByUserProject returns yaml_content and title from the latest diagram_versions
+// row (any source) for the given user and project that has non-empty yaml_content.
+// Used when no AMG-APD version exists yet, to run analysis from project/diagram YAML.
+func (r *Repo) GetLatestYAMLByUserProject(userID, projectPublicID string) (yamlContent, title string, err error) {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+	var yaml, t sql.NullString
+	err = r.db.QueryRow(`
+		SELECT yaml_content, title
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2
+		  AND yaml_content IS NOT NULL AND trim(yaml_content) != ''
+		ORDER BY version_number DESC
+		LIMIT 1
+	`, userID, projectPublicID).Scan(&yaml, &t)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if yaml.Valid && yaml.String != "" {
+		title = "Uploaded"
+		if t.Valid && t.String != "" {
+			title = t.String
+		}
+		return yaml.String, title, nil
+	}
+	return "", "", nil
+}
+
 // UpdateAnalysisByID updates the stored analysis fields for an existing AMG-APD version row.
 // This does NOT create a new version; it overwrites diagram_json/dot_content for the given id,
 // scoped to the given user_id + project_public_id.
@@ -340,17 +519,12 @@ func (r *Repo) UpdateAnalysisByID(id, userID, projectPublicID string, graphJSON,
 		projectPublicID = DefaultChatID
 	}
 
-	var payload struct {
-		Graph      json.RawMessage `json:"graph,omitempty"`
-		Detections json.RawMessage `json:"detections,omitempty"`
+	// Rebuild the full diagram_json envelope with the new analysis.
+	env, err := buildDiagramEnvelope(graphJSON, detectionsJSON)
+	if err != nil {
+		return err
 	}
-	if len(graphJSON) > 0 {
-		payload.Graph = json.RawMessage(graphJSON)
-	}
-	if len(detectionsJSON) > 0 {
-		payload.Detections = json.RawMessage(detectionsJSON)
-	}
-	diagramJSON, err := json.Marshal(payload)
+	diagramJSON, err := json.Marshal(env)
 	if err != nil {
 		return err
 	}
