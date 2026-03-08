@@ -32,8 +32,8 @@ func (h *Handlers) GetLatestForProject(c *gin.Context) {
 	}
 
 	if row == nil {
-		// No AMG-APD version: try latest diagram YAML (any source), analyze, and save.
-		yamlContent, title, errYAML := h.versionRepo.GetLatestYAMLByUserProject(userID, projectPublicID)
+		// No AMG-APD version: get latest diagram row (any source) and either update in place or create.
+		diagramID, yamlContent, title, errYAML := h.versionRepo.GetLatestDiagramRowByUserProject(userID, projectPublicID)
 		if errYAML != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load project yaml", "details": errYAML.Error()})
 			return
@@ -47,23 +47,50 @@ func (h *Handlers) GetLatestForProject(c *gin.Context) {
 		}
 		res, dotContent, errAnalyze := service.AnalyzeYAMLBytesInMemory([]byte(yamlContent), title, os.Getenv("DOT_BIN"))
 		if errAnalyze != nil {
-			// YAML may be incompatible with parser (e.g. different format); let frontend
-			// re-submit via analyze-upload so it goes through the same flow as "Analyze & Visualize".
+			// Analysis failed; return yaml and version_id so frontend can call update-version-analysis (update in place).
 			c.JSON(http.StatusOK, gin.H{
 				"needs_analysis": true,
 				"yaml_content":   yamlContent,
 				"title":          title,
+				"version_id":     diagramID,
 			})
 			return
 		}
 		graphJSON, _ := json.Marshal(res.Graph)
 		detectionsJSON, _ := json.Marshal(res.Detections)
+		if diagramID != "" {
+			// Update existing diagram row in place so we don't create a new version.
+			if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(diagramID, userID, projectPublicID, graphJSON, detectionsJSON, dotContent); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update version analysis", "details": err.Error()})
+				return
+			}
+			updated, _ := h.versionRepo.GetByIDForUserProject(diagramID, userID, projectPublicID)
+			if updated != nil {
+				var graph interface{}
+				var detections interface{}
+				_ = json.Unmarshal(updated.GraphJSON, &graph)
+				_ = json.Unmarshal(updated.DetectionsJSON, &detections)
+				c.JSON(http.StatusOK, gin.H{
+					"graph":          graph,
+					"detections":     detections,
+					"dot_content":    updated.DOTContent,
+					"dot_path":       "",
+					"svg_path":       "",
+					"version_id":     updated.ID,
+					"version_number": updated.VersionNumber,
+					"created_at":     updated.CreatedAt,
+					"yaml_content":   updated.YAMLContent,
+					"title":          updated.Title,
+				})
+				return
+			}
+		}
+		// No existing row id: create new AMG-APD version (legacy path).
 		row, err = h.versionRepo.Save(userID, chatID, title, yamlContent, graphJSON, detectionsJSON, dotContent)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save version", "details": err.Error()})
 			return
 		}
-		// Return the new row in the same shape as below.
 		var graph interface{}
 		var detections interface{}
 		_ = json.Unmarshal(row.GraphJSON, &graph)
@@ -92,12 +119,12 @@ func (h *Handlers) GetLatestForProject(c *gin.Context) {
 	if missing {
 		res, dotContent, err := service.AnalyzeYAMLBytesInMemory([]byte(row.YAMLContent), row.Title, os.Getenv("DOT_BIN"))
 		if err != nil {
-			// Analysis failed (e.g. yaml unmarshal error); return yaml so frontend
-			// can re-submit via analyze-upload like "Analyze & Visualize".
+			// Analysis failed; return yaml and version_id so frontend can call update-version-analysis (update in place).
 			c.JSON(http.StatusOK, gin.H{
 				"needs_analysis": true,
 				"yaml_content":   row.YAMLContent,
 				"title":          row.Title,
+				"version_id":     row.ID,
 			})
 			return
 		}

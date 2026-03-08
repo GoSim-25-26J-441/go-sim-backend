@@ -127,3 +127,77 @@ func (h *Handlers) AnalyzeUpload(c *gin.Context) {
 		"created_at":     row.CreatedAt,
 	})
 }
+
+type updateVersionAnalysisReq struct {
+	VersionID string `json:"version_id"`
+	YAML      string `json:"yaml"`
+}
+
+// UpdateVersionAnalysis runs analysis and updates an existing diagram version in place (no new version).
+// Used when "Check Anti-Patterns" from chat has needs_analysis and version_id.
+func (h *Handlers) UpdateVersionAnalysis(c *gin.Context) {
+	var req updateVersionAnalysisReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "version_id is required"})
+		return
+	}
+	if req.VersionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "version_id is required"})
+		return
+	}
+	userID := getUserID(c)
+	chatID := getChatID(c)
+
+	row, err := h.versionRepo.GetByIDForUserProject(req.VersionID, userID, chatID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load version", "details": err.Error()})
+		return
+	}
+	if row == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "version not found"})
+		return
+	}
+	yamlContent := req.YAML
+	if yamlContent == "" {
+		yamlContent = row.YAMLContent
+	}
+	if yamlContent == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no yaml content"})
+		return
+	}
+	title := row.Title
+	if title == "" {
+		title = "From diagram"
+	}
+
+	res, dotContent, errAnalyze := service.AnalyzeYAMLBytesInMemory([]byte(yamlContent), title, os.Getenv("DOT_BIN"))
+	if errAnalyze != nil {
+		c.String(http.StatusBadRequest, fmt.Sprintf("analyze failed: %v", errAnalyze))
+		return
+	}
+	graphJSON, _ := json.Marshal(res.Graph)
+	detectionsJSON, _ := json.Marshal(res.Detections)
+	if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(req.VersionID, userID, chatID, graphJSON, detectionsJSON, dotContent); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update version", "details": err.Error()})
+		return
+	}
+	updated, _ := h.versionRepo.GetByIDForUserProject(req.VersionID, userID, chatID)
+	if updated == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "version not found after update"})
+		return
+	}
+	var graph interface{}
+	var detections interface{}
+	_ = json.Unmarshal(updated.GraphJSON, &graph)
+	_ = json.Unmarshal(updated.DetectionsJSON, &detections)
+	c.JSON(http.StatusOK, gin.H{
+		"graph":          graph,
+		"detections":     detections,
+		"dot_content":    updated.DOTContent,
+		"version_id":     updated.ID,
+		"version_number": updated.VersionNumber,
+		"created_at":     updated.CreatedAt,
+		"yaml_content":   updated.YAMLContent,
+		"title":          updated.Title,
+	})
+}

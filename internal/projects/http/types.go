@@ -8,10 +8,11 @@ import (
 
 // Handler bundles the dependencies for projects HTTP endpoints.
 type Handler struct {
-	projectService *service.ProjectService
-	chatService    *chatservice.ChatService
-	diagramService *service.DiagramService
-	s3Client       *s3storage.Client
+	projectService   *service.ProjectService
+	chatService      *chatservice.ChatService
+	diagramService   *service.DiagramService
+	s3Client        *s3storage.Client
+	OnProjectDeleted func(userID, projectPublicID string) // optional: called after successful project delete (e.g. cascade delete versions)
 }
 
 // New creates a new projects HTTP handler with the given services.
