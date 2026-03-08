@@ -189,18 +189,26 @@ func (h *RequestHandler) GetLatestByProjectRun(c *gin.Context) {
 	projectID := c.Query("project_id")
 	runID := c.Query("run_id")
 
-	if userID == "" || projectID == "" || runID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, project_id and run_id are required"})
+	if userID == "" || projectID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and project_id are required"})
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	const query = `
+	const queryWithRun = `
 SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
 FROM request_responses
 WHERE user_id = $1 AND project_id = $2 AND run_id = $3
+ORDER BY created_at DESC
+LIMIT 1;
+`
+
+	const queryWithoutRun = `
+SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
+FROM request_responses
+WHERE user_id = $1 AND project_id = $2
 ORDER BY created_at DESC
 LIMIT 1;
 `
@@ -210,14 +218,45 @@ LIMIT 1;
 	var responseBytes []byte
 	var bestBytes []byte
 
-	err := h.db.QueryRowContext(ctx, query, userID, projectID, runID).
-		Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+	var err error
+	if runID != "" {
+		err = h.db.QueryRowContext(ctx, queryWithRun, userID, projectID, runID).
+			Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+	} else {
+		err = h.db.QueryRowContext(ctx, queryWithoutRun, userID, projectID).
+			Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no request found for given user/project/run"})
+			if runID != "" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "no request found for given user/project/run"})
+			} else {
+				c.JSON(http.StatusNotFound, gin.H{"error": "no request found for given user/project"})
+			}
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed: " + err.Error()})
+		return
+	}
+
+	if runID == "" {
+		var reqEnvelope map[string]json.RawMessage
+		if err := json.Unmarshal(requestBytes, &reqEnvelope); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse request payload: " + err.Error()})
+			return
+		}
+
+		design, ok := reqEnvelope["design"]
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "design field not found in request payload"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"user_id":    r.UserID,
+			"project_id": r.ProjectID,
+			"design":     json.RawMessage(design),
+		})
 		return
 	}
 

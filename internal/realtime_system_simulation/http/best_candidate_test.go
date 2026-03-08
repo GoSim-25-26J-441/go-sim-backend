@@ -281,3 +281,90 @@ func TestUniqueCandidateIDs(t *testing.T) {
 	assert.Equal(t, []string{"only"}, ids)
 }
 
+// TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_PercentageNormalization verifies that
+// CPU and memory utilisation from the engine (ratio 0-1) are normalised to 0-100 percentage.
+func TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_PercentageNormalization(t *testing.T) {
+	scenarioYAML := `
+hosts:
+  - id: h1
+    cores: 4
+`
+	metrics := map[string]any{
+		"cpu_utilization":  0.72,
+		"memory_utilization": 0.61,
+		"throughput_rps":   1400,
+	}
+	spec, metricsOut, simWorkload := buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML, metrics)
+
+	require.NotNil(t, metricsOut)
+	assert.Equal(t, 72.0, metricsOut["cpu_util_pct"], "ratio 0.72 should become 72%")
+	assert.Equal(t, 61.0, metricsOut["mem_util_pct"], "ratio 0.61 should become 61%")
+	assert.Equal(t, 4.0, spec["vcpu"])
+	assert.Equal(t, 16.0, spec["memory_gb"])
+	assert.EqualValues(t, 1400, simWorkload["concurrent_users"])
+}
+
+// TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_AlreadyPercentage verifies that
+// values already in 0-100 scale are left unchanged (and clamped to 100 if over).
+func TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_AlreadyPercentage(t *testing.T) {
+	metrics := map[string]any{
+		"cpu_util_pct": 72,
+		"mem_util_pct": 61,
+	}
+	_, metricsOut, _ := buildSpecMetricsWorkloadFromScenarioAndMetrics("", metrics)
+	assert.Equal(t, 72.0, metricsOut["cpu_util_pct"])
+	assert.Equal(t, 61.0, metricsOut["mem_util_pct"])
+}
+
+// TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_WorkloadRateRPS verifies that
+// when scenario YAML has workload.arrival.rate_rps, sim_workload uses it for concurrent_users
+// (intended load) instead of metrics throughput_rps (achieved throughput).
+func TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_WorkloadRateRPS(t *testing.T) {
+	scenarioYAML := `
+hosts:
+  - id: host-1
+    cores: 4
+    memory_gb: 16
+workload:
+  - from: client
+    to: svc1:/test
+    arrival:
+      type: poisson
+      rate_rps: 10
+`
+	metrics := map[string]any{
+		"throughput_rps": 6033.31,
+		"cpu_utilization": 0.056,
+	}
+	spec, _, simWorkload := buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML, metrics)
+	assert.Equal(t, 4.0, spec["vcpu"])
+	assert.Equal(t, 16.0, spec["memory_gb"], "memory_gb should come from host memory_gb, not service")
+	assert.EqualValues(t, 10, simWorkload["concurrent_users"], "concurrent_users should be scenario rate_rps (10), not throughput_rps")
+	assert.EqualValues(t, 10, simWorkload["rate_rps"])
+}
+
+// TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_ServiceMetricsFallback verifies that when
+// the engine sends utilisation only inside service_metrics (no top-level keys), cpu_util_pct and
+// mem_util_pct are set from the first service and normalised to 0-100.
+func TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_ServiceMetricsFallback(t *testing.T) {
+	metrics := map[string]any{
+		"throughput_rps": 100.0,
+		"service_metrics": []interface{}{
+			map[string]any{
+				"cpu_utilization":    0.075,
+				"memory_utilization": 0.036,
+			},
+		},
+	}
+	_, metricsOut, _ := buildSpecMetricsWorkloadFromScenarioAndMetrics("", metrics)
+
+	require.NotNil(t, metricsOut)
+	cpu, ok := metricsOut["cpu_util_pct"]
+	require.True(t, ok, "cpu_util_pct should be set from service_metrics")
+	assert.InDelta(t, 7.5, cpu, 0.01, "0.075 ratio should become 7.5%%")
+
+	mem, ok := metricsOut["mem_util_pct"]
+	require.True(t, ok, "mem_util_pct should be set from service_metrics")
+	assert.InDelta(t, 3.6, mem, 0.01, "0.036 ratio should become 3.6%%")
+}
+

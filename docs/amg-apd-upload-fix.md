@@ -20,7 +20,7 @@ Browser → POST /api/amg-apd/analyze-upload (Next.js on :3000)
 
 ### 1. Docker Compose – Postgres & Redis
 
-The backend requires **PostgreSQL** and **Redis** to start. Previously, `docker-compose.yaml` only had Neo4j, so the backend failed to start.
+The backend requires **PostgreSQL** and **Redis** to start. Start them with `docker compose up -d` (postgres and redis only), then run the API with `go run ./cmd/api`.
 
 **Change:** Postgres and Redis services were added to `docker-compose.yaml`. The backend now waits for them before starting.
 

@@ -464,6 +464,41 @@ func (r *Repo) GetLatestByUserProject(userID, projectPublicID string) (*VersionR
 	return row, nil
 }
 
+// GetLatestYAMLByUserProject returns yaml_content and title from the latest diagram_versions
+// row (any source) for the given user and project that has non-empty yaml_content.
+// Used when no AMG-APD version exists yet, to run analysis from project/diagram YAML.
+func (r *Repo) GetLatestYAMLByUserProject(userID, projectPublicID string) (yamlContent, title string, err error) {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if projectPublicID == "" {
+		projectPublicID = DefaultChatID
+	}
+	var yaml, t sql.NullString
+	err = r.db.QueryRow(`
+		SELECT yaml_content, title
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2
+		  AND yaml_content IS NOT NULL AND trim(yaml_content) != ''
+		ORDER BY version_number DESC
+		LIMIT 1
+	`, userID, projectPublicID).Scan(&yaml, &t)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if yaml.Valid && yaml.String != "" {
+		title = "Uploaded"
+		if t.Valid && t.String != "" {
+			title = t.String
+		}
+		return yaml.String, title, nil
+	}
+	return "", "", nil
+}
+
 // UpdateAnalysisByID updates the stored analysis fields for an existing AMG-APD version row.
 // This does NOT create a new version; it overwrites diagram_json/dot_content for the given id,
 // scoped to the given user_id + project_public_id.

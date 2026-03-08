@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	pricing "github.com/aws/aws-sdk-go-v2/service/pricing"
+	pricingTypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"golang.org/x/time/rate"
 )
 
@@ -185,6 +186,13 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 	input := &pricing.GetProductsInput{
 		ServiceCode:   aws.String("AmazonEC2"),
 		FormatVersion: aws.String("aws_v1"),
+		Filters: []pricingTypes.Filter{
+			{
+				Field: aws.String("instanceFamily"),
+				Type:  pricingTypes.FilterTypeTermMatch,
+				Value: aws.String("General purpose"),
+			},
+		},
 	}
 
 	total := 0
@@ -270,6 +278,9 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 				if instanceFamily == "" && instanceType != "" {
 					instanceFamily = extractInstanceFamily(instanceType)
 				}
+			}
+			if instanceFamily != "General purpose" {
+				continue
 			}
 			if instanceType == "" {
 				if v, ok := prod["sku"].(string); ok {

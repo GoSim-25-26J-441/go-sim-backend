@@ -10,10 +10,13 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/scenario"
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
 )
 
+// engineRunCallbackBody is the payload from the simulation engine. The engine does NOT send
+// scenario YAML in the callback; it sends only run IDs (best_run_id, top_candidates). The backend
+// must call GET /v1/runs/{id}/export for each ID to obtain input.scenario_yaml.
 type engineRunCallbackBody struct {
 	RunID            string                 `json:"run_id"`
 	Status           interface{}            `json:"status"`           // Can be int (enum) or string
@@ -156,6 +159,16 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update run"})
 		return
+	}
+
+	// Terminal state: same as EngineRunCallbackByID — fetch via export and persist synchronously.
+	if backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning && (h.db != nil || h.s3Client != nil) {
+		ctx := c.Request.Context()
+		h.persistRunMetrics(ctx, run, body.BestRunID, body.TopCandidates)
+		isBatch := body.BestRunID != "" || len(body.TopCandidates) > 0
+		if h.s3Client != nil && !isBatch {
+			h.uploadBestScenarioToS3(ctx, run, backendStatus, body.BestRunID)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
@@ -303,18 +316,15 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		return
 	}
 
-	// Best-candidate scenario handling: when run reaches a terminal state and S3 is configured,
-	// fetch the scenario export from the simulator and upload it to S3 under
-	// simulation/{run_id}/best_scenario.yaml. Then persist the S3 path in simulation_summaries.
-	if h.s3Client != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
-		go h.uploadBestScenarioToS3(context.Background(), run, backendStatus, body.BestRunID)
-	}
-
-	// Metrics persistence: when run reaches a terminal state and DB is configured,
-	// fetch aggregated metrics and time-series from the simulator export endpoint and
-	// persist them into simulation_summaries and simulation_metrics_timeseries.
-	if h.db != nil && backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning {
-		go h.persistRunMetrics(context.Background(), run, body.BestRunID, body.TopCandidates)
+	// Terminal state: fetch scenario YAML via GET /v1/runs/{id}/export (engine does not send YAML in callback)
+	// and persist candidates + best scenario synchronously so the response is sent after data is stored.
+	if backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning && (h.db != nil || h.s3Client != nil) {
+		ctx := c.Request.Context()
+		h.persistRunMetrics(ctx, run, body.BestRunID, body.TopCandidates)
+		isBatch := body.BestRunID != "" || len(body.TopCandidates) > 0
+		if h.s3Client != nil && !isBatch {
+			h.uploadBestScenarioToS3(ctx, run, backendStatus, body.BestRunID)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
@@ -388,48 +398,44 @@ func firstFloatFromKeys(m map[string]any, keys ...string) *float64 {
 	return nil
 }
 
+// firstFloatFromServiceMetrics returns the first numeric value for the given keys from the first
+// element of metrics["service_metrics"], when the engine sends utilisation only inside that slice.
+func firstFloatFromServiceMetrics(metrics map[string]any, keys ...string) *float64 {
+	if metrics == nil {
+		return nil
+	}
+	v, ok := metrics["service_metrics"]
+	if !ok || v == nil {
+		return nil
+	}
+	sl, ok := v.([]interface{})
+	if !ok || len(sl) == 0 {
+		return nil
+	}
+	first, ok := sl[0].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return firstFloatFromKeys(first, keys...)
+}
+
 // buildSpecMetricsWorkloadFromScenarioAndMetrics builds spec, metrics, and simWorkload
 // from a scenario YAML string and metrics map (e.g. from an export response). Used by
 // both the single-export fallback and the batch per-candidate export path.
+// CPU and memory utilisation are normalised to 0-100 percentage.
+// sim_workload.concurrent_users uses the scenario's workload rate_rps (intended load) when present,
+// otherwise falls back to metrics throughput_rps (achieved throughput).
 func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics map[string]any) (spec map[string]any, metricsOut map[string]any, simWorkload map[string]any) {
 	spec = map[string]any{"label": "scenario"}
+	var parsed scenario.Scenario
 	if scenarioYAML != "" {
-		var scenario struct {
-			Hosts []struct {
-				ID    string `yaml:"id"`
-				Cores int    `yaml:"cores"`
-			} `yaml:"hosts"`
-			Services []struct {
-				ID       string  `yaml:"id"`
-				Replicas int     `yaml:"replicas"`
-				CPUCores float64 `yaml:"cpu_cores"`
-				MemoryMB float64 `yaml:"memory_mb"`
-			} `yaml:"services"`
-		}
-		if err := yaml.Unmarshal([]byte(scenarioYAML), &scenario); err == nil {
-			var vcpu float64
-			var memoryGB float64
-			if len(scenario.Hosts) > 0 {
-				for _, h := range scenario.Hosts {
-					vcpu += float64(h.Cores)
-				}
-				if len(scenario.Services) > 0 {
-					for _, s := range scenario.Services {
-						memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
-					}
-				} else {
-					memoryGB = float64(len(scenario.Hosts)) * 16
-				}
-			} else {
-				for _, s := range scenario.Services {
-					vcpu += float64(s.Replicas) * s.CPUCores
-					memoryGB += float64(s.Replicas) * s.MemoryMB / 1024
-				}
-			}
-			if vcpu > 0 {
+		s, err := scenario.ParseScenarioYAML([]byte(scenarioYAML))
+		if err == nil {
+			parsed = s
+			if vcpu := s.VCPU(); vcpu > 0 {
 				spec["vcpu"] = vcpu
 			}
-			if memoryGB > 0 {
+			if memoryGB := s.MemoryGB(); memoryGB > 0 {
 				spec["memory_gb"] = memoryGB
 			}
 		}
@@ -439,13 +445,20 @@ func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics
 		metricsOut[k] = v
 	}
 	if v := firstFloatFromKeys(metrics, "cpu_util_pct", "cpu_utilization", "cpu_util"); v != nil {
-		metricsOut["cpu_util_pct"] = *v
+		metricsOut["cpu_util_pct"] = scenario.ToUtilisationPercent(*v)
+	} else if v := firstFloatFromServiceMetrics(metrics, "cpu_utilization", "cpu_util"); v != nil {
+		metricsOut["cpu_util_pct"] = scenario.ToUtilisationPercent(*v)
 	}
 	if v := firstFloatFromKeys(metrics, "mem_util_pct", "memory_util_pct", "memory_utilization", "mem_util"); v != nil {
-		metricsOut["mem_util_pct"] = *v
+		metricsOut["mem_util_pct"] = scenario.ToUtilisationPercent(*v)
+	} else if v := firstFloatFromServiceMetrics(metrics, "memory_utilization", "memory_util_pct", "mem_util"); v != nil {
+		metricsOut["mem_util_pct"] = scenario.ToUtilisationPercent(*v)
 	}
 	simWorkload = map[string]any{}
-	if v, ok := metrics["throughput_rps"]; ok {
+	if rateRPS := parsed.RateRPS(); rateRPS > 0 {
+		simWorkload["concurrent_users"] = rateRPS
+		simWorkload["rate_rps"] = rateRPS
+	} else if v, ok := metrics["throughput_rps"]; ok {
 		simWorkload["concurrent_users"] = v
 	}
 	return spec, metricsOut, simWorkload
@@ -471,9 +484,10 @@ func uniqueCandidateIDs(bestRunID string, topCandidates []string) []string {
 }
 
 // persistRunMetrics fetches export data from the simulator and writes summaries and
-// time-series metrics into Postgres. Best-effort: failures are logged and do not
-// affect the callback response. For batch optimization (bestRunID or topCandidates set),
-// candidates are built by calling export for each unique candidate run ID.
+// time-series metrics into Postgres. The engine does not send scenario YAML in the callback;
+// batch candidates are built by calling GET /v1/runs/{id}/export for each ID in best_run_id
+// and top_candidates. For batch mode, best-scenario S3 upload and simulation_summaries update
+// are done here to avoid duplicate export of the best run.
 func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationRun, bestRunID string, topCandidates []string) {
 	if h.db == nil || run == nil || run.RunID == "" {
 		return
@@ -616,6 +630,25 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			}
 			if id == bestRunID {
 				rec.S3Path = bestScenarioKey
+				// Upload best scenario to S3 and upsert simulation_summaries here to avoid duplicate ExportRun(bestRunID).
+				if h.s3Client != nil && h.db != nil && exp.Input.ScenarioYAML != "" {
+					if err := h.s3Client.PutObject(ctx, bestScenarioKey, []byte(exp.Input.ScenarioYAML)); err != nil {
+						log.Printf("Failed to upload best_scenario.yaml to S3 for run_id=%s: %v", run.RunID, err)
+					} else {
+						if _, err := h.db.ExecContext(ctx,
+							`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (run_id) DO UPDATE
+         SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
+							run.RunID, run.EngineRunID, bestScenarioKey, exp.Input.ScenarioYAML,
+						); err != nil {
+							log.Printf("Failed to upsert best_candidate_s3_path for run_id=%s: %v", run.RunID, err)
+						} else {
+							log.Printf("Best candidate scenario for run_id=%s stored at S3 key=%s and recorded in simulation_summaries", run.RunID, bestScenarioKey)
+						}
+					}
+				}
 			} else if h.s3Client != nil && exp.Input.ScenarioYAML != "" {
 				key := "simulation/" + run.RunID + "/candidates/" + id + ".yaml"
 				if err := h.s3Client.PutObject(ctx, key, []byte(exp.Input.ScenarioYAML)); err != nil {
@@ -630,6 +663,8 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			if err := candidateRepo.CreateMany(ctx, records); err != nil {
 				log.Printf("Failed to persist candidates for run_id=%s: %v", run.RunID, err)
 			}
+		} else if len(ids) > 0 {
+			log.Printf("Warning: no candidates persisted for run_id=%s despite %d candidate IDs (all exports may have failed or returned empty scenario_yaml)", run.RunID, len(ids))
 		}
 		return
 	}
