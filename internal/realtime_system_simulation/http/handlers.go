@@ -8,8 +8,8 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/scenario"
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
 )
 
 // CreateRunForProject creates a new simulation run for a project (project_id in path)
@@ -449,37 +449,18 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 }
 
 // parseScenarioYAMLHostsServices parses scenario YAML bytes and returns normalized hosts and services for API response.
-// Returns (nil, nil) on parse error or empty content.
+// Returns (nil, nil) on parse error or empty content. Uses the shared scenario package.
 func parseScenarioYAMLHostsServices(data []byte) (hosts []gin.H, services []gin.H) {
-	var scenario struct {
-		Hosts []struct {
-			ID    string `yaml:"id"`
-			Cores int    `yaml:"cores"`
-		} `yaml:"hosts"`
-		Services []struct {
-			ID       string  `yaml:"id"`
-			Replicas int     `yaml:"replicas"`
-			CPUCores float64 `yaml:"cpu_cores"`
-			MemoryMB float64 `yaml:"memory_mb"`
-		} `yaml:"services"`
-	}
-	if err := yaml.Unmarshal(data, &scenario); err != nil {
+	s, err := scenario.ParseScenarioYAML(data)
+	if err != nil {
 		return nil, nil
 	}
-	for _, hst := range scenario.Hosts {
-		hosts = append(hosts, gin.H{
-			"host_id":   hst.ID,
-			"cpu_cores": hst.Cores,
-			"memory_gb": 16,
-		})
+	hostsM, servicesM := s.ToHostsServices()
+	for _, m := range hostsM {
+		hosts = append(hosts, gin.H(m))
 	}
-	for _, svc := range scenario.Services {
-		services = append(services, gin.H{
-			"service_id":  svc.ID,
-			"replicas":    svc.Replicas,
-			"cpu_cores":   svc.CPUCores,
-			"memory_mb":   svc.MemoryMB,
-		})
+	for _, m := range servicesM {
+		services = append(services, gin.H(m))
 	}
 	return hosts, services
 }
