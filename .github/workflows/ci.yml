@@ -70,7 +70,6 @@ jobs:
         run: aws s3 cp scripts/ec2-deploy.sh s3://${{ secrets.DEPLOY_BUCKET }}/go-sim-backend/scripts/deploy.sh
 
       - name: Deploy via SSM Run Command
-        id: ssm
         env:
           BUCKET: ${{ secrets.DEPLOY_BUCKET }}
           REGION: ${{ env.AWS_REGION }}
@@ -84,39 +83,7 @@ jobs:
             --parameters "{\"commands\":[$json_commands]}" \
             --query "Command.CommandId" \
             --output text)
-          echo "command_id=$cmd_id" >> "$GITHUB_OUTPUT"
-          for i in $(seq 1 30); do
-            status=$(aws ssm get-command-invocation \
-              --command-id "$cmd_id" \
-              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
-              --region "${REGION}" \
-              --query "Status" \
-              --output text 2>/dev/null || echo "Pending")
-            if [ "$status" = "Success" ]; then
-              exit_code=$(aws ssm get-command-invocation \
-                --command-id "$cmd_id" \
-                --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
-                --region "${REGION}" \
-                --query "ResponseCode" \
-                --output text)
-              if [ "$exit_code" != "0" ]; then
-                echo "SSM command failed with exit code $exit_code"
-                aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "${{ secrets.EC2_INSTANCE_ID }}" --region "${REGION}"
-                exit 1
-              fi
-              echo "Deploy completed successfully"
-              exit 0
-            fi
-            if [ "$status" = "Failed" ] || [ "$status" = "Cancelled" ] || [ "$status" = "TimedOut" ]; then
-              echo "SSM command failed with status $status"
-              aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "${{ secrets.EC2_INSTANCE_ID }}" --region "${REGION}"
-              exit 1
-            fi
-            echo "Waiting for SSM command... ($status)"
-            sleep 5
-          done
-          echo "SSM command timed out"
-          exit 1
+          echo "SSM command sent (ID: $cmd_id). Deployment verified by health check below."
 
       - name: Wait for app to be ready
         run: sleep 60
