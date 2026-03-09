@@ -113,7 +113,7 @@ func main() {
 
 	// Configure CORS middleware (merged)
 	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:8080"}
+	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:8080", "https://app.microsim.dev", "https://microsim.dev", "https://arcfind.dev"}
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With", "X-User-Id"}
 	corsConfig.AllowCredentials = true
@@ -218,7 +218,7 @@ func main() {
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
-	log.Printf("CORS enabled for origins: http://localhost:3000, http://localhost:8080, http://localhost:8000", "https://app.microsim.dev", "https://microsim.dev", "https://arcfind.dev")
+	log.Printf("CORS enabled for origins: http://localhost:3000, http://localhost:8080, http://localhost:8000, %s, %s, %s")
 	log.Printf("Health endpoint available at: http://localhost:%s/health", cfg.Server.Port)
 
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
