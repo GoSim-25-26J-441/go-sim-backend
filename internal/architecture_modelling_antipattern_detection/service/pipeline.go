@@ -90,7 +90,9 @@ func analyzeGraphToDir(g *domain.Graph, outDir string, title string, dotBin stri
 	if outDir == "" {
 		outDir = "out"
 	}
-	_ = os.MkdirAll(outDir, 0755)
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return nil, err
+	}
 
 	dot := export.ToDOT(g, title)
 	dotPath := filepath.Join(outDir, "graph.dot")
