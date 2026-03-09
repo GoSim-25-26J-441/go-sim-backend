@@ -20,10 +20,20 @@ SSM_PARAM_FIREBASE="/arcfind/production/firebase-sa"
 mkdir -p "$APP_DIR"
 
 echo "Fetching .env from Parameter Store..."
-aws ssm get-parameter --name "$SSM_PARAM_ENV" --with-decryption --query "Parameter.Value" --output text --region "$REGION" > "$APP_DIR/.env"
+aws ssm get-parameter \
+  --name "$SSM_PARAM_ENV" \
+  --with-decryption \
+  --query "Parameter.Value" \
+  --output text \
+  --region "$REGION" | tee "$APP_DIR/.env" > /dev/null
 
 echo "Fetching Firebase credentials from Parameter Store..."
-aws ssm get-parameter --name "$SSM_PARAM_FIREBASE" --with-decryption --query "Parameter.Value" --output text --region "$REGION" > "$APP_DIR/firebase-service-account.json"
+aws ssm get-parameter \
+  --name "$SSM_PARAM_FIREBASE" \
+  --with-decryption \
+  --query "Parameter.Value" \
+  --output text \
+  --region "$REGION" | tee "$APP_DIR/firebase-service-account.json" > /dev/null
 
 echo "Syncing migrations from S3..."
 aws s3 sync "s3://${BUCKET}/go-sim-backend/migrations/" "$APP_DIR/migrations/" --region "$REGION"
