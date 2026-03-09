@@ -1,13 +1,12 @@
 package http
 
 import (
+	"context"
 	"log"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"time"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/importer"
 	"github.com/gin-gonic/gin"
 )
 
@@ -21,29 +20,10 @@ func (h *ImportHandler) RegisterRoutes(rg *gin.RouterGroup) {
 
 func (h *ImportHandler) RunImporter(c *gin.Context) {
 	start := time.Now()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Printf("failed to get working dir: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "failed to get working directory", "error": err.Error()})
-		return
-	}
-
-	importerPath := filepath.Join(wd, "internal", "analysis_suggestions", "importer", "import_prices.go")
-	log.Printf("Starting importer: %s", importerPath)
-
-	cmd := exec.Command("go", "run", importerPath, "--dir", "out")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("failed to start importer: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "failed to start importer", "error": err.Error()})
-		return
-	}
+	log.Printf("Starting importer (dir=out)")
 
 	go func() {
-		if err := cmd.Wait(); err != nil {
+		if err := importer.Run(context.Background(), "out", importer.DefaultBatchSize); err != nil {
 			log.Printf("importer process failed: %v", err)
 		} else {
 			log.Printf("importer process finished successfully")

@@ -44,6 +44,12 @@ type UpstreamsConfig struct {
 	SimulationEngineURL string
 }
 
+// SimulationCallbacksConfig holds callback URL and optional secret for simulation engine callbacks.
+type SimulationCallbacksConfig struct {
+	CallbackURL    string // Full URL the engine calls when a run changes state (e.g. http://localhost:8000/api/v1/simulation-engine/runs/callback)
+	CallbackSecret string // Shared secret; engine sends X-Simulation-Callback-Secret header
+}
+
 type LLMConfig struct {
 	OllamaURL string
 }
@@ -62,15 +68,6 @@ type RedisConfig struct {
 	Port     int
 	Password string
 	DB       int // Database number (0-15)
-}
-
-type SimulationCallbacksConfig struct {
-	// CallbackURL is the full URL that the simulation engine should call when a run changes terminal state.
-	// Example: http://localhost:8000/api/v1/simulation-engine/runs/callback
-	CallbackURL string
-	// CallbackSecret is a shared secret to authenticate callbacks from the simulation engine.
-	// The engine should set header: X-Simulation-Callback-Secret: <secret>
-	CallbackSecret string
 }
 
 // S3Config holds configuration for S3-compatible object storage (AWS S3, MinIO, etc.).
@@ -136,6 +133,10 @@ func Load() (*Config, error) {
 			LLMAPIKey:           getEnv("LLM_API_KEY", ""),
 			SimulationEngineURL: getEnv("SIMULATION_ENGINE_URL", "http://localhost:8082"),
 		},
+		SimulationCallbacks: SimulationCallbacksConfig{
+			CallbackURL:    getEnv("SIMULATION_CALLBACK_URL", ""),
+			CallbackSecret: getEnv("SIMULATION_CALLBACK_SECRET", ""),
+		},
 		LLM: LLMConfig{
 			OllamaURL: getEnv("OLLAMA_URL", "http://localhost:11434"),
 		},
@@ -151,10 +152,6 @@ func Load() (*Config, error) {
 			Port:     getEnvAsInt("REDIS_PORT", 6379),
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getEnvAsInt("REDIS_DB", 0),
-		},
-		SimulationCallbacks: SimulationCallbacksConfig{
-			CallbackURL:    getEnv("SIMULATION_CALLBACK_URL", ""),
-			CallbackSecret: getEnv("SIMULATION_CALLBACK_SECRET", ""),
 		},
 		S3: S3Config{
 			Bucket:          getEnv("S3_BUCKET", ""),

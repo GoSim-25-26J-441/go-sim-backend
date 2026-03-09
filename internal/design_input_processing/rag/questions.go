@@ -1,9 +1,8 @@
 package rag
 
 import (
+	"embed"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -27,38 +26,22 @@ type QuestionsConfig struct {
 // DesignInput represents the design structure from the client
 type DesignInput map[string]interface{}
 
+//go:embed questions.yaml
+var questionFiles embed.FS
+
 var (
 	questionsConfig *QuestionsConfig
-	configPath      = filepath.Join("internal", "design_input_processing", "rag", "questions.yaml")
 )
 
-// LoadQuestions loads the questions configuration from the YAML file
+// LoadQuestions loads the questions configuration from the embedded YAML file.
 func LoadQuestions() (*QuestionsConfig, error) {
 	if questionsConfig != nil {
 		return questionsConfig, nil
 	}
 
-	// Try to find the file relative to the current working directory
-	// This works when running from the project root (go run ./cmd/api)
-	var data []byte
-	var err error
-
-	// Try multiple possible paths
-	possiblePaths := []string{
-		configPath,
-		filepath.Join(".", configPath),
-		filepath.Join("..", configPath),
-		filepath.Join("../..", configPath),
-	}
-
-	for _, path := range possiblePaths {
-		if data, err = os.ReadFile(path); err == nil {
-			break
-		}
-	}
-
+	data, err := questionFiles.ReadFile("questions.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("failed to read questions.yaml (tried: %v): %w", possiblePaths, err)
+		return nil, fmt.Errorf("failed to read embedded questions.yaml: %w", err)
 	}
 
 	var config QuestionsConfig
@@ -137,8 +120,8 @@ func BuildDesignSummary(design map[string]interface{}) string {
 	return "Design: " + strings.Join(parts, ", ")
 }
 
-// ReloadQuestions reloads the questions configuration from disk
-// Useful for testing or when questions.yaml is updated
+// ReloadQuestions clears the cached config so the next LoadQuestions reads from the embedded file again.
+// Useful for testing.
 func ReloadQuestions() error {
 	questionsConfig = nil
 	_, err := LoadQuestions()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"embed"
 	"fmt"
 	"math"
 	"os"
@@ -13,6 +14,11 @@ import (
 
 	"github.com/google/uuid"
 )
+
+//go:embed rules.json
+var ruleFiles embed.FS
+
+const defaultRulesPath = "internal/analysis_suggestions/rules/rules.json"
 
 type Rule struct {
 	ID                string `json:"id"`
@@ -81,7 +87,13 @@ type RequestResponse struct {
 }
 
 func NewEngineFromFile(path string, db *sql.DB) (*Engine, error) {
-	b, err := os.ReadFile(path)
+	var b []byte
+	var err error
+	if path == defaultRulesPath {
+		b, err = ruleFiles.ReadFile("rules.json")
+	} else {
+		b, err = os.ReadFile(path)
+	}
 	if err != nil {
 		return nil, err
 	}
