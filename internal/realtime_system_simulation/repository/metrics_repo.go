@@ -118,11 +118,12 @@ func (r *MetricsRepository) ListTimeSeriesByRunID(ctx context.Context, runID str
 
 // SummaryUpsertParams captures the data needed to upsert a simulation_summaries row.
 type SummaryUpsertParams struct {
-	RunID       string
-	EngineRunID string
-	Metrics     map[string]any
-	SummaryData map[string]any
-	ScenarioYAML string
+	RunID           string
+	EngineRunID     string
+	Metrics         map[string]any
+	SummaryData     map[string]any
+	ScenarioYAML    string
+	TotalDurationMs *int64 // optional; when set, persisted to total_duration_ms column
 }
 
 // TimeSeriesPoint represents a single timeseries datapoint to persist.
@@ -162,16 +163,21 @@ func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertP
 		return fmt.Errorf("failed to ensure simulation_runs row for run_id=%s: %w", p.RunID, err)
 	}
 
+	var totalDurMs interface{}
+	if p.TotalDurationMs != nil {
+		totalDurMs = *p.TotalDurationMs
+	}
 	_, err = r.db.ExecContext(
 		ctx,
-		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data, scenario_yaml)
-         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data, scenario_yaml, total_duration_ms)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6)
          ON CONFLICT (run_id) DO UPDATE
          SET engine_run_id = EXCLUDED.engine_run_id,
              metrics = EXCLUDED.metrics,
              summary_data = EXCLUDED.summary_data,
-             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
-		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml),
+             total_duration_ms = COALESCE(EXCLUDED.total_duration_ms, simulation_summaries.total_duration_ms)`,
+		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML, totalDurMs,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert simulation_summaries for run_id=%s: %w", p.RunID, err)
