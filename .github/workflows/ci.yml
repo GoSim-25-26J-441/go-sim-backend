@@ -117,3 +117,19 @@ jobs:
           done
           echo "SSM command timed out"
           exit 1
+
+      - name: Wait for app to be ready
+        run: sleep 60
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            if curl -sf -o /dev/null https://api.microsim.dev/health; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Health check attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed after 12 attempts"
+          exit 1
