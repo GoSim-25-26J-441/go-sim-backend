@@ -74,9 +74,9 @@ jobs:
           export PATH="/usr/local/bin:/usr/bin:$PATH"
           APP_DIR=/opt/go-sim-backend
           mkdir -p "$APP_DIR"
-          aws ssm get-parameter --name "/arcfind/production/backend" --with-decryption --query "Parameter.Value" --output text --region REGION > "$APP_DIR/.env"
-          aws ssm get-parameter --name "/arcfind/production/firebase-sa" --with-decryption --query "Parameter.Value" --output text --region REGION > "$APP_DIR/firebase-service-account.json"
-          aws s3 sync s3://BUCKET/go-sim-backend/migrations/ "$APP_DIR/migrations/" --region REGION
+          aws ssm get-parameter --name "/arcfind/production/backend" --with-decryption --query "Parameter.Value" --output text --region us-east-1 > "$APP_DIR/.env"
+          aws ssm get-parameter --name "/arcfind/production/firebase-sa" --with-decryption --query "Parameter.Value" --output text --region us-east-1 > "$APP_DIR/firebase-service-account.json"
+          aws s3 sync s3://BUCKET/go-sim-backend/migrations/ "$APP_DIR/migrations/" --region us-east-1
           export PGPASSWORD=$(grep '^DB_PASSWORD=' "$APP_DIR/.env" | cut -d= -f2-)
           export DB_HOST=$(grep '^DB_HOST=' "$APP_DIR/.env" | cut -d= -f2-)
           export DB_PORT=$(grep '^DB_PORT=' "$APP_DIR/.env" | cut -d= -f2-)
@@ -85,13 +85,13 @@ jobs:
           for f in $(ls -1 "$APP_DIR/migrations/"*.sql 2>/dev/null | sort); do
             psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$f" || exit 1
           done
-          aws s3 cp s3://BUCKET/go-sim-backend/app "$APP_DIR/app" --region REGION
+          aws s3 cp s3://BUCKET/go-sim-backend/app "$APP_DIR/app" --region us-east-1
           chmod +x "$APP_DIR/app"
           sudo systemctl restart go-sim-backend
           SCRIPT
           )
           script="${script//BUCKET/${{ secrets.DEPLOY_BUCKET }}}"
-          script="${script//REGION/${{ secrets.AWS_REGION }}}"
+          script="${script//us-east-1/${{ env.AWS_REGION }}}"
           json_commands=$(echo -n "$script" | jq -Rs .)
           cmd_id=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
