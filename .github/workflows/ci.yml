@@ -70,15 +70,14 @@ jobs:
         id: ssm
         env:
           APP_DIR: /opt/go-sim-backend
-          PARAM_ENV: /arcfind/production/backend
-          PARAM_FIREBASE: /arcfind/production/firebase-sa
         run: |
           script=$(cat << 'SCRIPT'
           set -e
+          export PATH="/usr/local/bin:/usr/bin:$PATH"
           APP_DIR="$APP_DIR"
           mkdir -p "$APP_DIR"
-          aws ssm get-parameter --name "$PARAM_ENV" --with-decryption --query "Parameter.Value" --output text > "$APP_DIR/.env"
-          aws ssm get-parameter --name "$PARAM_FIREBASE" --with-decryption --query "Parameter.Value" --output text > "$APP_DIR/firebase-service-account.json"
+          aws ssm get-parameter --name "/arcfind/production/backend" --with-decryption --query "Parameter.Value" --output text --region REGION > "$APP_DIR/.env"
+          aws ssm get-parameter --name "/arcfind/production/firebase-sa" --with-decryption --query "Parameter.Value" --output text --region REGION > "$APP_DIR/firebase-service-account.json"
           aws s3 sync s3://BUCKET/go-sim-backend/migrations/ "$APP_DIR/migrations/" --region REGION
           export PGPASSWORD=$(grep '^DB_PASSWORD=' "$APP_DIR/.env" | cut -d= -f2-)
           export DB_HOST=$(grep '^DB_HOST=' "$APP_DIR/.env" | cut -d= -f2-)
@@ -94,8 +93,6 @@ jobs:
           SCRIPT
           )
           script="${script//\$APP_DIR/$APP_DIR}"
-          script="${script//\$PARAM_ENV/$PARAM_ENV}"
-          script="${script//\$PARAM_FIREBASE/$PARAM_FIREBASE}"
           script="${script//BUCKET/${{ secrets.DEPLOY_BUCKET }}}"
           script="${script//REGION/${{ secrets.AWS_REGION }}}"
           json_commands=$(echo -n "$script" | jq -Rs .)
