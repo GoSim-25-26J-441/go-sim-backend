@@ -66,33 +66,17 @@ jobs:
       - name: Upload migrations to S3
         run: aws s3 sync migrations/ s3://${{ secrets.DEPLOY_BUCKET }}/go-sim-backend/migrations/
 
+      - name: Upload deploy script to S3
+        run: aws s3 cp scripts/ec2-deploy.sh s3://${{ secrets.DEPLOY_BUCKET }}/go-sim-backend/scripts/deploy.sh
+
       - name: Deploy via SSM Run Command
         id: ssm
+        env:
+          BUCKET: ${{ secrets.DEPLOY_BUCKET }}
+          REGION: ${{ env.AWS_REGION }}
         run: |
-          script=$(cat << 'SCRIPT'
-          set -e
-          export PATH="/usr/local/bin:/usr/bin:$PATH"
-          APP_DIR=/opt/go-sim-backend
-          mkdir -p "$APP_DIR"
-          aws ssm get-parameter --name "/arcfind/production/backend" --with-decryption --query "Parameter.Value" --output text --region __AWS_REGION__ > "$APP_DIR/.env"
-          aws ssm get-parameter --name "/arcfind/production/firebase-sa" --with-decryption --query "Parameter.Value" --output text --region __AWS_REGION__ > "$APP_DIR/firebase-service-account.json"
-          aws s3 sync s3://BUCKET/go-sim-backend/migrations/ "$APP_DIR/migrations/" --region __AWS_REGION__
-          export PGPASSWORD=$(grep '^DB_PASSWORD=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_HOST=$(grep '^DB_HOST=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_PORT=$(grep '^DB_PORT=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_USER=$(grep '^DB_USER=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_NAME=$(grep '^DB_NAME=' "$APP_DIR/.env" | cut -d= -f2-)
-          for f in $(ls -1 "$APP_DIR/migrations/"*.sql 2>/dev/null | sort); do
-            psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$f" || exit 1
-          done
-          aws s3 cp s3://BUCKET/go-sim-backend/app "$APP_DIR/app" --region __AWS_REGION__
-          chmod +x "$APP_DIR/app"
-          sudo systemctl restart go-sim-backend
-          SCRIPT
-          )
-          script="${script//BUCKET/${{ secrets.DEPLOY_BUCKET }}}"
-          script="${script//__AWS_REGION__/${{ env.AWS_REGION }}}"
-          json_commands=$(echo -n "$script" | jq -Rs .)
+          cmd="aws s3 cp s3://${BUCKET}/go-sim-backend/scripts/deploy.sh /tmp/deploy.sh --region ${REGION} && chmod +x /tmp/deploy.sh && /tmp/deploy.sh ${BUCKET} ${REGION}"
+          json_commands=$(echo -n "$cmd" | jq -Rs .)
           cmd_id=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
