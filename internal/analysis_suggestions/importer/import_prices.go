@@ -1,4 +1,4 @@
-package main
+package importer
 
 import (
 	"context"
@@ -20,12 +20,66 @@ import (
 
 const defaultBatchSize = 500
 
+// DefaultBatchSize is the default batch size for CSV imports (used by cron/HTTP).
+const DefaultBatchSize = defaultBatchSize
+
+// Run imports Azure, GCP, and AWS price CSVs from dir/asm into the database.
+// It uses DATABASE_URL or config (DB_* / config file) for the connection.
+func Run(ctx context.Context, dir string, batchSize int) error {
+	dsn, err := getDSN()
+	if err != nil {
+		return err
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to postgres: %w", err)
+	}
+	defer pool.Close()
+
+	azureFile := filepathJoin(dir, "asm", "azure_compute_prices.csv")
+	gcpFile := filepathJoin(dir, "asm", "gcp_compute_prices.csv")
+	awsFile := filepathJoin(dir, "asm", "aws_compute_prices.csv")
+
+	if exists(azureFile) {
+		log.Printf("Importing Azure CSV: %s", azureFile)
+		if err := importAzureCSV(ctx, pool, azureFile, batchSize); err != nil {
+			return fmt.Errorf("Azure import: %w", err)
+		}
+	} else {
+		log.Printf("Azure CSV not found: %s (skipping)", azureFile)
+	}
+
+	if exists(gcpFile) {
+		log.Printf("Importing GCP CSV: %s", gcpFile)
+		if err := importGCPCSV(ctx, pool, gcpFile, batchSize); err != nil {
+			return fmt.Errorf("GCP import: %w", err)
+		}
+	} else {
+		log.Printf("GCP CSV not found: %s (skipping)", gcpFile)
+	}
+
+	if exists(awsFile) {
+		log.Printf("Importing AWS CSV: %s", awsFile)
+		if err := importAWSCSV(ctx, pool, awsFile, batchSize); err != nil {
+			return fmt.Errorf("AWS import: %w", err)
+		}
+	} else {
+		log.Printf("AWS CSV not found: %s (skipping)", awsFile)
+	}
+
+	log.Println("All imports finished successfully.")
+	return nil
+}
+
 func main() {
 	dir := flag.String("dir", "out", "directory containing provider CSV files (e.g. out/asm for Azure)")
 	batch := flag.Int("batch", defaultBatchSize, "batch size for inserts")
 	flag.Parse()
 
-	dsn := getDSN()
+	dsn, err := getDSN()
+	if err != nil {
+		log.Fatalf("failed to get DSN: %v (set DATABASE_URL or DB_* env vars)", err)
+	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -64,18 +118,18 @@ func main() {
 		log.Printf("AWS CSV not found: %s (skipping)", awsFile)
 	}
 
-	log.Println("✅ All imports finished successfully.")
+	log.Println("All imports finished successfully.")
 }
 
-func getDSN() string {
+func getDSN() (string, error) {
 	if u := os.Getenv("DATABASE_URL"); u != "" {
-		return u
+		return u, nil
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("failed to load config: %v (set DATABASE_URL or DB_* env vars)", err)
+		return "", fmt.Errorf("load config: %w", err)
 	}
-	return postgres.DSN(&cfg.Database)
+	return postgres.DSN(&cfg.Database), nil
 }
 
 func filepathJoin(parts ...string) string {
