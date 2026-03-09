@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev, ci]
+  pull_request:
+    branches: [main, dev, ci]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -v -race -count=1 ./...
+
+  deploy:
+    needs: [test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+    concurrency:
+      group: deploy-main
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build Linux binary
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o app ./cmd/api
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload binary to S3
+        run: aws s3 cp app s3://${{ secrets.DEPLOY_BUCKET }}/go-sim-backend/app
+
+      - name: Upload migrations to S3
+        run: aws s3 sync migrations/ s3://${{ secrets.DEPLOY_BUCKET }}/go-sim-backend/migrations/
+
+      - name: Deploy via SSM Run Command
+        id: ssm
+        env:
+          APP_DIR: /opt/go-sim-backend
+          PARAM_ENV: /app/go-sim-backend/env
+          PARAM_FIREBASE: /app/go-sim-backend/firebase-service-account
+        run: |
+          script=$(cat << 'SCRIPT'
+          set -e
+          APP_DIR="$APP_DIR"
+          mkdir -p "$APP_DIR"
+          aws ssm get-parameter --name "$PARAM_ENV" --with-decryption --query "Parameter.Value" --output text > "$APP_DIR/.env"
+          aws ssm get-parameter --name "$PARAM_FIREBASE" --with-decryption --query "Parameter.Value" --output text > "$APP_DIR/firebase-service-account.json"
+          aws s3 sync s3://BUCKET/go-sim-backend/migrations/ "$APP_DIR/migrations/" --region REGION
+          export PGPASSWORD=$(grep '^DB_PASSWORD=' "$APP_DIR/.env" | cut -d= -f2-)
+          export DB_HOST=$(grep '^DB_HOST=' "$APP_DIR/.env" | cut -d= -f2-)
+          export DB_PORT=$(grep '^DB_PORT=' "$APP_DIR/.env" | cut -d= -f2-)
+          export DB_USER=$(grep '^DB_USER=' "$APP_DIR/.env" | cut -d= -f2-)
+          export DB_NAME=$(grep '^DB_NAME=' "$APP_DIR/.env" | cut -d= -f2-)
+          for f in $(ls -1 "$APP_DIR/migrations/"*.sql 2>/dev/null | sort); do
+            psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$f" || exit 1
+          done
+          aws s3 cp s3://BUCKET/go-sim-backend/app "$APP_DIR/app" --region REGION
+          chmod +x "$APP_DIR/app"
+          sudo systemctl restart go-sim-backend
+          SCRIPT
+          )
+          script="${script//\$APP_DIR/$APP_DIR}"
+          script="${script//\$PARAM_ENV/$PARAM_ENV}"
+          script="${script//\$PARAM_FIREBASE/$PARAM_FIREBASE}"
+          script="${script//BUCKET/${{ secrets.DEPLOY_BUCKET }}}"
+          script="${script//REGION/${{ secrets.AWS_REGION }}}"
+          json_commands=$(echo -n "$script" | jq -Rs .)
+          cmd_id=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --parameters "{\"commands\":[$json_commands]}" \
+            --query "Command.CommandId" \
+            --output text)
+          echo "command_id=$cmd_id" >> "$GITHUB_OUTPUT"
+          for i in $(seq 1 30); do
+            status=$(aws ssm get-command-invocation \
+              --command-id "$cmd_id" \
+              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")
+            if [ "$status" = "Success" ]; then
+              exit_code=$(aws ssm get-command-invocation \
+                --command-id "$cmd_id" \
+                --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+                --query "ResponseCode" \
+                --output text)
+              if [ "$exit_code" != "0" ]; then
+                echo "SSM command failed with exit code $exit_code"
+                aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
+                exit 1
+              fi
+              echo "Deploy completed successfully"
+              exit 0
+            fi
+            if [ "$status" = "Failed" ] || [ "$status" = "Cancelled" ] || [ "$status" = "TimedOut" ]; then
+              echo "SSM command failed with status $status"
+              aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
+              exit 1
+            fi
+            echo "Waiting for SSM command... ($status)"
+            sleep 5
+          done
+          echo "SSM command timed out"
+          exit 1
