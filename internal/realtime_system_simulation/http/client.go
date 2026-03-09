@@ -144,13 +144,13 @@ func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, du
 // GetRunResponse represents the response from getting a run
 type GetRunResponse struct {
 	Run struct {
-		ID                  string `json:"id"`
-		Status              string `json:"status"`
-		CreatedAt           int64  `json:"created_at_unix_ms"`
-		StartedAt           int64  `json:"started_at_unix_ms"`
-		EndedAt             int64  `json:"ended_at_unix_ms"`
-		Error               string `json:"error,omitempty"`
-		RealDurationMs      int64  `json:"real_duration_ms,omitempty"`
+		ID                   string `json:"id"`
+		Status               string `json:"status"`
+		CreatedAt            int64  `json:"created_at_unix_ms"`
+		StartedAt            int64  `json:"started_at_unix_ms"`
+		EndedAt              int64  `json:"ended_at_unix_ms"`
+		Error                string `json:"error,omitempty"`
+		RealDurationMs       int64  `json:"real_duration_ms,omitempty"`
 		SimulationDurationMs int64  `json:"simulation_duration_ms,omitempty"`
 	} `json:"run"`
 }
@@ -178,14 +178,14 @@ type ExportRunRun struct {
 // ExportRunResponse represents the export data from the simulator.
 // It contains the original input, aggregated metrics, and optional time-series data.
 type ExportRunResponse struct {
-	Run  *ExportRunRun `json:"run,omitempty"`
+	Run   *ExportRunRun `json:"run,omitempty"`
 	Input struct {
 		ScenarioYAML string `json:"scenario_yaml"`
 		DurationMs   int64  `json:"duration_ms,omitempty"`
 	} `json:"input"`
-	Metrics             map[string]any      `json:"metrics,omitempty"`
-	OptimizationHistory []OptimizationStep  `json:"optimization_history,omitempty"`
-	FinalConfig         map[string]any      `json:"final_config,omitempty"`
+	Metrics             map[string]any     `json:"metrics,omitempty"`
+	OptimizationHistory []OptimizationStep `json:"optimization_history,omitempty"`
+	FinalConfig         map[string]any     `json:"final_config,omitempty"`
 	Candidates          []struct {
 		ID           string         `json:"id"`
 		Spec         map[string]any `json:"spec"`
@@ -194,7 +194,7 @@ type ExportRunResponse struct {
 		Source       string         `json:"source"`
 		ScenarioYAML string         `json:"scenario_yaml,omitempty"`
 	} `json:"candidates,omitempty"`
-	TimeSeries          []struct {
+	TimeSeries []struct {
 		Metric string `json:"metric"`
 		Points []struct {
 			Timestamp string            `json:"timestamp"`
@@ -281,9 +281,9 @@ func (c *SimulationEngineClient) ExportRun(runID string) (*ExportRunResponse, er
 // TimeSeriesQueryOpts holds optional query parameters for GET /v1/runs/{id}/metrics/timeseries.
 // Times can be Unix ms or RFC3339 strings; pass as strings.
 type TimeSeriesQueryOpts struct {
-	Metric   []string // metric names (e.g. request_count, request_error_count); can repeat
-	Service  string
-	Instance string
+	Metric    []string // metric names (e.g. request_count, request_error_count); can repeat
+	Service   string
+	Instance  string
 	StartTime string
 	EndTime   string
 }

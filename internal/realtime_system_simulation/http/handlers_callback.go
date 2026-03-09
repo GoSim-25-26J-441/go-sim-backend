@@ -25,15 +25,15 @@ const persistenceTimeout = 5 * time.Minute
 // scenario YAML in the callback; it sends only run IDs (best_run_id, top_candidates). The backend
 // must call GET /v1/runs/{id}/export for each ID to obtain input.scenario_yaml.
 type engineRunCallbackBody struct {
-	RunID            string                 `json:"run_id"`
-	Status           interface{}            `json:"status"`           // Can be int (enum) or string
-	StatusString     string                 `json:"status_string"`    // Preferred: string representation
-	CreatedAtUnixMs  int64                  `json:"created_at_unix_ms"`
-	StartedAtUnixMs  int64                  `json:"started_at_unix_ms"`
-	EndedAtUnixMs    int64                  `json:"ended_at_unix_ms"`
-	Metrics          map[string]interface{} `json:"metrics"`
-	TimestampUnixMs  int64                  `json:"timestamp"`
-	Error            string                 `json:"error,omitempty"`  // Error message if any
+	RunID           string                 `json:"run_id"`
+	Status          interface{}            `json:"status"`        // Can be int (enum) or string
+	StatusString    string                 `json:"status_string"` // Preferred: string representation
+	CreatedAtUnixMs int64                  `json:"created_at_unix_ms"`
+	StartedAtUnixMs int64                  `json:"started_at_unix_ms"`
+	EndedAtUnixMs   int64                  `json:"ended_at_unix_ms"`
+	Metrics         map[string]interface{} `json:"metrics"`
+	TimestampUnixMs int64                  `json:"timestamp"`
+	Error           string                 `json:"error,omitempty"` // Error message if any
 	// Optimization / batch fields (optional; present for optimization runs)
 	BestRunID     string   `json:"best_run_id,omitempty"`
 	BestScore     float64  `json:"best_score,omitempty"`
@@ -113,7 +113,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 		body.TopCandidates,
 		body.Error,
 	)
-	
+
 	// Preserve existing metadata and merge callback data
 	updateMeta := make(map[string]interface{})
 	if run.Metadata != nil {
@@ -122,7 +122,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 			updateMeta[k] = v
 		}
 	}
-	
+
 	// Add/update callback-related metadata
 	updateMeta["engine_status"] = statusStr
 	updateMeta["engine_status_string"] = body.StatusString
@@ -130,7 +130,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	updateMeta["engine_started_at_unix_ms"] = body.StartedAtUnixMs
 	updateMeta["engine_ended_at_unix_ms"] = body.EndedAtUnixMs
 	updateMeta["engine_callback_ts_unix_ms"] = body.TimestampUnixMs
-	
+
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
@@ -279,7 +279,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		body.TopCandidates,
 		body.Error,
 	)
-	
+
 	// Preserve existing metadata and merge callback data
 	updateMeta := make(map[string]interface{})
 	if run.Metadata != nil {
@@ -288,7 +288,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 			updateMeta[k] = v
 		}
 	}
-	
+
 	// Add/update callback-related metadata
 	updateMeta["engine_status"] = statusStr
 	updateMeta["engine_status_string"] = body.StatusString
@@ -296,7 +296,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	updateMeta["engine_started_at_unix_ms"] = body.StartedAtUnixMs
 	updateMeta["engine_ended_at_unix_ms"] = body.EndedAtUnixMs
 	updateMeta["engine_callback_ts_unix_ms"] = body.TimestampUnixMs
-	
+
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
@@ -672,8 +672,8 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			summaryParams := &repository.SummaryUpsertParams{
 				RunID:           run.RunID,
 				EngineRunID:     run.EngineRunID,
-				Metrics:        metricsForSummary,
-				ScenarioYAML:   exportResp.Input.ScenarioYAML,
+				Metrics:         metricsForSummary,
+				ScenarioYAML:    exportResp.Input.ScenarioYAML,
 				SummaryData:     summaryData,
 				TotalDurationMs: totalDurationMs,
 			}
@@ -900,5 +900,3 @@ func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.Simula
 
 	log.Printf("Best candidate scenario for run_id=%s stored at S3 key=%s and recorded in simulation_summaries", run.RunID, key)
 }
-
-
