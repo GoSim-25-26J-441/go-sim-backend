@@ -68,13 +68,11 @@ jobs:
 
       - name: Deploy via SSM Run Command
         id: ssm
-        env:
-          APP_DIR: /opt/go-sim-backend
         run: |
           script=$(cat << 'SCRIPT'
           set -e
           export PATH="/usr/local/bin:/usr/bin:$PATH"
-          APP_DIR="$APP_DIR"
+          APP_DIR=/opt/go-sim-backend
           mkdir -p "$APP_DIR"
           aws ssm get-parameter --name "/arcfind/production/backend" --with-decryption --query "Parameter.Value" --output text --region REGION > "$APP_DIR/.env"
           aws ssm get-parameter --name "/arcfind/production/firebase-sa" --with-decryption --query "Parameter.Value" --output text --region REGION > "$APP_DIR/firebase-service-account.json"
@@ -92,7 +90,6 @@ jobs:
           sudo systemctl restart go-sim-backend
           SCRIPT
           )
-          script="${script//\$APP_DIR/$APP_DIR}"
           script="${script//BUCKET/${{ secrets.DEPLOY_BUCKET }}}"
           script="${script//REGION/${{ secrets.AWS_REGION }}}"
           json_commands=$(echo -n "$script" | jq -Rs .)
