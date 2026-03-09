@@ -70,8 +70,8 @@ jobs:
         id: ssm
         env:
           APP_DIR: /opt/go-sim-backend
-          PARAM_ENV: /app/go-sim-backend/env
-          PARAM_FIREBASE: /app/go-sim-backend/firebase-service-account
+          PARAM_ENV: /arcfind/production/backend
+          PARAM_FIREBASE: /arcfind/production/firebase-sa
         run: |
           script=$(cat << 'SCRIPT'
           set -e
