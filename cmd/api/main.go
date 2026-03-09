@@ -218,7 +218,7 @@ func main() {
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
-	log.Printf("CORS enabled for origins: http://localhost:3000, http://localhost:8080, http://localhost:8000, %s, %s, %s")
+	log.Printf("CORS enabled for origins: http://localhost:3000, http://localhost:8080, http://localhost:8000, %s, %s, %s", "https://app.microsim.dev", "https://microsim.dev", "https://arcfind.dev")
 	log.Printf("Health endpoint available at: http://localhost:%s/health", cfg.Server.Port)
 
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
