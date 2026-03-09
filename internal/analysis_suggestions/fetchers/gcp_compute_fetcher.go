@@ -1,7 +1,4 @@
-//go:build tools
-// +build tools
-
-package main
+package fetchers
 
 import (
 	"context"
@@ -46,15 +43,15 @@ var (
 	reMachineSimple = regexp.MustCompile(`([a-z0-9]+-[a-z0-9]+-[0-9]+)`)
 )
 
-func main() {
-	outDir := "out/asm"
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		log.Fatalf("mkdir out: %v", err)
+// RunGCP fetches GCP compute prices and writes CSV under outDir/asm.
+func RunGCP(ctx context.Context, outDir string) error {
+	asmDir := filepath.Join(outDir, "asm")
+	if err := os.MkdirAll(asmDir, 0o755); err != nil {
+		return err
 	}
-	outFile := filepath.Join(outDir, "gcp_compute_prices.csv")
+	outFile := filepath.Join(asmDir, "gcp_compute_prices.csv")
 
 	limiter := rate.NewLimiter(rate.Limit(4), 8)
-	ctx := context.Background()
 
 	creds, _ := google.FindDefaultCredentials(ctx, cloudbilling.CloudPlatformScope)
 	var opts []option.ClientOption
@@ -64,24 +61,24 @@ func main() {
 
 	billingSvc, err := cloudbilling.NewService(ctx, opts...)
 	if err != nil {
-		log.Fatalf("cloudbilling.NewService: %v", err)
+		return fmt.Errorf("cloudbilling.NewService: %w", err)
 	}
 
 	log.Printf("Listing services from Cloud Billing Catalog API...")
 	services, err := listServices(ctx, billingSvc)
 	if err != nil {
-		log.Fatalf("listServices: %v", err)
+		return fmt.Errorf("listServices: %w", err)
 	}
 
 	computeServices := pickComputeServices(services)
 	if len(computeServices) == 0 {
-		log.Fatalf("no compute services found in billing catalog")
+		return fmt.Errorf("no compute services found in billing catalog")
 	}
 	log.Printf("Found %d compute services to query", len(computeServices))
 
 	f, err := os.Create(outFile)
 	if err != nil {
-		log.Fatalf("create out file: %v", err)
+		return fmt.Errorf("create out file: %w", err)
 	}
 	defer f.Close()
 
@@ -94,7 +91,7 @@ func main() {
 		"purchase_option", "usage_type", "fetched_at",
 	}
 	if err := writer.Write(header); err != nil {
-		log.Fatalf("write header failed: %v", err)
+		return fmt.Errorf("write header: %w", err)
 	}
 
 	total := 0
@@ -105,7 +102,7 @@ func main() {
 		pageToken := ""
 		for {
 			if err := limiter.Wait(ctx); err != nil {
-				log.Fatalf("rate limiter: %v", err)
+				return fmt.Errorf("rate limiter: %w", err)
 			}
 			call := billingSvc.Services.Skus.List(svcName).PageSize(500)
 			if pageToken != "" {
@@ -113,7 +110,7 @@ func main() {
 			}
 			resp, err := call.Do()
 			if err != nil {
-				log.Fatalf("Services.Skus.List(%s) failed: %v", svcName, err)
+				return fmt.Errorf("Services.Skus.List(%s): %w", svcName, err)
 			}
 
 			for _, sku := range resp.Skus {
@@ -185,7 +182,7 @@ func main() {
 						out.FetchedAt.Format(time.RFC3339),
 					}
 					if err := writer.Write(record); err != nil {
-						log.Fatalf("write record failed: %v", err)
+						return fmt.Errorf("write record: %w", err)
 					}
 
 					if total%200 == 0 {
@@ -204,9 +201,10 @@ func main() {
 
 	writer.Flush()
 	if err := writer.Error(); err != nil {
-		log.Fatalf("flush failed: %v", err)
+		return fmt.Errorf("flush: %w", err)
 	}
-	log.Printf("✅ Done. Wrote %d records to %s", total, outFile)
+	log.Printf("Done. Wrote %d records to %s", total, outFile)
+	return nil
 }
 
 func extractInstanceType(sku *cloudbilling.Sku) string {
