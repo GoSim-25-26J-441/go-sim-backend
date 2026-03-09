@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -37,6 +39,7 @@ type CreateRunRequest struct {
 type OptimizationConfig struct {
 	Objective            string  `json:"objective,omitempty"`
 	MaxIterations        int32   `json:"max_iterations,omitempty"`
+	MaxEvaluations       int32   `json:"max_evaluations,omitempty"`
 	StepSize             float64 `json:"step_size,omitempty"`
 	EvaluationDurationMs int64   `json:"evaluation_duration_ms,omitempty"`
 	Online               bool    `json:"online,omitempty"`
@@ -44,6 +47,15 @@ type OptimizationConfig struct {
 	ControlIntervalMs    int64   `json:"control_interval_ms,omitempty"`
 	MinHosts             int32   `json:"min_hosts,omitempty"`
 	MaxHosts             int32   `json:"max_hosts,omitempty"`
+	// Scale-down gating (Phase 1): 0–1, 0 = off
+	ScaleDownCPUUtilMax float64 `json:"scale_down_cpu_util_max,omitempty"`
+	ScaleDownMemUtilMax float64 `json:"scale_down_mem_util_max,omitempty"`
+	// Primary target (Phase 2): e.g. "p95_latency", "cpu_utilization", "memory_utilization"
+	OptimizationTargetPrimary string  `json:"optimization_target_primary,omitempty"`
+	TargetUtilHigh            float64 `json:"target_util_high,omitempty"`
+	TargetUtilLow             float64 `json:"target_util_low,omitempty"`
+	// Host scale-in (Phase 3): 0–1, 0 = host scale-in disabled
+	ScaleDownHostCPUUtilMax float64 `json:"scale_down_host_cpu_util_max,omitempty"`
 }
 
 // RunInput represents the input for a simulation run.
@@ -172,7 +184,8 @@ type ExportRunResponse struct {
 		DurationMs   int64  `json:"duration_ms,omitempty"`
 	} `json:"input"`
 	Metrics             map[string]any      `json:"metrics,omitempty"`
-	OptimizationHistory []OptimizationStep `json:"optimization_history,omitempty"`
+	OptimizationHistory []OptimizationStep  `json:"optimization_history,omitempty"`
+	FinalConfig         map[string]any      `json:"final_config,omitempty"`
 	Candidates          []struct {
 		ID           string         `json:"id"`
 		Spec         map[string]any `json:"spec"`
@@ -263,6 +276,115 @@ func (c *SimulationEngineClient) ExportRun(runID string) (*ExportRunResponse, er
 	}
 
 	return &exportResp, nil
+}
+
+// TimeSeriesQueryOpts holds optional query parameters for GET /v1/runs/{id}/metrics/timeseries.
+// Times can be Unix ms or RFC3339 strings; pass as strings.
+type TimeSeriesQueryOpts struct {
+	Metric   []string // metric names (e.g. request_count, request_error_count); can repeat
+	Service  string
+	Instance string
+	StartTime string
+	EndTime   string
+}
+
+// GetRunMetricsTimeSeriesPoint is a single point in the timeseries response.
+type GetRunMetricsTimeSeriesPoint struct {
+	Timestamp string            `json:"timestamp"`
+	Metric    string            `json:"metric"`
+	Value     float64           `json:"value"`
+	Labels    map[string]string `json:"labels"`
+}
+
+// GetRunMetricsTimeSeriesResponse is the response from GET /v1/runs/{id}/metrics/timeseries.
+// For request_count and request_error_count the simulator returns cumulative values.
+type GetRunMetricsTimeSeriesResponse struct {
+	RunID  string                         `json:"run_id"`
+	Points []GetRunMetricsTimeSeriesPoint `json:"points"`
+}
+
+// GetRunMetricsTimeSeries fetches time-series points from the simulation engine.
+// Endpoint: GET /v1/runs/{runID}/metrics/timeseries with optional query params.
+// Call during or right after the run while the run still has a collector.
+func (c *SimulationEngineClient) GetRunMetricsTimeSeries(ctx context.Context, runID string, opts *TimeSeriesQueryOpts) (*GetRunMetricsTimeSeriesResponse, error) {
+	path := fmt.Sprintf("%s/v1/runs/%s/metrics/timeseries", c.baseURL, runID)
+	if opts != nil {
+		vals := url.Values{}
+		for _, m := range opts.Metric {
+			vals.Add("metric", m)
+		}
+		if opts.Service != "" {
+			vals.Set("service", opts.Service)
+		}
+		if opts.Instance != "" {
+			vals.Set("instance", opts.Instance)
+		}
+		if opts.StartTime != "" {
+			vals.Set("start_time", opts.StartTime)
+		}
+		if opts.EndTime != "" {
+			vals.Set("end_time", opts.EndTime)
+		}
+		if len(vals) > 0 {
+			path = path + "?" + vals.Encode()
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine metrics/timeseries: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read metrics/timeseries response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simulation engine returned status %d for metrics/timeseries: %s", resp.StatusCode, string(body))
+	}
+	var out GetRunMetricsTimeSeriesResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metrics/timeseries response: %w", err)
+	}
+	return &out, nil
+}
+
+// ErrMetricsNotAvailable is returned by GetRunMetrics when the engine returns 412 (metrics not ready yet).
+var ErrMetricsNotAvailable = errors.New("metrics not available")
+
+// GetRunMetricsResponse is the response from GET /v1/runs/{id}/metrics (aggregate snapshot).
+// Same shape as export's metrics: total_requests, service_metrics, etc.
+type GetRunMetricsResponse struct {
+	Metrics map[string]any `json:"metrics"`
+}
+
+// GetRunMetrics fetches the aggregate metrics snapshot for a run.
+// Endpoint: GET /v1/runs/{runID}/metrics. Returns ErrMetricsNotAvailable on 412.
+func (c *SimulationEngineClient) GetRunMetrics(runID string) (*GetRunMetricsResponse, error) {
+	path := fmt.Sprintf("%s/v1/runs/%s/metrics", c.baseURL, runID)
+	resp, err := c.httpClient.Get(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine metrics: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read metrics response: %w", err)
+	}
+	if resp.StatusCode == http.StatusPreconditionFailed {
+		return nil, ErrMetricsNotAvailable
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simulation engine returned status %d for metrics: %s", resp.StatusCode, string(body))
+	}
+	var out GetRunMetricsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metrics response: %w", err)
+	}
+	return &out, nil
 }
 
 // StartRun starts a run in the simulation engine
