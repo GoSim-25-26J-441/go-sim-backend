@@ -62,7 +62,7 @@ type ClusterCostResult struct {
 	WithinBudget bool    `json:"within_budget"`
 }
 
-func HoursPerMonth() float64 { return 24 * 30 }
+func HoursPerMonth() float64 { return 730 }
 
 func round(v float64, places int) float64 {
 	p := math.Pow(10, float64(places))
@@ -1057,8 +1057,8 @@ func groupPurchaseOptions(rows []priceRow, provider string) []PurchaseOption {
 
 					if pricePerHour > 100 {
 						monthlyCost := pricePerHour / totalMonthsInLease
-						pricePerHour = monthlyCost / 720
-						note = fmt.Sprintf("Converted from total reservation cost: $%.2f/%d months/720 hrs",
+						pricePerHour = monthlyCost / 730
+						note = fmt.Sprintf("Converted from total reservation cost: $%.2f/%d months/730 hrs",
 							*row.PriceHour, int(totalMonthsInLease))
 					}
 				}
