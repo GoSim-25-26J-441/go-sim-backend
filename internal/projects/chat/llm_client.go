@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // LLMClient handles communication with the LLM service
@@ -22,7 +21,7 @@ func NewLLMClient(baseURL, apiKey string) *LLMClient {
 	return &LLMClient{
 		BaseURL: baseURL,
 		APIKey:  apiKey,
-		HTTP:    &http.Client{Timeout: 180 * time.Second},
+		HTTP:    &http.Client{},
 	}
 }
 
