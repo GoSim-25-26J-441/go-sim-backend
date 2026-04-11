@@ -215,6 +215,52 @@ func (h *Handler) listDiagramImages(c *gin.Context) {
 	})
 }
 
+// updateDiagramVersion updates diagram_json (and derived spec_summary / yaml) in place for a version id.
+func (h *Handler) updateDiagramVersion(c *gin.Context) {
+	publicID := strings.TrimSpace(c.Param("public_id"))
+	versionID := strings.TrimSpace(c.Param("version_id"))
+	if publicID == "" || versionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing project id or version id"})
+		return
+	}
+
+	fuid := strings.TrimSpace(c.GetString("firebase_uid"))
+	if fuid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "missing user"})
+		return
+	}
+
+	var req struct {
+		DiagramJSON    json.RawMessage `json:"diagram_json"`
+		SpecSummary    json.RawMessage `json:"spec_summary"`
+		ImageObjectKey *string         `json:"image_object_key"`
+		Hash           *string         `json:"hash"`
+		Source         *string         `json:"source"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.DiagramJSON) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid body (diagram_json required)"})
+		return
+	}
+
+	ver, err := h.diagramService.UpdateVersionInPlace(c.Request.Context(), fuid, publicID, versionID, domain.UpdateVersionInPlaceInput{
+		DiagramJSON:    req.DiagramJSON,
+		SpecSummary:    req.SpecSummary,
+		ImageObjectKey: req.ImageObjectKey,
+		Hash:           req.Hash,
+		Source:         req.Source,
+	})
+	if err != nil {
+		if err == domain.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project or diagram version not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "diagram_version": ver})
+}
+
 // updateDiagramTitle updates the title of a specific diagram version for the given project.
 func (h *Handler) updateDiagramTitle(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("public_id"))

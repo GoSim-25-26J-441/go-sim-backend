@@ -25,6 +25,7 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	rg.GET("/:public_id/diagram/latest", h.latest)
 	rg.GET("/:public_id/diagram/images", h.listDiagramImages)
 	rg.PATCH("/:public_id/diagram/:version_id/title", h.updateDiagramTitle)
+	rg.PATCH("/:public_id/diagram/:version_id", h.updateDiagramVersion)
 
 	// Summary route
 	rg.GET("/:public_id/summary", h.summary)

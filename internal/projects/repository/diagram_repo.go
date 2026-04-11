@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/utils"
@@ -382,6 +383,140 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// UpdateVersionInPlace updates diagram_json/spec_summary/yaml_content for an existing version row
+// (same id and version_number). Optional fields follow UpdateVersionInPlaceInput semantics.
+func (r *DiagramRepository) UpdateVersionInPlace(ctx context.Context, userFirebaseUID, projectPublicID, versionID string, in domain.UpdateVersionInPlaceInput) (*domain.DiagramVersion, error) {
+	if strings.TrimSpace(userFirebaseUID) == "" {
+		return nil, fmt.Errorf("user firebase uid required")
+	}
+	if strings.TrimSpace(projectPublicID) == "" {
+		return nil, fmt.Errorf("project public_id required")
+	}
+	if strings.TrimSpace(versionID) == "" {
+		return nil, fmt.Errorf("version id required")
+	}
+	if len(in.DiagramJSON) == 0 {
+		return nil, fmt.Errorf("diagram_json required")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var verNum int
+	var title, source string
+	var imgKey, hash sql.NullString
+	var createdAt time.Time
+
+	err = tx.QueryRowContext(ctx, `
+select dv.version_number, dv.title, dv.source, dv.image_object_key, dv.hash, dv.created_at
+from diagram_versions dv
+where dv.id = $1
+  and dv.project_public_id = $2
+  and dv.user_firebase_uid = $3
+  and exists (
+    select 1 from projects p
+    where p.public_id = dv.project_public_id
+      and p.user_firebase_uid = dv.user_firebase_uid
+      and p.deleted_at is null
+  )
+for update of dv
+`, versionID, projectPublicID, userFirebaseUID).Scan(&verNum, &title, &source, &imgKey, &hash, &createdAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+
+	diagramText := string(in.DiagramJSON)
+	specText := ""
+	if len(in.SpecSummary) > 0 {
+		specText = strings.TrimSpace(string(in.SpecSummary))
+	} else if diagramText != "" {
+		if generated, err := generateSpecSummaryFromDiagram(diagramText); err == nil && generated != "" {
+			specText = generated
+		}
+	}
+
+	yamlText := ""
+	if specText != "" {
+		if y, err := generateYAMLFromSpecSummary(specText); err == nil {
+			yamlText = y
+		}
+	}
+
+	newSource := source
+	if in.Source != nil && strings.TrimSpace(*in.Source) != "" {
+		newSource = strings.TrimSpace(*in.Source)
+	}
+
+	newHash := ""
+	if hash.Valid {
+		newHash = hash.String
+	}
+	if in.Hash != nil {
+		newHash = strings.TrimSpace(*in.Hash)
+	}
+
+	newImg := ""
+	if imgKey.Valid {
+		newImg = imgKey.String
+	}
+	if in.ImageObjectKey != nil {
+		newImg = strings.TrimSpace(*in.ImageObjectKey)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+update diagram_versions
+set diagram_json = $1::jsonb,
+    spec_summary = nullif($2,'')::jsonb,
+    yaml_content = nullif($3,''),
+    source = $4,
+    hash = nullif($5,''),
+    image_object_key = nullif($6,'')
+where id = $7
+  and project_public_id = $8
+  and user_firebase_uid = $9
+`, diagramText, specText, yamlText, newSource, newHash, newImg, versionID, projectPublicID, userFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+update projects
+set updated_at = now()
+where public_id = $1
+  and user_firebase_uid = $2
+  and deleted_at is null
+`, projectPublicID, userFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	out := &domain.DiagramVersion{
+		ID:              versionID,
+		ProjectPublicID: projectPublicID,
+		UserFirebaseUID: userFirebaseUID,
+		VersionNumber:   verNum,
+		Title:           title,
+		Source:          newSource,
+		Hash:            newHash,
+		ImageObjectKey:  newImg,
+		DiagramJSON:     in.DiagramJSON,
+		SpecSummary:     json.RawMessage([]byte(specText)),
+		YAMLContent:     yamlText,
+		CreatedAt:       createdAt,
+	}
+	return out, nil
 }
 
 func (r *DiagramRepository) Latest(ctx context.Context, userFirebaseUID, projectPublicID string) (*domain.DiagramVersion, error) {

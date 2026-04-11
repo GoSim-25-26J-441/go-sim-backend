@@ -146,6 +146,14 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 		}
 	}
 
+	// A version id can exist on the project while diagram_json/spec_summary are still {}.
+	// We would store diagram_version_id_used on messages but send nothing to UIGP — avoid that.
+	if diagramVersionIDUsed != nil && *diagramVersionIDUsed != "" {
+		if !isMeaningfulJSON(specSummary) && !isMeaningfulJSON(diagramJSON) {
+			return nil, domain.ErrDiagramPayloadNotReady
+		}
+	}
+
 	// Get chat history
 	roles, contents, err := s.repo.ListHistoryForUIGP(ctx, userID, publicID, threadID, 20)
 	if err != nil {
@@ -171,8 +179,9 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 				// Prepend the design summary to the user message
 				userMessage = summary + "\n\n" + req.Message
 			}
-		} else {
-			// No design provided - add note
+		} else if !isMeaningfulJSON(diagramJSON) && !isMeaningfulJSON(specSummary) {
+			// "Design" here means workload/budget map from the client, not the architecture diagram.
+			// Do not claim "no design" when we are sending diagram/spec context to UIGP.
 			userMessage = "Note: No design available. " + req.Message
 		}
 	}
