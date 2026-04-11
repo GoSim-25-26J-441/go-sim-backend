@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"errors"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -14,24 +16,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// persistenceTimeout is the max time for callback persistence (export fetch + DB + S3).
+// Used in a background goroutine so the HTTP response is sent immediately and the engine
+// does not time out. Long enough for batch runs with many candidates (multiple exports + S3 + DB).
+const persistenceTimeout = 5 * time.Minute
+
 // engineRunCallbackBody is the payload from the simulation engine. The engine does NOT send
 // scenario YAML in the callback; it sends only run IDs (best_run_id, top_candidates). The backend
 // must call GET /v1/runs/{id}/export for each ID to obtain input.scenario_yaml.
 type engineRunCallbackBody struct {
-	RunID            string                 `json:"run_id"`
-	Status           interface{}            `json:"status"`           // Can be int (enum) or string
-	StatusString     string                 `json:"status_string"`    // Preferred: string representation
-	CreatedAtUnixMs  int64                  `json:"created_at_unix_ms"`
-	StartedAtUnixMs  int64                  `json:"started_at_unix_ms"`
-	EndedAtUnixMs    int64                  `json:"ended_at_unix_ms"`
-	Metrics          map[string]interface{} `json:"metrics"`
-	TimestampUnixMs  int64                  `json:"timestamp"`
-	Error            string                 `json:"error,omitempty"`  // Error message if any
+	RunID           string                 `json:"run_id"`
+	Status          interface{}            `json:"status"`        // Can be int (enum) or string
+	StatusString    string                 `json:"status_string"` // Preferred: string representation
+	CreatedAtUnixMs int64                  `json:"created_at_unix_ms"`
+	StartedAtUnixMs int64                  `json:"started_at_unix_ms"`
+	EndedAtUnixMs   int64                  `json:"ended_at_unix_ms"`
+	Metrics         map[string]interface{} `json:"metrics"`
+	TimestampUnixMs int64                  `json:"timestamp"`
+	Error           string                 `json:"error,omitempty"` // Error message if any
 	// Optimization / batch fields (optional; present for optimization runs)
 	BestRunID     string   `json:"best_run_id,omitempty"`
 	BestScore     float64  `json:"best_score,omitempty"`
 	Iterations    int32    `json:"iterations,omitempty"`
 	TopCandidates []string `json:"top_candidates,omitempty"`
+	// FinalConfig is the last optimization step's current_config (online runs)
+	FinalConfig map[string]interface{} `json:"final_config,omitempty"`
 }
 
 // EngineRunCallback handles callbacks from the simulation engine when a run changes state.
@@ -104,7 +113,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 		body.TopCandidates,
 		body.Error,
 	)
-	
+
 	// Preserve existing metadata and merge callback data
 	updateMeta := make(map[string]interface{})
 	if run.Metadata != nil {
@@ -113,7 +122,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 			updateMeta[k] = v
 		}
 	}
-	
+
 	// Add/update callback-related metadata
 	updateMeta["engine_status"] = statusStr
 	updateMeta["engine_status_string"] = body.StatusString
@@ -121,7 +130,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	updateMeta["engine_started_at_unix_ms"] = body.StartedAtUnixMs
 	updateMeta["engine_ended_at_unix_ms"] = body.EndedAtUnixMs
 	updateMeta["engine_callback_ts_unix_ms"] = body.TimestampUnixMs
-	
+
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
@@ -139,7 +148,10 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 	if len(body.TopCandidates) > 0 {
 		updateMeta["top_candidates"] = body.TopCandidates
 	}
-	
+	if body.FinalConfig != nil {
+		updateMeta["final_config"] = body.FinalConfig
+	}
+
 	// Add metrics if provided
 	if len(body.Metrics) > 0 {
 		updateMeta["metrics"] = body.Metrics
@@ -161,14 +173,22 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 		return
 	}
 
-	// Terminal state: same as EngineRunCallbackByID — fetch via export and persist synchronously.
+	// Terminal state: persist metrics/candidates and best scenario in background so we respond 200
+	// immediately and avoid engine callback timeout; use a long detached timeout for batch (many exports + S3 + DB).
 	if backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning && (h.db != nil || h.s3Client != nil) {
-		ctx := c.Request.Context()
-		h.persistRunMetrics(ctx, run, body.BestRunID, body.TopCandidates)
-		isBatch := body.BestRunID != "" || len(body.TopCandidates) > 0
-		if h.s3Client != nil && !isBatch {
-			h.uploadBestScenarioToS3(ctx, run, backendStatus, body.BestRunID)
-		}
+		runCopy := *run
+		bestRunID := body.BestRunID
+		topCandidates := make([]string, len(body.TopCandidates))
+		copy(topCandidates, body.TopCandidates)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+			defer cancel()
+			h.persistRunMetrics(ctx, &runCopy, bestRunID, topCandidates)
+			isBatch := bestRunID != "" || len(topCandidates) > 0
+			if h.s3Client != nil && !isBatch {
+				h.uploadBestScenarioToS3(ctx, &runCopy, backendStatus, bestRunID)
+			}
+		}()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
@@ -259,7 +279,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		body.TopCandidates,
 		body.Error,
 	)
-	
+
 	// Preserve existing metadata and merge callback data
 	updateMeta := make(map[string]interface{})
 	if run.Metadata != nil {
@@ -268,7 +288,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 			updateMeta[k] = v
 		}
 	}
-	
+
 	// Add/update callback-related metadata
 	updateMeta["engine_status"] = statusStr
 	updateMeta["engine_status_string"] = body.StatusString
@@ -276,7 +296,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	updateMeta["engine_started_at_unix_ms"] = body.StartedAtUnixMs
 	updateMeta["engine_ended_at_unix_ms"] = body.EndedAtUnixMs
 	updateMeta["engine_callback_ts_unix_ms"] = body.TimestampUnixMs
-	
+
 	if body.Error != "" {
 		updateMeta["engine_error"] = body.Error
 	}
@@ -294,7 +314,10 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 	if len(body.TopCandidates) > 0 {
 		updateMeta["top_candidates"] = body.TopCandidates
 	}
-	
+	if body.FinalConfig != nil {
+		updateMeta["final_config"] = body.FinalConfig
+	}
+
 	// Add metrics if provided
 	if len(body.Metrics) > 0 {
 		updateMeta["metrics"] = body.Metrics
@@ -316,15 +339,21 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		return
 	}
 
-	// Terminal state: fetch scenario YAML via GET /v1/runs/{id}/export (engine does not send YAML in callback)
-	// and persist candidates + best scenario synchronously so the response is sent after data is stored.
+	// Terminal state: persist in background so we respond 200 immediately and avoid engine callback timeout.
 	if backendStatus != domain.StatusPending && backendStatus != domain.StatusRunning && (h.db != nil || h.s3Client != nil) {
-		ctx := c.Request.Context()
-		h.persistRunMetrics(ctx, run, body.BestRunID, body.TopCandidates)
-		isBatch := body.BestRunID != "" || len(body.TopCandidates) > 0
-		if h.s3Client != nil && !isBatch {
-			h.uploadBestScenarioToS3(ctx, run, backendStatus, body.BestRunID)
-		}
+		runCopy := *run
+		bestRunID := body.BestRunID
+		topCandidates := make([]string, len(body.TopCandidates))
+		copy(topCandidates, body.TopCandidates)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+			defer cancel()
+			h.persistRunMetrics(ctx, &runCopy, bestRunID, topCandidates)
+			isBatch := bestRunID != "" || len(topCandidates) > 0
+			if h.s3Client != nil && !isBatch {
+				h.uploadBestScenarioToS3(ctx, &runCopy, backendStatus, bestRunID)
+			}
+		}()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "run": updated})
@@ -419,12 +448,51 @@ func firstFloatFromServiceMetrics(metrics map[string]any, keys ...string) *float
 	return firstFloatFromKeys(first, keys...)
 }
 
+// floatToCeilInt returns the ceiling of v as an int if v is numeric; otherwise 0.
+func floatToCeilInt(v any) int {
+	if v == nil {
+		return 0
+	}
+	switch x := v.(type) {
+	case float64:
+		return int(math.Ceil(x))
+	case int:
+		return x
+	case int32:
+		return int(x)
+	case int64:
+		return int(x)
+	default:
+		return 0
+	}
+}
+
+// normalizeSimWorkloadForStorage ensures concurrent_users and rate_rps are stored as integers (ceiling)
+// so consumers that expect int (e.g. analysis_suggestions Workload.ConcurrentUsers) can unmarshal.
+func normalizeSimWorkloadForStorage(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	if v, ok := m["concurrent_users"]; ok && v != nil {
+		out["concurrent_users"] = floatToCeilInt(v)
+	}
+	if v, ok := m["rate_rps"]; ok && v != nil {
+		out["rate_rps"] = floatToCeilInt(v)
+	}
+	return out
+}
+
 // buildSpecMetricsWorkloadFromScenarioAndMetrics builds spec, metrics, and simWorkload
 // from a scenario YAML string and metrics map (e.g. from an export response). Used by
 // both the single-export fallback and the batch per-candidate export path.
 // CPU and memory utilisation are normalised to 0-100 percentage.
 // sim_workload.concurrent_users uses the scenario's workload rate_rps (intended load) when present,
 // otherwise falls back to metrics throughput_rps (achieved throughput).
+// concurrent_users and rate_rps are stored as integers (ceiling) for compatibility with int-typed consumers.
 func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics map[string]any) (spec map[string]any, metricsOut map[string]any, simWorkload map[string]any) {
 	spec = map[string]any{"label": "scenario"}
 	var parsed scenario.Scenario
@@ -456,10 +524,11 @@ func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics
 	}
 	simWorkload = map[string]any{}
 	if rateRPS := parsed.RateRPS(); rateRPS > 0 {
-		simWorkload["concurrent_users"] = rateRPS
-		simWorkload["rate_rps"] = rateRPS
+		simWorkload["concurrent_users"] = int(math.Ceil(rateRPS))
+		simWorkload["rate_rps"] = int(math.Ceil(rateRPS))
 	} else if v, ok := metrics["throughput_rps"]; ok {
-		simWorkload["concurrent_users"] = v
+		simWorkload["concurrent_users"] = floatToCeilInt(v)
+		simWorkload["rate_rps"] = floatToCeilInt(v)
 	}
 	return spec, metricsOut, simWorkload
 }
@@ -513,81 +582,116 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 
 	metricsRepo := repository.NewMetricsRepository(h.db)
 
+	// Persist time-series from GET /v1/runs/{id}/metrics/timeseries (cumulative request_count/request_error_count).
+	// Do not use export's time_series, which is raw per-event.
+	if run.EngineRunID != "" {
+		tsResp, err := h.engineClient.GetRunMetricsTimeSeries(ctx, run.EngineRunID, nil)
+		if err != nil {
+			log.Printf("Failed to fetch metrics timeseries for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
+		} else if len(tsResp.Points) > 0 {
+			points := make([]repository.TimeSeriesPoint, 0, len(tsResp.Points))
+			for _, p := range tsResp.Points {
+				if p.Timestamp == "" {
+					continue
+				}
+				parsedTime, err := time.Parse(time.RFC3339Nano, p.Timestamp)
+				if err != nil {
+					log.Printf("Failed to parse metrics timestamp for run_id=%s metric=%s: %v", run.RunID, p.Metric, err)
+					continue
+				}
+				labels := p.Labels
+				if labels == nil {
+					labels = map[string]string{}
+				}
+				serviceID := labels["service_id"]
+				if serviceID == "" {
+					if v, ok := labels["service"]; ok {
+						serviceID = v
+					}
+				}
+				nodeID := labels["host_id"]
+				if nodeID == "" {
+					if v, ok := labels["host"]; ok {
+						nodeID = v
+					} else if v, ok := labels["instance"]; ok {
+						nodeID = v
+					}
+				}
+				tags := make(map[string]any, len(labels))
+				for k, v := range labels {
+					tags[k] = v
+				}
+				points = append(points, repository.TimeSeriesPoint{
+					RunID:       run.RunID,
+					Time:        parsedTime,
+					TimestampMs: parsedTime.UnixMilli(),
+					MetricType:  p.Metric,
+					MetricValue: p.Value,
+					ServiceID:   serviceID,
+					NodeID:      nodeID,
+					Tags:        tags,
+				})
+			}
+			if len(points) > 0 {
+				if insertErr := metricsRepo.InsertTimeSeries(ctx, points); insertErr != nil {
+					log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, insertErr)
+				}
+			}
+		}
+	}
+
 	if exportResp != nil {
-		// Persist aggregated metrics into simulation_summaries.metrics
-		if exportResp.Metrics != nil {
+		// Prefer GET /metrics for aggregate; fall back to export's metrics on 412 or error.
+		metricsForSummary := exportResp.Metrics
+		if run.EngineRunID != "" {
+			aggResp, err := h.engineClient.GetRunMetrics(run.EngineRunID)
+			if err == nil && aggResp != nil && aggResp.Metrics != nil {
+				metricsForSummary = aggResp.Metrics
+			} else if err != nil && !errors.Is(err, ErrMetricsNotAvailable) {
+				log.Printf("GetRunMetrics for run_id=%s engine_run_id=%s: %v (using export metrics)", run.RunID, run.EngineRunID, err)
+			}
+		}
+		if metricsForSummary != nil {
+			var totalDurationMs *int64
+			if exportResp.Run != nil && exportResp.Run.SimulationDurationMs > 0 {
+				totalDurationMs = &exportResp.Run.SimulationDurationMs
+			} else if exportResp.Run != nil && exportResp.Run.RealDurationMs > 0 {
+				totalDurationMs = &exportResp.Run.RealDurationMs
+			} else if exportResp.Input.DurationMs > 0 {
+				totalDurationMs = &exportResp.Input.DurationMs
+			}
+			summaryData := map[string]any{}
+			if exportResp.Run != nil {
+				if exportResp.Run.RealDurationMs > 0 {
+					summaryData["real_duration_ms"] = exportResp.Run.RealDurationMs
+				}
+				if exportResp.Run.SimulationDurationMs > 0 {
+					summaryData["simulation_duration_ms"] = exportResp.Run.SimulationDurationMs
+				}
+			}
 			summaryParams := &repository.SummaryUpsertParams{
-				RunID:        run.RunID,
-				EngineRunID:  run.EngineRunID,
-				Metrics:      exportResp.Metrics,
-				ScenarioYAML: exportResp.Input.ScenarioYAML,
-				SummaryData:  map[string]any{},
+				RunID:           run.RunID,
+				EngineRunID:     run.EngineRunID,
+				Metrics:         metricsForSummary,
+				ScenarioYAML:    exportResp.Input.ScenarioYAML,
+				SummaryData:     summaryData,
+				TotalDurationMs: totalDurationMs,
 			}
 			if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
 				log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)
 			}
 		}
 
-		// Persist time-series metrics
-		if len(exportResp.TimeSeries) > 0 {
-			points := make([]repository.TimeSeriesPoint, 0)
-			for _, series := range exportResp.TimeSeries {
-				metricName := series.Metric
-				for _, p := range series.Points {
-					if p.Timestamp == "" {
-						continue
-					}
-					parsedTime, err := time.Parse(time.RFC3339Nano, p.Timestamp)
-					if err != nil {
-						log.Printf("Failed to parse metrics timestamp for run_id=%s metric=%s: %v", run.RunID, metricName, err)
-						continue
-					}
-					labels := p.Labels
-					if labels == nil {
-						labels = map[string]string{}
-					}
-					serviceID := labels["service_id"]
-					if serviceID == "" {
-						if v, ok := labels["service"]; ok {
-							serviceID = v
-						}
-					}
-					nodeID := labels["host_id"]
-					if nodeID == "" {
-						if v, ok := labels["host"]; ok {
-							nodeID = v
-						} else if v, ok := labels["instance"]; ok {
-							nodeID = v
-						}
-					}
-					tags := make(map[string]any, len(labels))
-					for k, v := range labels {
-						tags[k] = v
-					}
-					points = append(points, repository.TimeSeriesPoint{
-						RunID:       run.RunID,
-						Time:        parsedTime,
-						TimestampMs: parsedTime.UnixMilli(),
-						MetricType:  metricName,
-						MetricValue: p.Value,
-						ServiceID:   serviceID,
-						NodeID:      nodeID,
-						Tags:        tags,
-					})
-				}
+		// Persist optimization history and final_config from export
+		if len(exportResp.OptimizationHistory) > 0 || exportResp.FinalConfig != nil {
+			meta := make(map[string]interface{})
+			if len(exportResp.OptimizationHistory) > 0 {
+				meta["optimization_history"] = exportResp.OptimizationHistory
 			}
-			if err := metricsRepo.InsertTimeSeries(ctx, points); err != nil {
-				log.Printf("Failed to insert timeseries metrics for run_id=%s: %v", run.RunID, err)
+			if exportResp.FinalConfig != nil {
+				meta["final_config"] = exportResp.FinalConfig
 			}
-		}
-
-		// Persist optimization history
-		if len(exportResp.OptimizationHistory) > 0 {
-			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{
-				Metadata: map[string]interface{}{
-					"optimization_history": exportResp.OptimizationHistory,
-				},
-			})
+			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{Metadata: meta})
 		}
 	}
 
@@ -686,7 +790,7 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				CandidateID: cnd.ID,
 				Spec:        cnd.Spec,
 				Metrics:     cnd.Metrics,
-				SimWorkload: cnd.SimWorkload,
+				SimWorkload: normalizeSimWorkloadForStorage(cnd.SimWorkload),
 				Source:      cnd.Source,
 			}
 
@@ -796,5 +900,3 @@ func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.Simula
 
 	log.Printf("Best candidate scenario for run_id=%s stored at S3 key=%s and recorded in simulation_summaries", run.RunID, key)
 }
-
-

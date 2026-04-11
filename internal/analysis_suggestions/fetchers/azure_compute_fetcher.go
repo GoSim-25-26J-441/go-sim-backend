@@ -1,7 +1,4 @@
-//go:build tools
-// +build tools
-
-package main
+package fetchers
 
 import (
 	"bufio"
@@ -24,7 +21,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-type CloudComputePrice struct {
+type AzureComputePrice struct {
 	ID                  string                 `json:"id"`
 	Provider            string                 `json:"provider"`
 	SKUID               string                 `json:"sku_id"`
@@ -262,24 +259,24 @@ func lookupVMSpec(s string) (vcpu *int, mem *float64, found bool) {
 	return nil, nil, false
 }
 
-func main() {
-	outDir := "out/asm"
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		log.Fatalf("failed to create out dir: %v", err)
+// RunAzure fetches Azure compute retail prices and writes CSV/TXT under outDir/asm.
+func RunAzure(ctx context.Context, outDir string) error {
+	asmDir := filepath.Join(outDir, "asm")
+	if err := os.MkdirAll(asmDir, 0o755); err != nil {
+		return err
 	}
-	csvPath := filepath.Join(outDir, "azure_compute_prices.csv")
-	txtPath := filepath.Join(outDir, "azure_compute_prices.txt")
+	csvPath := filepath.Join(asmDir, "azure_compute_prices.csv")
+	txtPath := filepath.Join(asmDir, "azure_compute_prices.txt")
 
-	ctx := context.Background()
 	limiter := rate.NewLimiter(rate.Limit(12), 24)
-
-	log.Printf("Starting Azure compute fetcher -> CSV: %s , TXT: %s\n", csvPath, txtPath)
+	log.Printf("Starting Azure compute fetcher -> CSV: %s , TXT: %s", csvPath, txtPath)
 
 	maxRecords := 800000
 	if err := fetchComputeAndWriteTables(ctx, limiter, 500, maxRecords, csvPath, txtPath); err != nil {
-		log.Fatalf("fetch failed: %v", err)
+		return err
 	}
-	log.Printf("Finished. Files: %s , %s\n", csvPath, txtPath)
+	log.Printf("Finished. Files: %s , %s", csvPath, txtPath)
+	return nil
 }
 
 func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, pageSize, maxRecords int, csvPath, txtPath string) error {
@@ -438,8 +435,8 @@ func fetchComputeAndWriteTables(ctx context.Context, limiter *rate.Limiter, page
 	return nil
 }
 
-func normalizeAzureComputeItem(item map[string]interface{}) CloudComputePrice {
-	cp := CloudComputePrice{
+func normalizeAzureComputeItem(item map[string]interface{}) AzureComputePrice {
+	cp := AzureComputePrice{
 		Provider: "azure",
 		Metadata: item,
 		Unit:     "",
@@ -600,7 +597,7 @@ func formatOptionalFloat(val *float64, format string) string {
 	return fmt.Sprintf(format, *val)
 }
 
-func tryParseFromStringFields(cp *CloudComputePrice, s string) {
+func tryParseFromStringFields(cp *AzureComputePrice, s string) {
 	if s == "" {
 		return
 	}
