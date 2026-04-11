@@ -136,7 +136,7 @@ func (h *Handler) StartMetricsStreamProxy(runID string, engineRunID string, inte
 					h.redisClient.Publish(ctx, eventChannel, eventJSON)
 
 				case "optimization_progress":
-					// Optimization runs: iteration, best_score, best_run_id per BACKEND_INTEGRATION.md
+					// Optimization runs: iteration, best_score, best_run_id; simulation-core may include objective and unit for best_score semantics
 					forwardEvent := map[string]interface{}{
 						"event":  sseEvent.EventType,
 						"run_id": runID,
@@ -161,6 +161,21 @@ func (h *Handler) StartMetricsStreamProxy(runID string, engineRunID string, inte
 					} else {
 						forwardEvent["raw_data"] = string(sseEvent.Data)
 						log.Printf("Warning: Failed to parse optimization_step data for run_id=%s: %v", runID, err)
+					}
+					eventJSON, _ := json.Marshal(forwardEvent)
+					h.redisClient.Publish(ctx, eventChannel, eventJSON)
+
+				case "drain_sweep":
+					// Engine periodic replica draining (simulation-core); forward opaquely for clients that track event types.
+					forwardEvent := map[string]interface{}{
+						"event":  sseEvent.EventType,
+						"run_id": runID,
+					}
+					var sweepData map[string]interface{}
+					if err := json.Unmarshal(sseEvent.Data, &sweepData); err == nil {
+						forwardEvent["data"] = sweepData
+					} else {
+						forwardEvent["raw_data"] = string(sseEvent.Data)
 					}
 					eventJSON, _ := json.Marshal(forwardEvent)
 					h.redisClient.Publish(ctx, eventChannel, eventJSON)
