@@ -25,10 +25,59 @@ type CostResponse struct {
 	StoredAt         string                            `json:"stored_at,omitempty"`
 }
 
+type GlobalRecommendResponse struct {
+	RequestID      string                  `json:"request_id"`
+	BestCandidate  rules.CandidateScore    `json:"best_candidate"`
+	NodeCount      int                     `json:"nodes"`
+	Budget         float64                 `json:"budget"`
+	Recommendation cc.GlobalRecommendation `json:"recommendation"`
+	StoredAt       string                  `json:"stored_at,omitempty"`
+}
+
 const (
-	costCacheKeyPrefix = "analysis:cost:"
-	costCacheTTL       = 10 * time.Minute
+	costCacheKeyPrefix          = "analysis:cost:"
+	costRecommendCacheKeyPrefix = "analysis:cost:recommend:"
+	costCacheTTL                = 10 * time.Minute
 )
+
+type globalCostRecommendationRow struct {
+	FitsBudget          bool                   `json:"fits_budget"`
+	Recommended         *cc.ClusterCostResult  `json:"recommended,omitempty"`
+	RunnersUp           []cc.ClusterCostResult `json:"runners_up"`
+	Rationale           []string               `json:"rationale"`
+	RegionJobsEvaluated int                    `json:"region_jobs_evaluated"`
+	PlansEvaluated      int                    `json:"plans_evaluated"`
+	WithinBudgetPlans   int                    `json:"within_budget_plans"`
+	ComputedAt          string                 `json:"computed_at"`
+}
+
+func globalRecForDB(rec *cc.GlobalRecommendation) globalCostRecommendationRow {
+	return globalCostRecommendationRow{
+		FitsBudget:          rec.FitsBudget,
+		Recommended:         rec.Recommended,
+		RunnersUp:           rec.RunnersUp,
+		Rationale:           rec.Rationale,
+		RegionJobsEvaluated: rec.RegionJobsEvaluated,
+		PlansEvaluated:      rec.PlansEvaluated,
+		WithinBudgetPlans:   rec.WithinBudgetPlans,
+		ComputedAt:          time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func (h *CostHandler) persistGlobalCostRecommendation(ctx context.Context, requestID string, rec *cc.GlobalRecommendation) {
+	payload := globalRecForDB(rec)
+	b, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("marshal global recommendation for persist: %v", err)
+		return
+	}
+	_, err = h.db.ExecContext(ctx, `
+		UPDATE request_responses SET global_cost_recommendation = $1::jsonb WHERE id = $2::uuid
+	`, b, requestID)
+	if err != nil {
+		log.Printf("persist global recommendation for %s: %v", requestID, err)
+	}
+}
 
 type CostHandler struct {
 	db          *sql.DB
@@ -90,8 +139,46 @@ func (h *CostHandler) setCachedCost(ctx context.Context, key string, resp *CostR
 	}
 }
 
+func (h *CostHandler) recommendCacheKey(id string) string {
+	return costRecommendCacheKeyPrefix + id
+}
+
+func (h *CostHandler) getCachedGlobalRecommend(ctx context.Context, key string) (*GlobalRecommendResponse, bool) {
+	if h.redisClient == nil {
+		return nil, false
+	}
+	data, err := h.redisClient.Get(ctx, key).Result()
+	if err != nil {
+		if err != redis.Nil {
+			log.Printf("redis get error for key %s: %v", key, err)
+		}
+		return nil, false
+	}
+	var resp GlobalRecommendResponse
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		log.Printf("failed to unmarshal cached global recommend for key %s: %v", key, err)
+		return nil, false
+	}
+	return &resp, true
+}
+
+func (h *CostHandler) setCachedGlobalRecommend(ctx context.Context, key string, resp *GlobalRecommendResponse) {
+	if h.redisClient == nil {
+		return
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("failed to marshal global recommend for cache key %s: %v", key, err)
+		return
+	}
+	if err := h.redisClient.Set(ctx, key, data, costCacheTTL).Err(); err != nil {
+		log.Printf("failed to set global recommend cache for key %s: %v", key, err)
+	}
+}
+
 func (h *CostHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/cost/:id", h.HandleCost)
+	rg.POST("/cost/:id/recommend", h.HandleGlobalRecommend)
 	rg.GET("/cost/regions/:provider", h.GetProviderRegions)
 	rg.GET("/cost/:id/regions/:provider", h.GetRegionsForRequest)
 	rg.POST("/cost/:id/provider/:provider", h.HandleCostForProvider)
@@ -248,6 +335,69 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 	h.setCachedCost(ctx, cacheKey, &resp)
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func (h *CostHandler) HandleGlobalRecommend(c *gin.Context) {
+	id := c.Param("id")
+	ctx, cancel := context.WithTimeout(c, 60*time.Second)
+	defer cancel()
+	db := h.db
+
+	cacheKey := h.recommendCacheKey(id)
+	if cached, ok := h.getCachedGlobalRecommend(ctx, cacheKey); ok {
+		c.JSON(http.StatusOK, cached)
+		return
+	}
+
+	var bestJSON, reqJSON []byte
+	var created time.Time
+	err := db.QueryRowContext(ctx, `
+		SELECT best_candidate::text, request::text, created_at 
+		FROM request_responses WHERE id=$1
+	`, id).Scan(&bestJSON, &reqJSON, &created)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Request not found"})
+		return
+	}
+
+	bestCS, err := cc.CandidateScoreFromJSONBytes(bestJSON)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse candidate"})
+		return
+	}
+
+	var req struct {
+		Design struct {
+			Budget float64 `json:"budget"`
+		} `json:"design"`
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
+	}
+	if err := json.Unmarshal(reqJSON, &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
+		return
+	}
+
+	rec, err := cc.BuildGlobalRecommendation(ctx, db, bestCS, req.Simulation.Nodes, req.Design.Budget)
+	if err != nil {
+		log.Printf("global recommend failed for %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build global recommendation"})
+		return
+	}
+
+	resp := GlobalRecommendResponse{
+		RequestID:      id,
+		BestCandidate:  bestCS,
+		NodeCount:      req.Simulation.Nodes,
+		Budget:         req.Design.Budget,
+		Recommendation: *rec,
+		StoredAt:       created.UTC().Format(time.RFC3339),
+	}
+
+	h.persistGlobalCostRecommendation(ctx, id, rec)
+	h.setCachedGlobalRecommend(ctx, cacheKey, &resp)
+	c.JSON(http.StatusOK, &resp)
 }
 
 func (h *CostHandler) HandleCostForProvider(c *gin.Context) {

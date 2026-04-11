@@ -12,14 +12,15 @@ import (
 )
 
 type RequestResponseRow struct {
-	ID            string          `json:"id"`
-	UserID        string          `json:"user_id"`
-	ProjectID     string          `json:"project_id,omitempty"`
-	RunID         string          `json:"run_id,omitempty"`
-	Request       json.RawMessage `json:"request"`
-	Response      json.RawMessage `json:"response"`
-	BestCandidate json.RawMessage `json:"best_candidate"`
-	CreatedAt     time.Time       `json:"created_at"`
+	ID                       string          `json:"id"`
+	UserID                   string          `json:"user_id"`
+	ProjectID                string          `json:"project_id,omitempty"`
+	RunID                    string          `json:"run_id,omitempty"`
+	Request                  json.RawMessage `json:"request"`
+	Response                 json.RawMessage `json:"response"`
+	BestCandidate            json.RawMessage `json:"best_candidate"`
+	GlobalCostRecommendation json.RawMessage `json:"global_cost_recommendation,omitempty"`
+	CreatedAt                time.Time       `json:"created_at"`
 }
 
 type RequestHandler struct {
@@ -48,7 +49,7 @@ func (h *RequestHandler) GetRequestsByUser(c *gin.Context) {
 	defer cancel()
 
 	query := `
-SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
+SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, global_cost_recommendation, created_at
 FROM request_responses
 WHERE user_id = $1
 ORDER BY project_id, created_at DESC
@@ -67,8 +68,9 @@ ORDER BY project_id, created_at DESC
 		var requestBytes []byte
 		var responseBytes []byte
 		var bestBytes []byte
+		var globalRecBytes []byte
 
-		if err := rows.Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &globalRecBytes, &r.CreatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db scan failed: " + err.Error()})
 			return
 		}
@@ -76,6 +78,9 @@ ORDER BY project_id, created_at DESC
 		r.Request = json.RawMessage(requestBytes)
 		r.Response = json.RawMessage(responseBytes)
 		r.BestCandidate = json.RawMessage(bestBytes)
+		if len(globalRecBytes) > 0 {
+			r.GlobalCostRecommendation = json.RawMessage(globalRecBytes)
+		}
 
 		out = append(out, r)
 	}
@@ -103,7 +108,7 @@ func (h *RequestHandler) GetRequestByID(c *gin.Context) {
 	defer cancel()
 
 	queryByID := `
-SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
+SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, global_cost_recommendation, created_at
 FROM request_responses
 WHERE id = $1
 `
@@ -111,8 +116,9 @@ WHERE id = $1
 	var requestBytes []byte
 	var responseBytes []byte
 	var bestBytes []byte
+	var globalRecBytes []byte
 
-	err := h.db.QueryRowContext(ctx, queryByID, id).Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+	err := h.db.QueryRowContext(ctx, queryByID, id).Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &globalRecBytes, &r.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
@@ -125,6 +131,9 @@ WHERE id = $1
 	r.Request = json.RawMessage(requestBytes)
 	r.Response = json.RawMessage(responseBytes)
 	r.BestCandidate = json.RawMessage(bestBytes)
+	if len(globalRecBytes) > 0 {
+		r.GlobalCostRecommendation = json.RawMessage(globalRecBytes)
+	}
 
 	c.JSON(http.StatusOK, r)
 }
@@ -198,7 +207,7 @@ func (h *RequestHandler) GetLatestByProjectRun(c *gin.Context) {
 	defer cancel()
 
 	const queryWithRun = `
-SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
+SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, global_cost_recommendation, created_at
 FROM request_responses
 WHERE user_id = $1 AND project_id = $2 AND run_id = $3
 ORDER BY created_at DESC
@@ -206,7 +215,7 @@ LIMIT 1;
 `
 
 	const queryWithoutRun = `
-SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, created_at
+SELECT id, user_id, COALESCE(project_id,''), COALESCE(run_id,''), request, response, best_candidate, global_cost_recommendation, created_at
 FROM request_responses
 WHERE user_id = $1 AND project_id = $2
 ORDER BY created_at DESC
@@ -217,14 +226,15 @@ LIMIT 1;
 	var requestBytes []byte
 	var responseBytes []byte
 	var bestBytes []byte
+	var globalRecBytes []byte
 
 	var err error
 	if runID != "" {
 		err = h.db.QueryRowContext(ctx, queryWithRun, userID, projectID, runID).
-			Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+			Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &globalRecBytes, &r.CreatedAt)
 	} else {
 		err = h.db.QueryRowContext(ctx, queryWithoutRun, userID, projectID).
-			Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &r.CreatedAt)
+			Scan(&r.ID, &r.UserID, &r.ProjectID, &r.RunID, &requestBytes, &responseBytes, &bestBytes, &globalRecBytes, &r.CreatedAt)
 	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -263,6 +273,9 @@ LIMIT 1;
 	r.Request = json.RawMessage(requestBytes)
 	r.Response = json.RawMessage(responseBytes)
 	r.BestCandidate = json.RawMessage(bestBytes)
+	if len(globalRecBytes) > 0 {
+		r.GlobalCostRecommendation = json.RawMessage(globalRecBytes)
+	}
 
 	c.JSON(http.StatusOK, r)
 }

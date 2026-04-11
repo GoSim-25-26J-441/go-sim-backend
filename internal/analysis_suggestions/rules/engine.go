@@ -281,6 +281,7 @@ UPDATE request_responses
 SET request = $1::jsonb,
     response = $2::jsonb,
     best_candidate = $3::jsonb,
+    global_cost_recommendation = NULL,
     created_at = now()
 WHERE id = $4
 RETURNING id;
