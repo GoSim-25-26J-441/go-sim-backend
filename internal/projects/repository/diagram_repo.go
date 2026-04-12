@@ -173,9 +173,12 @@ where public_id = $2
 //
 //	{
 //	  "services": ["service-label-1", "service-label-2", ...],
+//	  "service_types": { "client-1": "client", "gateway-1": "gateway" },
 //	  "datastores": ["db-label-1", ...],
 //	  "dependencies": ["fromLabel->toLabel(protocol)", ...]
 //	}
+//
+// service_types is optional for backward compatibility; when absent, YAML uses type "service" for all names in services.
 func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	if strings.TrimSpace(diagramText) == "" {
 		return "", nil
@@ -200,6 +203,7 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	idToLabel := make(map[string]string, len(payload.Nodes))
 	servicesSet := map[string]struct{}{}
 	datastoresSet := map[string]struct{}{}
+	serviceTypes := make(map[string]string)
 
 	for _, n := range payload.Nodes {
 		lbl := strings.TrimSpace(n.Label)
@@ -208,11 +212,15 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 		}
 		idToLabel[n.ID] = lbl
 
-		switch strings.ToLower(strings.TrimSpace(n.Type)) {
+		nodeType := strings.ToLower(strings.TrimSpace(n.Type))
+		switch nodeType {
 		case "db", "database", "datastore":
 			datastoresSet[lbl] = struct{}{}
 		default:
 			servicesSet[lbl] = struct{}{}
+			if nodeType != "" {
+				serviceTypes[lbl] = nodeType
+			}
 		}
 	}
 
@@ -240,9 +248,10 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	}
 
 	out := map[string]interface{}{
-		"services":     services,
-		"datastores":   datastores,
-		"dependencies": deps,
+		"services":       services,
+		"service_types":  serviceTypes,
+		"datastores":     datastores,
+		"dependencies":   deps,
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -256,6 +265,7 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 //
 //	{
 //	  "services": ["user-1", "service-1"],
+//	  "service_types": { "user-1": "client" },
 //	  "datastores": ["db-1"],
 //	  "dependencies": ["user-1->service-1(rest)"]
 //	}
@@ -270,9 +280,10 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 
 	// SpecSummaryJSON mirrors the JSON we store in spec_summary.
 	type SpecSummaryJSON struct {
-		Services     []string `json:"services"`
-		Datastores   []string `json:"datastores"`
-		Dependencies []string `json:"dependencies"`
+		Services      []string          `json:"services"`
+		ServiceTypes  map[string]string `json:"service_types"`
+		Datastores    []string          `json:"datastores"`
+		Dependencies  []string          `json:"dependencies"`
 	}
 
 	var ss SpecSummaryJSON
@@ -326,13 +337,19 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		Trace:           []any{},
 	}
 
-	// Services first (type: service), then former datastores (type: database).
+	// Services first (type from service_types when present, else "service"), then former datastores (type: database).
 	for _, s := range ss.Services {
 		name := strings.TrimSpace(s)
 		if name == "" {
 			continue
 		}
-		ys.Services = append(ys.Services, yamlService{Name: name, Type: "service"})
+		typ := "service"
+		if ss.ServiceTypes != nil {
+			if t := strings.TrimSpace(ss.ServiceTypes[name]); t != "" {
+				typ = strings.ToLower(t)
+			}
+		}
+		ys.Services = append(ys.Services, yamlService{Name: name, Type: typ})
 	}
 	for _, d := range ss.Datastores {
 		name := strings.TrimSpace(d)
