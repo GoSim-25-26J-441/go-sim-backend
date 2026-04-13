@@ -4,37 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/mapper"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/parser"
 )
 
 // cleanRef removes leaked graph-ID prefixes like SERVICE:foo / DATABASE:bar
 // and trims whitespace.
 func cleanRef(s string) string {
-	t := strings.TrimSpace(s)
-	if t == "" {
-		return ""
-	}
-
-	up := strings.ToUpper(t)
-
-	if strings.HasPrefix(up, "SERVICE:") {
-		return strings.TrimSpace(t[len("SERVICE:"):])
-	}
-	if strings.HasPrefix(up, "DATABASE:") {
-		return strings.TrimSpace(t[len("DATABASE:"):])
-	}
-
-	// tolerate "SERVICE : foo" style
-	noSpaceUp := strings.ReplaceAll(up, " ", "")
-	noSpaceRaw := strings.ReplaceAll(t, " ", "")
-	if strings.HasPrefix(noSpaceUp, "SERVICE:") {
-		return strings.TrimSpace(noSpaceRaw[len("SERVICE:"):])
-	}
-	if strings.HasPrefix(noSpaceUp, "DATABASE:") {
-		return strings.TrimSpace(noSpaceRaw[len("DATABASE:"):])
-	}
-
-	return t
+	return mapper.StripNodeNameRef(s)
 }
 
 func eqRef(a, b string) bool {

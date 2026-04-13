@@ -64,11 +64,11 @@ type diagramDependency struct {
 // diagramEnvelope is the full JSON shape stored in diagram_versions.diagram_json.
 // It keeps the original graph/detections fields and adds the requested structure.
 type diagramEnvelope struct {
-	Graph        json.RawMessage   `json:"graph,omitempty"`
-	Detections   json.RawMessage   `json:"detections,omitempty"`
-	Services     []diagramService  `json:"services"`
-	Datastores   []diagramDatastore `json:"datastores"`
-	Topics       []diagramTopic    `json:"topics"`
+	Graph        json.RawMessage     `json:"graph,omitempty"`
+	Detections   json.RawMessage     `json:"detections,omitempty"`
+	Services     []diagramService    `json:"services"`
+	Datastores   []diagramDatastore  `json:"datastores"`
+	Topics       []diagramTopic      `json:"topics"`
 	Dependencies []diagramDependency `json:"dependencies"`
 }
 
@@ -115,6 +115,25 @@ func buildDiagramEnvelope(graphJSON, detectionsJSON []byte) (*diagramEnvelope, e
 			env.Services = append(env.Services, diagramService{
 				Name: n.Name,
 				Kind: "gateway",
+			})
+		case domain.NodeClient:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "client",
+			})
+		case domain.NodeUserActor:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "user_actor",
+			})
+		case domain.NodeExternalSystem:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "external_system",
+			})
+		case domain.NodeEventTopic:
+			env.Topics = append(env.Topics, diagramTopic{
+				Name: n.Name,
 			})
 		case domain.NodeService:
 			env.Services = append(env.Services, diagramService{

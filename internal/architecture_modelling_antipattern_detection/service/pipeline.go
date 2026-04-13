@@ -27,6 +27,7 @@ func AnalyzeYAML(path string, outDir string, title string, dotBin string) (*Resu
 	if err != nil {
 		return nil, err
 	}
+	mapper.NormalizeYAMLSpecInPlace(ys)
 	if err := validator.Validate(ys); err != nil {
 		return nil, err
 	}
@@ -39,6 +40,7 @@ func AnalyzeYAMLBytesToDir(yamlBytes []byte, outDir string, title string, dotBin
 	if err != nil {
 		return nil, err
 	}
+	mapper.NormalizeYAMLSpecInPlace(ys)
 	if err := validator.Validate(ys); err != nil {
 		return nil, err
 	}
@@ -61,6 +63,7 @@ func AnalyzeYAMLBytesInMemory(yamlBytes []byte, title string, dotBin string) (*R
 	if err != nil {
 		return nil, "", err
 	}
+	mapper.NormalizeYAMLSpecInPlace(ys)
 	if err := validator.Validate(ys); err != nil {
 		return nil, "", err
 	}
