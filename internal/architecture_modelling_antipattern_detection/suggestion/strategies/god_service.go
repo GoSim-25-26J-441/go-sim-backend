@@ -27,7 +27,7 @@ func (godService) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sugg
 	bullets := []string{
 		"One service has too many dependencies (high centrality).",
 		"Fix: split responsibilities into smaller services.",
-		"Auto-fix: move some outgoing dependencies to a new service and add a delegate edge.",
+		"Auto-fix: moves some outgoing dependencies onto a new split service and adds a main → split delegate dependency (if missing).",
 	}
 
 	return suggestion.Suggestion{Kind: det.Kind, Title: title, Bullets: bullets}

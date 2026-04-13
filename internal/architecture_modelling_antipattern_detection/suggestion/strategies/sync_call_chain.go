@@ -17,7 +17,7 @@ func (syncCallChain) Suggest(g *domain.Graph, det domain.Detection) suggestion.S
 	bullets := []string{
 		"Long synchronous chains increase latency and failure blast radius.",
 		"Fix: make one hop async (sync=false) or add a BFF/cache.",
-		"Auto-fix: set sync=false on a middle hop.",
+		"Auto-fix: sets sync=false on a middle hop of the longest detected sync chain (does not remove or redirect edges).",
 	}
 	return suggestion.Suggestion{Kind: det.Kind, Title: title, Bullets: bullets}
 }

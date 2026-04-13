@@ -18,6 +18,13 @@ type Suggestion struct {
 	Title   string                 `json:"title" yaml:"title"`
 	Bullets []string               `json:"bullets" yaml:"bullets"`
 
+	// PreviewFrom / PreviewTo preserve dependency direction for UI previews.
+	// Suggestion id uses sorted node lists; these optional fields keep caller → callee order.
+	PreviewFrom string `json:"preview_from,omitempty" yaml:"preview_from,omitempty"`
+	PreviewTo   string `json:"preview_to,omitempty" yaml:"preview_to,omitempty"`
+	// PreviewRemoveLeg is "top" or "bottom" for ping-pong bidirectional preview (which call is removed).
+	PreviewRemoveLeg string `json:"preview_remove_leg,omitempty" yaml:"preview_remove_leg,omitempty"`
+
 	AutoFixApplied bool     `json:"auto_fix_applied" yaml:"auto_fix_applied"`
 	AutoFixNotes   []string `json:"auto_fix_notes,omitempty" yaml:"auto_fix_notes,omitempty"`
 }

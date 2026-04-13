@@ -34,3 +34,8 @@ func isUIName(id string) bool {
 		strings.Contains(s, "client") ||
 		strings.Contains(s, "browser")
 }
+
+// IsUIServiceID reports whether id matches UI-layer name heuristics (used by suggestion auto-fix).
+func IsUIServiceID(id string) bool {
+	return isUIName(id)
+}

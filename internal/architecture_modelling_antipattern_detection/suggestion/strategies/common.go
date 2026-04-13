@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/detection/rules"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/mapper"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/parser"
 )
@@ -43,6 +44,143 @@ func removeDependencyOnce(spec *parser.YSpec, from, to string) (bool, string) {
 	}
 	spec.Dependencies = append(spec.Dependencies[:i], spec.Dependencies[i+1:]...)
 	return true, fmt.Sprintf("Removed dependency: %s → %s", f, t)
+}
+
+func findServiceIndexByRef(spec *parser.YSpec, name string) int {
+	if spec == nil {
+		return -1
+	}
+	n := cleanRef(name)
+	for i := range spec.Services {
+		if eqRef(spec.Services[i].Name, n) {
+			return i
+		}
+	}
+	return -1
+}
+
+// removeLegacyCall removes one services[].calls entry (legacy YAML without top-level dependencies).
+func removeLegacyCall(spec *parser.YSpec, from, to string) (bool, string) {
+	fi := findServiceIndexByRef(spec, from)
+	if fi < 0 {
+		return false, ""
+	}
+	t := cleanRef(to)
+	svc := &spec.Services[fi]
+	for i, c := range svc.Calls {
+		if eqRef(c.To, t) {
+			svc.Calls = append(svc.Calls[:i], svc.Calls[i+1:]...)
+			return true, fmt.Sprintf("Removed call %s → %s", cleanRef(svc.Name), t)
+		}
+	}
+	return false, ""
+}
+
+// addLegacyCall appends a call on the given service if not already present.
+func addLegacyCall(spec *parser.YSpec, from, to string) (bool, string) {
+	fromC := cleanRef(from)
+	toC := cleanRef(to)
+	ensureService(spec, fromC)
+	fi := findServiceIndexByRef(spec, fromC)
+	if fi < 0 {
+		return false, ""
+	}
+	svc := &spec.Services[fi]
+	for _, c := range svc.Calls {
+		if eqRef(c.To, toC) {
+			return false, ""
+		}
+	}
+	svc.Calls = append(svc.Calls, parser.YCall{To: toC})
+	return true, fmt.Sprintf("Added call %s → %s", fromC, toC)
+}
+
+// flipDependencyDirection removes from→to and adds to→from (new-style dependencies), preserving kind/sync when possible.
+func flipDependencyDirection(spec *parser.YSpec, from, to string) (bool, []string) {
+	f := cleanRef(from)
+	t := cleanRef(to)
+	i := findDepIndex(spec, f, t)
+	if i < 0 {
+		return false, nil
+	}
+	dep := spec.Dependencies[i]
+	kind := strings.ToLower(strings.TrimSpace(dep.Kind))
+	if kind == "" {
+		kind = "rest"
+	}
+	sync := dep.Sync
+	spec.Dependencies = append(spec.Dependencies[:i], spec.Dependencies[i+1:]...)
+	var notes []string
+	notes = append(notes, fmt.Sprintf("Removed dependency: %s → %s", f, t))
+	ok, n := addDependencyIfMissing(spec, parser.YDependency{
+		From: t,
+		To:   f,
+		Kind: kind,
+		Sync: sync,
+	})
+	if ok {
+		notes = append(notes, n)
+	} else if findDepIndex(spec, t, f) >= 0 {
+		notes = append(notes, fmt.Sprintf("Dependency %s → %s already existed", t, f))
+	}
+	return true, notes
+}
+
+// flipLegacyCallDirection removes from→to call and adds to→from under legacy services[].calls.
+func flipLegacyCallDirection(spec *parser.YSpec, from, to string) (bool, []string) {
+	ok, n1 := removeLegacyCall(spec, from, to)
+	if !ok {
+		return false, nil
+	}
+	notes := []string{n1}
+	ok2, n2 := addLegacyCall(spec, to, from)
+	if ok2 {
+		notes = append(notes, n2)
+	} else {
+		notes = append(notes, fmt.Sprintf("Call %s → %s already present (no duplicate added)", cleanRef(to), cleanRef(from)))
+	}
+	return true, notes
+}
+
+// removeDependencyOrLegacyCall removes a CALLS edge from new-style dependencies or legacy services[].calls.
+func removeDependencyOrLegacyCall(spec *parser.YSpec, from, to string) (bool, string) {
+	if ok, n := removeDependencyOnce(spec, from, to); ok {
+		return true, n
+	}
+	return removeLegacyCall(spec, from, to)
+}
+
+// pingPongRemovalSequence lists dependency removals to try (deduped). Prefers dropping backend→UI, else B→A, then A→B.
+func pingPongRemovalSequence(a, b string) [][2]string {
+	var out [][2]string
+	add := func(from, to string) {
+		f, t := cleanRef(from), cleanRef(to)
+		for _, e := range out {
+			if cleanRef(e[0]) == f && cleanRef(e[1]) == t {
+				return
+			}
+		}
+		out = append(out, [2]string{from, to})
+	}
+
+	uiA, uiB := rules.IsUIServiceID(a), rules.IsUIServiceID(b)
+	if !uiA && uiB {
+		add(a, b)
+	}
+	if uiA && !uiB {
+		add(b, a)
+	}
+	add(b, a)
+	add(a, b)
+	return out
+}
+
+// pingPongPreviewRemoveLeg returns "top" if removal matches top-row direction (topFrom → topTo).
+func pingPongPreviewRemoveLeg(topFrom, topTo, remFrom, remTo string) string {
+	if eqRef(remFrom, topFrom) && eqRef(remTo, topTo) {
+		return "top"
+	}
+	return "bottom"
 }
 
 func setDependencySync(spec *parser.YSpec, from, to string, sync bool) (bool, string) {
