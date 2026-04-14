@@ -99,6 +99,10 @@ func isMeaningfulJSON(data json.RawMessage) bool {
 	return true
 }
 
+func isMeaningfulYAML(s string) bool {
+	return strings.TrimSpace(s) != ""
+}
+
 // Returns the same diagram_json with metadata set; if injection fails, returns the original.
 func injectDiagramMetadata(diagramJSON json.RawMessage, diagramVersionID *string) json.RawMessage {
 	if diagramVersionID == nil || *diagramVersionID == "" {
@@ -129,18 +133,19 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	var diagramVersionIDUsed *string
 	var specSummary json.RawMessage
 	var diagramJSON json.RawMessage
+	var yamlContent string
 	var err error
 
 	// If diagram_version_id is provided, use that specific version (override)
 	if req.DiagramVersionID != nil && *req.DiagramVersionID != "" {
-		specSummary, diagramJSON, err = s.repo.GetDiagramVersionByID(ctx, userID, publicID, *req.DiagramVersionID)
+		specSummary, diagramJSON, yamlContent, err = s.repo.GetDiagramVersionByID(ctx, userID, publicID, *req.DiagramVersionID)
 		if err != nil {
 			return nil, fmt.Errorf("get diagram version: %w", err)
 		}
 		diagramVersionIDUsed = req.DiagramVersionID
 	} else {
 		// Otherwise, resolve diagram context from thread binding (FOLLOW_LATEST or PINNED)
-		diagramVersionIDUsed, specSummary, diagramJSON, err = s.repo.ResolveDiagramContext(ctx, userID, publicID, threadID)
+		diagramVersionIDUsed, specSummary, diagramJSON, yamlContent, err = s.repo.ResolveDiagramContext(ctx, userID, publicID, threadID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve diagram context: %w", err)
 		}
@@ -149,7 +154,7 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	// A version id can exist on the project while diagram_json/spec_summary are still {}.
 	// We would store diagram_version_id_used on messages but send nothing to UIGP — avoid that.
 	if diagramVersionIDUsed != nil && *diagramVersionIDUsed != "" {
-		if !isMeaningfulJSON(specSummary) && !isMeaningfulJSON(diagramJSON) {
+		if !isMeaningfulJSON(specSummary) && !isMeaningfulJSON(diagramJSON) && !isMeaningfulYAML(yamlContent) {
 			return nil, domain.ErrDiagramPayloadNotReady
 		}
 	}
@@ -179,7 +184,7 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 				// Prepend the design summary to the user message
 				userMessage = summary + "\n\n" + req.Message
 			}
-		} else if !isMeaningfulJSON(diagramJSON) && !isMeaningfulJSON(specSummary) {
+		} else if !isMeaningfulJSON(diagramJSON) && !isMeaningfulJSON(specSummary) && !isMeaningfulYAML(yamlContent) {
 			// "Design" here means workload/budget map from the client, not the architecture diagram.
 			// Do not claim "no design" when we are sending diagram/spec context to UIGP.
 			userMessage = "Note: No design available. " + req.Message
@@ -219,7 +224,7 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	// Build LLM request
 	mode := strings.TrimSpace(req.Mode)
 	detail := strings.TrimSpace(req.Detail)
-	hasDiagramContext := isMeaningfulJSON(diagramJSON) || isMeaningfulJSON(specSummary)
+	hasDiagramContext := isMeaningfulJSON(diagramJSON) || isMeaningfulJSON(specSummary) || isMeaningfulYAML(yamlContent)
 
 	// When we send diagram context, UIGP expects mode "thinking" and detail "high" to use it
 	if hasDiagramContext {
@@ -247,6 +252,10 @@ func (s *ChatService) PostMessage(ctx context.Context, userID, publicID, threadI
 	// Include diagram_json in UIGP format: add metadata.diagram_version_id when we have a version
 	if isMeaningfulJSON(diagramJSON) {
 		llmReq.DiagramJSON = injectDiagramMetadata(diagramJSON, diagramVersionIDUsed)
+	}
+
+	if isMeaningfulYAML(yamlContent) {
+		llmReq.YamlContent = yamlContent
 	}
 
 	// Call LLM client

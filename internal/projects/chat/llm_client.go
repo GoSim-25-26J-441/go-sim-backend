@@ -48,6 +48,7 @@ type ChatRequest struct {
 	Detail      string              `json:"detail,omitempty"`
 	DiagramJSON json.RawMessage     `json:"diagram_json,omitempty"`
 	SpecSummary json.RawMessage     `json:"spec_summary,omitempty"`
+	YamlContent string              `json:"yaml_content,omitempty"`
 	Attachments []AttachmentRequest `json:"attachments,omitempty"`
 }
 
