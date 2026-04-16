@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,8 +24,33 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 )
 
+// minimalValidCoreScenarioYAML returns a minimal simulation-core-valid scenario for tests.
+func minimalValidCoreScenarioYAML(serviceID string) string {
+	return fmt.Sprintf(`hosts:
+  - id: host-1
+    cores: 4
+services:
+  - id: %s
+    replicas: 1
+    model: cpu
+    endpoints:
+      - path: /read
+        mean_cpu_ms: 1
+        cpu_sigma_ms: 0
+        net_latency_ms: {mean: 1, sigma: 0.1}
+        downstream: []
+workload:
+  - from: client
+    to: %s:/read
+    arrival:
+      type: poisson
+      rate_rps: 10
+`, serviceID, serviceID)
+}
+
 func TestCreateRunForProject_CachesAndReusesScenario(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	validYAML := minimalValidCoreScenarioYAML("svc-first")
 	var capturedFirst, capturedSecond []byte
 	call := 0
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +70,7 @@ func TestCreateRunForProject_CachesAndReusesScenario(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 	now := time.Now()
-	hashFirstBytes := sha256.Sum256([]byte("scenario: first"))
+	hashFirstBytes := sha256.Sum256([]byte(validYAML))
 	hashFirst := hex.EncodeToString(hashFirstBytes[:])
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
@@ -68,18 +94,18 @@ func TestCreateRunForProject_CachesAndReusesScenario(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
 	mock.ExpectQuery(`SELECT c.diagram_version_id, c.scenario_yaml, c.scenario_hash`).
 		WithArgs("dv-1", "project-1", "user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "created_at", "updated_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}))
 	mock.ExpectExec(`INSERT INTO simulation_runs`).WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "scenario: first", nil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), validYAML, nil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT diagram_version_id, scenario_yaml, scenario_hash`).
 		WithArgs("dv-1").
-		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "created_at", "updated_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}))
 	mock.ExpectQuery(`INSERT INTO simulation_scenario_cache`).
-		WithArgs("dv-1", "scenario: first", sqlmock.AnyArg(), "", "request").
-		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "created_at", "updated_at"}).
-			AddRow("dv-1", "scenario: first", hashFirst, nil, "request", now, now))
+		WithArgs("dv-1", validYAML, sqlmock.AnyArg(), "", "request", nil).
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}).
+			AddRow("dv-1", validYAML, hashFirst, nil, "request", nil, now, now))
 
-	firstBody := `{"diagram_version_id":"dv-1","scenario_yaml":"scenario: first","duration_ms":1000}`
+	firstBody := fmt.Sprintf(`{"diagram_version_id":"dv-1","scenario_yaml":%q,"duration_ms":1000}`, validYAML)
 	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(firstBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-Id", "user-1")
@@ -92,14 +118,17 @@ func TestCreateRunForProject_CachesAndReusesScenario(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
 	mock.ExpectQuery(`SELECT c.diagram_version_id, c.scenario_yaml, c.scenario_hash`).
 		WithArgs("dv-1", "project-1", "user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "created_at", "updated_at"}).
-			AddRow("dv-1", "scenario: first", hashFirst, nil, "request", now, now))
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}).
+			AddRow("dv-1", validYAML, hashFirst, nil, "request", nil, now, now))
+	mock.ExpectQuery(`SELECT yaml_content FROM diagram_versions`).
+		WithArgs("dv-1", "project-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"yaml_content"}).AddRow("services:\n  - id: x\n    type: api_gateway\n"))
+	mock.ExpectQuery(`SELECT c.diagram_version_id, c.scenario_yaml, c.scenario_hash`).
+		WithArgs("dv-1", "project-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}).
+			AddRow("dv-1", validYAML, hashFirst, nil, "request", nil, now, now))
 	mock.ExpectExec(`INSERT INTO simulation_runs`).WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "scenario: first", nil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectQuery(`SELECT diagram_version_id, scenario_yaml, scenario_hash`).
-		WithArgs("dv-1").
-		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "created_at", "updated_at"}).
-			AddRow("dv-1", "scenario: first", hashFirst, nil, "request", now, now))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), validYAML, nil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	secondBody := `{"diagram_version_id":"dv-1","duration_ms":1000}`
 	req2 := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(secondBody))
@@ -112,8 +141,8 @@ func TestCreateRunForProject_CachesAndReusesScenario(t *testing.T) {
 	var firstPayload, secondPayload map[string]any
 	require.NoError(t, json.Unmarshal(capturedFirst, &firstPayload))
 	require.NoError(t, json.Unmarshal(capturedSecond, &secondPayload))
-	assert.Equal(t, "scenario: first", firstPayload["input"].(map[string]any)["scenario_yaml"])
-	assert.Equal(t, "scenario: first", secondPayload["input"].(map[string]any)["scenario_yaml"])
+	assert.Equal(t, validYAML, firstPayload["input"].(map[string]any)["scenario_yaml"])
+	assert.Equal(t, validYAML, secondPayload["input"].(map[string]any)["scenario_yaml"])
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -137,7 +166,10 @@ func TestCreateRunForProject_MissingScenarioAndCacheReturns400(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
 	mock.ExpectQuery(`SELECT c.diagram_version_id, c.scenario_yaml, c.scenario_hash`).
 		WithArgs("dv-1", "project-1", "user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "created_at", "updated_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}))
+	mock.ExpectQuery(`SELECT yaml_content FROM diagram_versions`).
+		WithArgs("dv-1", "project-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"yaml_content"}).AddRow(nil))
 
 	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(`{"diagram_version_id":"dv-1"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -181,13 +213,14 @@ func TestCreateRunForProject_ScenarioConflictReturns409(t *testing.T) {
 	router := gin.New()
 	router.POST("/projects/:project_id/runs", h.CreateRunForProject)
 
+	changedYAML := minimalValidCoreScenarioYAML("svc-other")
 	mock.ExpectQuery(`SELECT id FROM diagram_versions`).WithArgs("dv-1", "project-1", "user-1").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
 	mock.ExpectQuery(`SELECT c.diagram_version_id, c.scenario_yaml, c.scenario_hash`).
 		WithArgs("dv-1", "project-1", "user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "created_at", "updated_at"}).
-			AddRow("dv-1", "old", "old-hash", nil, "request", now, now))
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}).
+			AddRow("dv-1", "old", "old-hash", nil, "request", nil, now, now))
 
-	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(`{"diagram_version_id":"dv-1","scenario_yaml":"scenario: changed","duration_ms":1000}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(fmt.Sprintf(`{"diagram_version_id":"dv-1","scenario_yaml":%q,"duration_ms":1000}`, changedYAML)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-Id", "user-1")
 	w := httptest.NewRecorder()
@@ -233,7 +266,8 @@ func TestCreateRunForProject_InvalidDiagramVersionReturns400(t *testing.T) {
 		WithArgs("dv-missing", "project-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
-	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(`{"diagram_version_id":"dv-missing","scenario_yaml":"scenario: changed","duration_ms":1000}`))
+	yaml := minimalValidCoreScenarioYAML("svc-x")
+	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(fmt.Sprintf(`{"diagram_version_id":"dv-missing","scenario_yaml":%q,"duration_ms":1000}`, yaml)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-Id", "user-1")
 	w := httptest.NewRecorder()

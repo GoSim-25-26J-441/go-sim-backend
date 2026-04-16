@@ -125,7 +125,7 @@ func TestCreateRunForProject_OnlineOptimization_RejectsWhenTargetP95MissingOrZer
 	router.POST("/projects/:project_id/runs", h.CreateRunForProject)
 
 	body := map[string]interface{}{
-		"scenario_yaml": "hosts: []",
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-online-p95"),
 		"optimization":  map[string]interface{}{"online": true},
 	}
 	bodyBytes, err := json.Marshal(body)

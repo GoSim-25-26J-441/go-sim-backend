@@ -15,6 +15,7 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/scenario"
+	simconfig "github.com/GoSim-25-26J-441/simulation-core/pkg/config"
 	"github.com/gin-gonic/gin"
 )
 
@@ -57,14 +58,14 @@ func enrichPersistedTimeSeriesPoint(p simrepo.TimeSeriesPoint) gin.H {
 		}
 	}
 	return gin.H{
-		"time":         p.Time,
-		"value":        p.MetricValue,
-		"labels":       labels,
-		"service_id":   serviceID,
-		"node_id":      nodeID,
-		"host_id":      hostID,
-		"instance_id":  instanceID,
-		"tags":         tags,
+		"time":        p.Time,
+		"value":       p.MetricValue,
+		"labels":      labels,
+		"service_id":  serviceID,
+		"node_id":     nodeID,
+		"host_id":     hostID,
+		"instance_id": instanceID,
+		"tags":        tags,
 	}
 }
 
@@ -106,6 +107,12 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
+	}
+	if strings.TrimSpace(body.ScenarioYAML) != "" {
+		if _, err := simconfig.ParseScenarioYAML([]byte(body.ScenarioYAML)); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scenario_yaml", "details": err.Error()})
+			return
+		}
 	}
 	opt, hasOpt, err := UnmarshalOptimizationConfig(body.Optimization)
 	if err != nil {
@@ -162,19 +169,35 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 				return
 			}
 		}
-		if effectiveScenarioYAML == "" && cachedScenario != nil {
-			effectiveScenarioYAML = cachedScenario.ScenarioYAML
+		if effectiveScenarioYAML == "" {
+			yamlStr, _, _, err := h.resolveScenarioYAMLForDiagramVersion(c.Request.Context(), userID, projectID, resolvedDiagramVersionID)
+			if err != nil {
+				if errors.Is(err, simrepo.ErrDiagramMissingYAML) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "diagram version has no stored AMG/APD YAML"})
+					return
+				}
+				c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to resolve scenario for diagram version", "details": err.Error()})
+				return
+			}
+			effectiveScenarioYAML = yamlStr
 		}
 	}
 	if effectiveScenarioYAML == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required when no cached scenario exists for the diagram version"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required when no diagram version scenario can be resolved"})
 		return
 	}
 
+	meta := cloneMetadata(body.Metadata)
+	if resolvedDiagramVersionID != "" {
+		if meta == nil {
+			meta = make(map[string]interface{})
+		}
+		meta["diagram_version_id"] = resolvedDiagramVersionID
+	}
 	req := &domain.CreateRunRequest{
 		UserID:          userID,
 		ProjectPublicID: projectID,
-		Metadata:        body.Metadata,
+		Metadata:        meta,
 	}
 	run, err := h.simService.CreateRun(req)
 	if err != nil {
@@ -272,24 +295,16 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 				ScenarioYAML: effectiveScenarioYAML,
 			})
 		}
-		if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil {
+		if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil && strings.TrimSpace(body.ScenarioYAML) != "" {
 			cacheSource := "request"
-			if body.ScenarioYAML == "" {
-				cacheSource = "cache"
-			}
-			s3Path := ""
-			if h.s3Client != nil {
-				key := "simulation/diagram_versions/" + resolvedDiagramVersionID + "/scenario.yaml"
-				if err := h.s3Client.PutObject(context.Background(), key, []byte(effectiveScenarioYAML)); err == nil {
-					s3Path = key
-				}
-			}
+			s3Path := h.putScenarioToS3(c.Request.Context(), resolvedDiagramVersionID, effectiveScenarioYAML)
 			_, err := h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(
 				c.Request.Context(),
 				resolvedDiagramVersionID,
 				effectiveScenarioYAML,
 				cacheSource,
 				s3Path,
+				nil,
 				body.OverwriteScenarioCache,
 			)
 			if err != nil {
