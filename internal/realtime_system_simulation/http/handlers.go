@@ -472,11 +472,6 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 		ServiceID string         `json:"service_id,omitempty"`
 		NodeID    string         `json:"node_id,omitempty"`
 		Tags      map[string]any `json:"tags,omitempty"`
-		Time      time.Time      `json:"time"`
-		Value     float64        `json:"value"`
-		ServiceID string         `json:"service_id,omitempty"`
-		NodeID    string         `json:"node_id,omitempty"`
-		Tags      map[string]any `json:"tags,omitempty"`
 	}
 
 	seriesMap := make(map[string][]pointDTO)
@@ -518,8 +513,6 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"run_id":     run.RunID,
-		"summary":    summaryResp,
 		"run_id":     run.RunID,
 		"summary":    summaryResp,
 		"timeseries": timeseries,

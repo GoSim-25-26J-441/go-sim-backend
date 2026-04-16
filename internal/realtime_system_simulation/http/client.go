@@ -199,14 +199,10 @@ type ExportRunRun struct {
 // It contains the original input, aggregated metrics, and optional time-series data.
 type ExportRunResponse struct {
 	Run   *ExportRunRun `json:"run,omitempty"`
-	Run   *ExportRunRun `json:"run,omitempty"`
 	Input struct {
 		ScenarioYAML string `json:"scenario_yaml"`
 		DurationMs   int64  `json:"duration_ms,omitempty"`
 	} `json:"input"`
-	Metrics             map[string]any     `json:"metrics,omitempty"`
-	OptimizationHistory []OptimizationStep `json:"optimization_history,omitempty"`
-	FinalConfig         map[string]any     `json:"final_config,omitempty"`
 	Metrics             map[string]any     `json:"metrics,omitempty"`
 	OptimizationHistory []OptimizationStep `json:"optimization_history,omitempty"`
 	FinalConfig         map[string]any     `json:"final_config,omitempty"`
@@ -218,7 +214,6 @@ type ExportRunResponse struct {
 		Source       string         `json:"source"`
 		ScenarioYAML string         `json:"scenario_yaml,omitempty"`
 	} `json:"candidates,omitempty"`
-	TimeSeries []struct {
 	TimeSeries []struct {
 		Metric string `json:"metric"`
 		Points []struct {
@@ -332,9 +327,6 @@ func (c *SimulationEngineClient) ExportRun(runID string) (*ExportRunResponse, er
 // TimeSeriesQueryOpts holds optional query parameters for GET /v1/runs/{id}/metrics/timeseries.
 // Times can be Unix ms or RFC3339 strings; pass as strings.
 type TimeSeriesQueryOpts struct {
-	Metric    []string // metric names (e.g. request_count, request_error_count); can repeat
-	Service   string
-	Instance  string
 	Metric    []string // metric names (e.g. request_count, request_error_count); can repeat
 	Service   string
 	Instance  string
