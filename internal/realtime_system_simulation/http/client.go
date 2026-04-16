@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -35,40 +36,17 @@ type CreateRunRequest struct {
 	Input *RunInput `json:"input"`
 }
 
-// OptimizationConfig configures an optimization run (batch or online).
-type OptimizationConfig struct {
-	Objective            string  `json:"objective,omitempty"`
-	MaxIterations        int32   `json:"max_iterations,omitempty"`
-	MaxEvaluations       int32   `json:"max_evaluations,omitempty"`
-	StepSize             float64 `json:"step_size,omitempty"`
-	EvaluationDurationMs int64   `json:"evaluation_duration_ms,omitempty"`
-	Online               bool    `json:"online,omitempty"`
-	TargetP95LatencyMs   float64 `json:"target_p95_latency_ms,omitempty"`
-	ControlIntervalMs    int64   `json:"control_interval_ms,omitempty"`
-	MinHosts             int32   `json:"min_hosts,omitempty"`
-	MaxHosts             int32   `json:"max_hosts,omitempty"`
-	// Scale-down gating (Phase 1): 0–1, 0 = off
-	ScaleDownCPUUtilMax float64 `json:"scale_down_cpu_util_max,omitempty"`
-	ScaleDownMemUtilMax float64 `json:"scale_down_mem_util_max,omitempty"`
-	// Primary target (Phase 2): e.g. "p95_latency", "cpu_utilization", "memory_utilization"
-	OptimizationTargetPrimary string  `json:"optimization_target_primary,omitempty"`
-	TargetUtilHigh            float64 `json:"target_util_high,omitempty"`
-	TargetUtilLow             float64 `json:"target_util_low,omitempty"`
-	// Host scale-in (Phase 3): 0–1, 0 = host scale-in disabled
-	ScaleDownHostCPUUtilMax float64 `json:"scale_down_host_cpu_util_max,omitempty"`
-}
-
 // RunInput represents the input for a simulation run.
 // It mirrors simulation-core's RunInput message.
 type RunInput struct {
-	ScenarioYAML   string              `json:"scenario_yaml"`
-	ConfigYAML     string              `json:"config_yaml,omitempty"`
-	DurationMs     int64               `json:"duration_ms"`
-	Seed           int64               `json:"seed,omitempty"`
-	RealTimeMode   *bool               `json:"real_time_mode,omitempty"` // Enable real-time mode for faster simulation
-	Optimization   *OptimizationConfig `json:"optimization,omitempty"`
-	CallbackURL    string              `json:"callback_url,omitempty"`
-	CallbackSecret string              `json:"callback_secret,omitempty"` // Secret for simulator to use when calling back
+	ScenarioYAML   string          `json:"scenario_yaml"`
+	ConfigYAML     string          `json:"config_yaml,omitempty"`
+	DurationMs     int64           `json:"duration_ms"`
+	Seed           int64           `json:"seed,omitempty"`
+	RealTimeMode   *bool           `json:"real_time_mode,omitempty"` // Enable real-time mode for faster simulation
+	Optimization   json.RawMessage `json:"optimization,omitempty"`   // full OptimizationConfig JSON; passthrough for proto parity
+	CallbackURL    string          `json:"callback_url,omitempty"`
+	CallbackSecret string          `json:"callback_secret,omitempty"` // Secret for simulator to use when calling back
 }
 
 // CreateRunResponse represents the response from creating a run
@@ -80,10 +58,21 @@ type CreateRunResponse struct {
 	} `json:"run"`
 }
 
+// ValidateEngineRunID rejects run IDs that would break URL paths when used as a path segment (simulation-core contract).
+func ValidateEngineRunID(runID string) error {
+	if strings.ContainsAny(runID, ":/") {
+		return fmt.Errorf("run_id must not contain ':' or '/'")
+	}
+	return nil
+}
+
 // CreateRunWithInput creates a run in the simulation engine with a full RunInput payload.
 func (c *SimulationEngineClient) CreateRunWithInput(runID string, input *RunInput, callbackURL string, callbackSecret string) (string, error) {
 	if input == nil {
 		return "", fmt.Errorf("run input is required")
+	}
+	if err := ValidateEngineRunID(runID); err != nil {
+		return "", err
 	}
 
 	// Attach callback information to the input before sending.
@@ -119,7 +108,7 @@ func (c *SimulationEngineClient) CreateRunWithInput(runID string, input *RunInpu
 	}
 
 	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+		return "", &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 	}
 
 	var createResp CreateRunResponse
@@ -141,17 +130,39 @@ func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, du
 	return c.CreateRunWithInput(runID, input, callbackURL, callbackSecret)
 }
 
-// GetRunResponse represents the response from getting a run
+// BatchScoreBreakdown mirrors HTTP batch_score_breakdown (subset of batch metrics; may duplicate top-level Run fields).
+type BatchScoreBreakdown struct {
+	BatchRecommendationFeasible *bool    `json:"batch_recommendation_feasible,omitempty"`
+	BatchViolationScore         *float64 `json:"batch_violation_score,omitempty"`
+	BatchEfficiencyScore        *float64 `json:"batch_efficiency_score,omitempty"`
+	BatchRecommendationSummary  string   `json:"batch_recommendation_summary,omitempty"`
+}
+
+// GetRunResponse represents the response from getting a run (simulation-core GET /v1/runs/{id} JSON).
+// For batch optimization runs, best_score is legacy (efficiency only); use batch_recommendation_* and batch_score_breakdown.
+// Direct API clients and UIs should not interpret best_score as the full ranking objective for batch mode.
 type GetRunResponse struct {
 	Run struct {
-		ID                   string `json:"id"`
-		Status               string `json:"status"`
-		CreatedAt            int64  `json:"created_at_unix_ms"`
-		StartedAt            int64  `json:"started_at_unix_ms"`
-		EndedAt              int64  `json:"ended_at_unix_ms"`
-		Error                string `json:"error,omitempty"`
-		RealDurationMs       int64  `json:"real_duration_ms,omitempty"`
-		SimulationDurationMs int64  `json:"simulation_duration_ms,omitempty"`
+		ID                     string `json:"id"`
+		Status                 string `json:"status"`
+		CreatedAt              int64  `json:"created_at_unix_ms"`
+		StartedAt              int64  `json:"started_at_unix_ms"`
+		EndedAt                int64  `json:"ended_at_unix_ms"`
+		Error                  string `json:"error,omitempty"`
+		RealDurationMs         int64  `json:"real_duration_ms,omitempty"`
+		SimulationDurationMs   int64  `json:"simulation_duration_ms,omitempty"`
+		BestRunID              string `json:"best_run_id,omitempty"`
+		OnlineCompletionReason string `json:"online_completion_reason,omitempty"`
+		// best_score: batch optimization — legacy efficiency scalar only; hill-climb — objective value for best config.
+		BestScore *float64 `json:"best_score,omitempty"`
+		// iterations: batch — search evaluations (adapter-clamped int32); hill-climb — step iterations.
+		Iterations int32 `json:"iterations,omitempty"`
+		// Batch optimization outcome (proto fields; may overlap batch_score_breakdown).
+		BatchRecommendationFeasible *bool                `json:"batch_recommendation_feasible,omitempty"`
+		BatchViolationScore         *float64             `json:"batch_violation_score,omitempty"`
+		BatchEfficiencyScore        *float64             `json:"batch_efficiency_score,omitempty"`
+		BatchRecommendationSummary  string               `json:"batch_recommendation_summary,omitempty"`
+		BatchScoreBreakdown         *BatchScoreBreakdown `json:"batch_score_breakdown,omitempty"`
 	} `json:"run"`
 }
 
@@ -171,8 +182,17 @@ type OptimizationStep struct {
 // ExportRunRun is the run object in the simulator's export response (convertRunToJSON).
 // It includes duration fields when the run has ended and/or input had duration_ms.
 type ExportRunRun struct {
-	RealDurationMs       int64 `json:"real_duration_ms,omitempty"`
-	SimulationDurationMs int64 `json:"simulation_duration_ms,omitempty"`
+	RealDurationMs              int64                `json:"real_duration_ms,omitempty"`
+	SimulationDurationMs        int64                `json:"simulation_duration_ms,omitempty"`
+	BestRunID                   string               `json:"best_run_id,omitempty"`
+	OnlineCompletionReason      string               `json:"online_completion_reason,omitempty"`
+	BestScore                   *float64             `json:"best_score,omitempty"`
+	Iterations                  int32                `json:"iterations,omitempty"`
+	BatchRecommendationFeasible *bool                `json:"batch_recommendation_feasible,omitempty"`
+	BatchViolationScore         *float64             `json:"batch_violation_score,omitempty"`
+	BatchEfficiencyScore        *float64             `json:"batch_efficiency_score,omitempty"`
+	BatchRecommendationSummary  string               `json:"batch_recommendation_summary,omitempty"`
+	BatchScoreBreakdown         *BatchScoreBreakdown `json:"batch_score_breakdown,omitempty"`
 }
 
 // ExportRunResponse represents the export data from the simulator.
@@ -250,6 +270,32 @@ func (c *SimulationEngineClient) GetRun(runID string) (*GetRunResponse, error) {
 	}
 
 	return &getResp, nil
+}
+
+// RenewOnlineLease extends the wall-clock lease for a long online run (POST /v1/runs/{id}/online/renew-lease).
+// Requires lease_ttl_ms to have been set on create; conflicts (wrong state, lease not configured) may return 409.
+func (c *SimulationEngineClient) RenewOnlineLease(runID string) error {
+	if err := ValidateEngineRunID(runID); err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/v1/runs/%s/online/renew-lease", c.baseURL, runID)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
+	}
+	return nil
 }
 
 // ExportRun fetches the export data for a run and returns the scenario_yaml, if present.

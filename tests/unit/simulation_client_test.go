@@ -134,6 +134,60 @@ func TestSimulationEngineClient_ExportRun_WithRunDurations(t *testing.T) {
 	assert.Equal(t, int64(5000), resp.Input.DurationMs)
 }
 
+func TestSimulationEngineClient_CreateRunWithInput_BatchOptimizationConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		var body struct {
+			Input struct {
+				Optimization *struct {
+					Online                      bool    `json:"online"`
+					Batch                       *struct {
+						EnableLocalRefinement       *bool   `json:"enable_local_refinement,omitempty"`
+						DeterministicCandidateSeeds []int64 `json:"deterministic_candidate_seeds,omitempty"`
+					} `json:"batch,omitempty"`
+				} `json:"optimization"`
+			} `json:"input"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&body)
+		require.NoError(t, err)
+		require.NotNil(t, body.Input.Optimization)
+		require.NotNil(t, body.Input.Optimization.Batch)
+		require.NotNil(t, body.Input.Optimization.Batch.EnableLocalRefinement)
+		assert.True(t, *body.Input.Optimization.Batch.EnableLocalRefinement)
+		assert.Equal(t, []int64{7, 11}, body.Input.Optimization.Batch.DeterministicCandidateSeeds)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"run": map[string]interface{}{
+				"id":                 "run-batch",
+				"status":             "RUN_STATUS_PENDING",
+				"created_at_unix_ms": 1705312200000,
+			},
+		})
+	}))
+	defer server.Close()
+
+	batchInner, err := json.Marshal(map[string]interface{}{
+		"enable_local_refinement":       true,
+		"deterministic_candidate_seeds": []int64{7, 11},
+	})
+	require.NoError(t, err)
+	opt := simhttp.OptimizationConfig{Online: false, Batch: batchInner}
+	optRaw, err := json.Marshal(&opt)
+	require.NoError(t, err)
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	input := &simhttp.RunInput{
+		ScenarioYAML: "hosts: []",
+		DurationMs:   5000,
+		Optimization: optRaw,
+	}
+	id, err := client.CreateRunWithInput("run-batch", input, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "run-batch", id)
+}
+
 func TestSimulationEngineClient_CreateRunWithInput_OptimizationConfigWithNewFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
@@ -172,19 +226,24 @@ func TestSimulationEngineClient_CreateRunWithInput_OptimizationConfigWithNewFiel
 	}))
 	defer server.Close()
 
+	opt := simhttp.OptimizationConfig{
+		Online:                    true,
+		TargetP95LatencyMs:        100,
+		ScaleDownCPUUtilMax:       0.5,
+		ScaleDownMemUtilMax:       0.4,
+		OptimizationTargetPrimary: "cpu_utilization",
+		TargetUtilHigh:            0.7,
+		TargetUtilLow:             0.4,
+		ScaleDownHostCPUUtilMax:   0.3,
+	}
+	optRaw, err := json.Marshal(&opt)
+	require.NoError(t, err)
+
 	client := simhttp.NewSimulationEngineClient(server.URL)
 	input := &simhttp.RunInput{
 		ScenarioYAML: "hosts: []",
 		DurationMs:   0,
-		Optimization: &simhttp.OptimizationConfig{
-			Online:                    true,
-			ScaleDownCPUUtilMax:       0.5,
-			ScaleDownMemUtilMax:       0.4,
-			OptimizationTargetPrimary: "cpu_utilization",
-			TargetUtilHigh:            0.7,
-			TargetUtilLow:             0.4,
-			ScaleDownHostCPUUtilMax:   0.3,
-		},
+		Optimization: optRaw,
 	}
 	id, err := client.CreateRunWithInput("run-online", input, "", "")
 	require.NoError(t, err)

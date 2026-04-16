@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,7 +35,7 @@ func TestCreateRun_OnlineOptimization_RejectsWhenTargetP95MissingOrZero(t *testi
 		}},
 		{"online true, target_p95_latency_ms zero", map[string]interface{}{
 			"optimization": map[string]interface{}{
-				"online":                 true,
+				"online":                true,
 				"target_p95_latency_ms": 0,
 			},
 		}},
@@ -92,7 +93,7 @@ func TestCreateRun_OnlineOptimization_AcceptsValidTargetP95(t *testing.T) {
 		"scenario_yaml": "hosts: []",
 		"duration_ms":   10000,
 		"optimization": map[string]interface{}{
-			"online":                 true,
+			"online":                true,
 			"target_p95_latency_ms": 50,
 		},
 	}
@@ -141,6 +142,34 @@ func TestCreateRunForProject_OnlineOptimization_RejectsWhenTargetP95MissingOrZer
 	assert.Contains(t, resp["error"], "target_p95_latency_ms > 0")
 }
 
+func TestCreateRun_BatchOptimization_RejectsWithOnline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &Handler{simService: nil}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": "hosts: []",
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"online": true,
+			"batch":  map[string]interface{}{},
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "batch optimization cannot be combined")
+}
+
 func TestCreateRun_OptimizationObjective_RejectsInvalid(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &Handler{simService: nil}
@@ -168,6 +197,157 @@ func TestCreateRun_OptimizationObjective_RejectsInvalid(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Contains(t, resp["error"], "invalid optimization.objective")
 	assert.Contains(t, resp["error"], "cpu_utilization")
+}
+
+func TestCreateRun_BatchOptimization_DefaultMaxEvaluationsForwarded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured []byte
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		captured, err = io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"run":{"id":"engine-b","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+	}))
+	defer engineServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+	engineClient := NewSimulationEngineClient(engineServer.URL)
+	h := &Handler{
+		simService:   simSvc,
+		engineClient: engineClient,
+		callbackURL:  "http://localhost/callback",
+	}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": "hosts: []",
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"online": false,
+			"batch":  map[string]interface{}{},
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var createResp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &createResp))
+	warns, ok := createResp["warnings"].([]interface{})
+	require.True(t, ok, "expected warnings in create response")
+	require.NotEmpty(t, warns)
+
+	var outer map[string]interface{}
+	require.NoError(t, json.Unmarshal(captured, &outer))
+	input := outer["input"].(map[string]interface{})
+	opt := input["optimization"].(map[string]interface{})
+	assert.Equal(t, float64(DefaultBatchMaxEvaluations), opt["max_evaluations"])
+}
+
+func TestCreateRun_RecommendedConfig_RejectedWithoutBatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+	h := &Handler{simService: simSvc}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": "hosts: []",
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"objective": ObjectiveRecommendedConfig,
+			"online":    false,
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "recommended_config")
+	assert.Contains(t, resp["error"], "batch")
+}
+
+func TestCreateRun_Batch_RecommendedConfig_StartsAndForwardsP95Placeholder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured []byte
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		captured, err = io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"run":{"id":"engine-rc","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+	}))
+	defer engineServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+	engineClient := NewSimulationEngineClient(engineServer.URL)
+	h := &Handler{
+		simService:   simSvc,
+		engineClient: engineClient,
+		callbackURL:  "http://localhost/callback",
+	}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": "hosts: []",
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"objective": ObjectiveRecommendedConfig,
+			"online":    false,
+			"batch":     map[string]interface{}{},
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var outer map[string]interface{}
+	require.NoError(t, json.Unmarshal(captured, &outer))
+	input := outer["input"].(map[string]interface{})
+	opt := input["optimization"].(map[string]interface{})
+	assert.Equal(t, RecommendedConfigEngineObjective, opt["objective"])
 }
 
 func TestCreateRun_OptimizationObjective_AcceptsCpuAndMemoryUtilization(t *testing.T) {

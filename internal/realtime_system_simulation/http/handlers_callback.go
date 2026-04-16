@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log"
 	"math"
@@ -35,12 +36,59 @@ type engineRunCallbackBody struct {
 	TimestampUnixMs int64                  `json:"timestamp"`
 	Error           string                 `json:"error,omitempty"` // Error message if any
 	// Optimization / batch fields (optional; present for optimization runs)
-	BestRunID     string   `json:"best_run_id,omitempty"`
-	BestScore     float64  `json:"best_score,omitempty"`
-	Iterations    int32    `json:"iterations,omitempty"`
-	TopCandidates []string `json:"top_candidates,omitempty"`
+	BestRunID string   `json:"best_run_id,omitempty"`
+	BestScore *float64 `json:"best_score,omitempty"` // hill-climb: objective; batch: efficiency only (legacy)
+	// Iterations: batch — search evaluations used; hill-climb — step count (see simulation-core adapter).
+	Iterations             int32    `json:"iterations,omitempty"`
+	OnlineCompletionReason string   `json:"online_completion_reason,omitempty"`
+	TopCandidates          []string `json:"top_candidates,omitempty"`
 	// FinalConfig is the last optimization step's current_config (online runs)
 	FinalConfig map[string]interface{} `json:"final_config,omitempty"`
+	// Structured batch outcome (batch optimization)
+	BatchRecommendationFeasible *bool           `json:"batch_recommendation_feasible,omitempty"`
+	BatchViolationScore         *float64        `json:"batch_violation_score,omitempty"`
+	BatchEfficiencyScore        *float64        `json:"batch_efficiency_score,omitempty"`
+	BatchRecommendationSummary  *string         `json:"batch_recommendation_summary,omitempty"`
+	BatchScoreBreakdown         json.RawMessage `json:"batch_score_breakdown,omitempty"`
+}
+
+func applyOptimizationCallbackMetadata(dst map[string]interface{}, body *engineRunCallbackBody) {
+	if body.BestRunID != "" {
+		dst["best_run_id"] = body.BestRunID
+	}
+	if body.BestScore != nil {
+		dst["best_score"] = *body.BestScore
+	}
+	if body.Iterations != 0 {
+		dst["iterations"] = body.Iterations
+	}
+	if len(body.TopCandidates) > 0 {
+		dst["top_candidates"] = body.TopCandidates
+	}
+	if body.FinalConfig != nil {
+		dst["final_config"] = body.FinalConfig
+	}
+	if body.BatchRecommendationFeasible != nil {
+		dst["batch_recommendation_feasible"] = *body.BatchRecommendationFeasible
+	}
+	if body.BatchViolationScore != nil {
+		dst["batch_violation_score"] = *body.BatchViolationScore
+	}
+	if body.BatchEfficiencyScore != nil {
+		dst["batch_efficiency_score"] = *body.BatchEfficiencyScore
+	}
+	if body.BatchRecommendationSummary != nil {
+		dst["batch_recommendation_summary"] = *body.BatchRecommendationSummary
+	}
+	if body.OnlineCompletionReason != "" {
+		dst["online_completion_reason"] = body.OnlineCompletionReason
+	}
+	if len(body.BatchScoreBreakdown) > 0 {
+		var bd map[string]interface{}
+		if err := json.Unmarshal(body.BatchScoreBreakdown, &bd); err == nil && len(bd) > 0 {
+			dst["batch_score_breakdown"] = bd
+		}
+	}
 }
 
 // EngineRunCallback handles callbacks from the simulation engine when a run changes state.
@@ -135,22 +183,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 		updateMeta["engine_error"] = body.Error
 	}
 
-	// Optimization metadata (if present on callback)
-	if body.BestRunID != "" {
-		updateMeta["best_run_id"] = body.BestRunID
-	}
-	if body.BestScore != 0 {
-		updateMeta["best_score"] = body.BestScore
-	}
-	if body.Iterations != 0 {
-		updateMeta["iterations"] = body.Iterations
-	}
-	if len(body.TopCandidates) > 0 {
-		updateMeta["top_candidates"] = body.TopCandidates
-	}
-	if body.FinalConfig != nil {
-		updateMeta["final_config"] = body.FinalConfig
-	}
+	applyOptimizationCallbackMetadata(updateMeta, &body)
 
 	// Add metrics if provided
 	if len(body.Metrics) > 0 {
@@ -301,22 +334,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		updateMeta["engine_error"] = body.Error
 	}
 
-	// Optimization metadata (if present on callback)
-	if body.BestRunID != "" {
-		updateMeta["best_run_id"] = body.BestRunID
-	}
-	if body.BestScore != 0 {
-		updateMeta["best_score"] = body.BestScore
-	}
-	if body.Iterations != 0 {
-		updateMeta["iterations"] = body.Iterations
-	}
-	if len(body.TopCandidates) > 0 {
-		updateMeta["top_candidates"] = body.TopCandidates
-	}
-	if body.FinalConfig != nil {
-		updateMeta["final_config"] = body.FinalConfig
-	}
+	applyOptimizationCallbackMetadata(updateMeta, &body)
 
 	// Add metrics if provided
 	if len(body.Metrics) > 0 {
