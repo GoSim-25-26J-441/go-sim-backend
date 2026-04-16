@@ -13,6 +13,7 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	rg.GET("/runs", h.ListRuns)
 	rg.GET("/runs/:id", h.GetRun)
 	rg.GET("/runs/:id/candidates", h.GetRunCandidates)
+	rg.GET("/runs/:id/metrics/timeseries", h.GetRunPersistedMetricsTimeSeries)
 	rg.GET("/runs/:id/metrics", h.GetRunMetrics)
 	rg.GET("/runs/:id/events", h.StreamRunEvents) // SSE endpoint for real-time updates
 	rg.GET("/runs/:id/summary", h.GetRunSummary)

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	simconfig "github.com/GoSim-25-26J-441/simulation-core/pkg/config"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/scenario"
@@ -513,18 +514,51 @@ func normalizeSimWorkloadForStorage(m map[string]any) map[string]any {
 // concurrent_users and rate_rps are stored as integers (ceiling) for compatibility with int-typed consumers.
 func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics map[string]any) (spec map[string]any, metricsOut map[string]any, simWorkload map[string]any) {
 	spec = map[string]any{"label": "scenario"}
-	var parsed scenario.Scenario
+	var (
+		parsedLegacy scenario.Scenario
+		vcpu         float64
+		memoryGB     float64
+		rateRPS      float64
+	)
 	if scenarioYAML != "" {
-		s, err := scenario.ParseScenarioYAML([]byte(scenarioYAML))
-		if err == nil {
-			parsed = s
-			if vcpu := s.VCPU(); vcpu > 0 {
-				spec["vcpu"] = vcpu
+		if coreParsed, err := simconfig.ParseScenarioYAML([]byte(scenarioYAML)); err == nil {
+			if len(coreParsed.Hosts) > 0 {
+				spec["hosts"] = coreParsed.Hosts
 			}
-			if memoryGB := s.MemoryGB(); memoryGB > 0 {
-				spec["memory_gb"] = memoryGB
+			if len(coreParsed.Services) > 0 {
+				spec["services"] = coreParsed.Services
+			}
+			if len(coreParsed.Workload) > 0 {
+				spec["workload_patterns"] = coreParsed.Workload
+			}
+			for _, h := range coreParsed.Hosts {
+				vcpu += float64(h.Cores)
+				memoryGB += float64(h.MemoryGB)
+			}
+			for _, w := range coreParsed.Workload {
+				if w.Arrival.RateRPS > 0 {
+					rateRPS += w.Arrival.RateRPS
+				}
 			}
 		}
+		if legacy, err := scenario.ParseScenarioYAML([]byte(scenarioYAML)); err == nil {
+			parsedLegacy = legacy
+			if vcpu <= 0 {
+				vcpu = legacy.VCPU()
+			}
+			if memoryGB <= 0 {
+				memoryGB = legacy.MemoryGB()
+			}
+			if rateRPS <= 0 {
+				rateRPS = legacy.RateRPS()
+			}
+		}
+	}
+	if vcpu > 0 {
+		spec["vcpu"] = vcpu
+	}
+	if memoryGB > 0 {
+		spec["memory_gb"] = memoryGB
 	}
 	metricsOut = map[string]any{}
 	for k, v := range metrics {
@@ -541,7 +575,10 @@ func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics
 		metricsOut["mem_util_pct"] = scenario.ToUtilisationPercent(*v)
 	}
 	simWorkload = map[string]any{}
-	if rateRPS := parsed.RateRPS(); rateRPS > 0 {
+	if rateRPS <= 0 {
+		rateRPS = parsedLegacy.RateRPS()
+	}
+	if rateRPS > 0 {
 		simWorkload["concurrent_users"] = int(math.Ceil(rateRPS))
 		simWorkload["rate_rps"] = int(math.Ceil(rateRPS))
 	} else if v, ok := metrics["throughput_rps"]; ok {
@@ -669,7 +706,10 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				log.Printf("GetRunMetrics for run_id=%s engine_run_id=%s: %v (using export metrics)", run.RunID, run.EngineRunID, err)
 			}
 		}
-		if metricsForSummary != nil {
+		if metricsForSummary == nil {
+			metricsForSummary = map[string]any{}
+		}
+		if len(metricsForSummary) > 0 || exportResp.FinalConfig != nil || exportResp.Input.ScenarioYAML != "" {
 			var totalDurationMs *int64
 			if exportResp.Run != nil && exportResp.Run.SimulationDurationMs > 0 {
 				totalDurationMs = &exportResp.Run.SimulationDurationMs
@@ -687,6 +727,10 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 					summaryData["simulation_duration_ms"] = exportResp.Run.SimulationDurationMs
 				}
 			}
+			var finalCfg map[string]any
+			if exportResp.FinalConfig != nil {
+				finalCfg = exportResp.FinalConfig
+			}
 			summaryParams := &repository.SummaryUpsertParams{
 				RunID:           run.RunID,
 				EngineRunID:     run.EngineRunID,
@@ -694,6 +738,7 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				ScenarioYAML:    exportResp.Input.ScenarioYAML,
 				SummaryData:     summaryData,
 				TotalDurationMs: totalDurationMs,
+				FinalConfig:     finalCfg,
 			}
 			if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
 				log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)

@@ -20,12 +20,13 @@ func NewMetricsRepository(db *sql.DB) *MetricsRepository {
 
 // SummaryRecord represents a row read from simulation_summaries.
 type SummaryRecord struct {
-	RunID          string
-	EngineRunID    string
-	Metrics        map[string]any
-	SummaryData    map[string]any
-	TotalRequests  sql.NullInt64
-	TotalErrors    sql.NullInt64
+	RunID           string
+	EngineRunID     string
+	Metrics         map[string]any
+	SummaryData     map[string]any
+	FinalConfig     map[string]any
+	TotalRequests   sql.NullInt64
+	TotalErrors     sql.NullInt64
 	TotalDurationMs sql.NullInt64
 }
 
@@ -36,10 +37,10 @@ func (r *MetricsRepository) GetSummaryByRunID(ctx context.Context, runID string)
 	}
 
 	var rec SummaryRecord
-	var metricsJSON, summaryJSON []byte
+	var metricsJSON, summaryJSON, finalConfigJSON []byte
 
 	err := r.db.QueryRowContext(ctx, `
-        SELECT run_id, engine_run_id, metrics, summary_data,
+        SELECT run_id, engine_run_id, metrics, summary_data, final_config,
                total_requests, total_errors, total_duration_ms
         FROM simulation_summaries
         WHERE run_id = $1
@@ -48,6 +49,7 @@ func (r *MetricsRepository) GetSummaryByRunID(ctx context.Context, runID string)
 		&rec.EngineRunID,
 		&metricsJSON,
 		&summaryJSON,
+		&finalConfigJSON,
 		&rec.TotalRequests,
 		&rec.TotalErrors,
 		&rec.TotalDurationMs,
@@ -65,27 +67,19 @@ func (r *MetricsRepository) GetSummaryByRunID(ctx context.Context, runID string)
 	if err := json.Unmarshal(summaryJSON, &rec.SummaryData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal summary_data JSON for run_id=%s: %w", runID, err)
 	}
+	if len(finalConfigJSON) > 0 && string(finalConfigJSON) != "null" {
+		if err := json.Unmarshal(finalConfigJSON, &rec.FinalConfig); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal final_config JSON for run_id=%s: %w", runID, err)
+		}
+	}
+	if rec.FinalConfig == nil {
+		rec.FinalConfig = map[string]any{}
+	}
 
 	return &rec, nil
 }
 
-// ListTimeSeriesByRunID returns all timeseries points for the given run_id.
-func (r *MetricsRepository) ListTimeSeriesByRunID(ctx context.Context, runID string) ([]TimeSeriesPoint, error) {
-	if r == nil || r.db == nil {
-		return nil, fmt.Errorf("metrics repository not properly initialized")
-	}
-
-	rows, err := r.db.QueryContext(ctx, `
-        SELECT run_id, time, timestamp_ms, metric_type, metric_value, service_id, node_id, tags
-        FROM simulation_metrics_timeseries
-        WHERE run_id = $1
-        ORDER BY time ASC
-    `, runID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query simulation_metrics_timeseries for run_id=%s: %w", runID, err)
-	}
-	defer rows.Close()
-
+func (r *MetricsRepository) scanTimeSeriesRows(rows *sql.Rows, runID string) ([]TimeSeriesPoint, error) {
 	var out []TimeSeriesPoint
 	for rows.Next() {
 		var p TimeSeriesPoint
@@ -112,8 +106,47 @@ func (r *MetricsRepository) ListTimeSeriesByRunID(ctx context.Context, runID str
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating metrics_timeseries rows for run_id=%s: %w", runID, err)
 	}
-
 	return out, nil
+}
+
+// ListTimeSeriesByRunID returns all timeseries points for the given run_id.
+func (r *MetricsRepository) ListTimeSeriesByRunID(ctx context.Context, runID string) ([]TimeSeriesPoint, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("metrics repository not properly initialized")
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT run_id, time, timestamp_ms, metric_type, metric_value, service_id, node_id, tags
+        FROM simulation_metrics_timeseries
+        WHERE run_id = $1
+        ORDER BY time ASC
+    `, runID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query simulation_metrics_timeseries for run_id=%s: %w", runID, err)
+	}
+	defer rows.Close()
+
+	return r.scanTimeSeriesRows(rows, runID)
+}
+
+// ListTimeSeriesByRunIDAndMetric returns timeseries points for a run filtered by metric_type.
+func (r *MetricsRepository) ListTimeSeriesByRunIDAndMetric(ctx context.Context, runID, metric string) ([]TimeSeriesPoint, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("metrics repository not properly initialized")
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT run_id, time, timestamp_ms, metric_type, metric_value, service_id, node_id, tags
+        FROM simulation_metrics_timeseries
+        WHERE run_id = $1 AND metric_type = $2
+        ORDER BY time ASC
+    `, runID, metric)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query simulation_metrics_timeseries for run_id=%s metric=%s: %w", runID, metric, err)
+	}
+	defer rows.Close()
+
+	return r.scanTimeSeriesRows(rows, runID)
 }
 
 // SummaryUpsertParams captures the data needed to upsert a simulation_summaries row.
@@ -124,6 +157,7 @@ type SummaryUpsertParams struct {
 	SummaryData     map[string]any
 	ScenarioYAML    string
 	TotalDurationMs *int64 // optional; when set, persisted to total_duration_ms column
+	FinalConfig     map[string]any
 }
 
 // TimeSeriesPoint represents a single timeseries datapoint to persist.
@@ -153,6 +187,15 @@ func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertP
 		return fmt.Errorf("failed to marshal summary_data JSON: %w", err)
 	}
 
+	finalConfig := p.FinalConfig
+	if finalConfig == nil {
+		finalConfig = map[string]any{}
+	}
+	finalConfigJSON, err := json.Marshal(finalConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal final_config JSON: %w", err)
+	}
+
 	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
 	if _, err := r.db.ExecContext(
 		ctx,
@@ -169,15 +212,16 @@ func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertP
 	}
 	_, err = r.db.ExecContext(
 		ctx,
-		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data, scenario_yaml, total_duration_ms)
-         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6)
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data, scenario_yaml, total_duration_ms, final_config)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7::jsonb)
          ON CONFLICT (run_id) DO UPDATE
          SET engine_run_id = EXCLUDED.engine_run_id,
              metrics = EXCLUDED.metrics,
              summary_data = EXCLUDED.summary_data,
              scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml),
-             total_duration_ms = COALESCE(EXCLUDED.total_duration_ms, simulation_summaries.total_duration_ms)`,
-		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML, totalDurMs,
+             total_duration_ms = COALESCE(EXCLUDED.total_duration_ms, simulation_summaries.total_duration_ms),
+             final_config = EXCLUDED.final_config`,
+		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML, totalDurMs, string(finalConfigJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert simulation_summaries for run_id=%s: %w", p.RunID, err)
@@ -254,4 +298,3 @@ func (r *MetricsRepository) InsertTimeSeries(ctx context.Context, points []TimeS
 
 	return nil
 }
-
