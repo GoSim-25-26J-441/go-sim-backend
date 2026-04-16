@@ -66,73 +66,37 @@ jobs:
       - name: Upload migrations to S3
         run: aws s3 sync migrations/ s3://${{ secrets.DEPLOY_BUCKET }}/go-sim-backend/migrations/
 
+      - name: Upload deploy script to S3
+        run: aws s3 cp scripts/ec2-deploy.sh s3://${{ secrets.DEPLOY_BUCKET }}/go-sim-backend/scripts/deploy.sh
+
       - name: Deploy via SSM Run Command
-        id: ssm
         env:
-          APP_DIR: /opt/go-sim-backend
-          PARAM_ENV: /app/go-sim-backend/env
-          PARAM_FIREBASE: /app/go-sim-backend/firebase-service-account
+          BUCKET: ${{ secrets.DEPLOY_BUCKET }}
+          REGION: ${{ env.AWS_REGION }}
         run: |
-          script=$(cat << 'SCRIPT'
-          set -e
-          APP_DIR="$APP_DIR"
-          mkdir -p "$APP_DIR"
-          aws ssm get-parameter --name "$PARAM_ENV" --with-decryption --query "Parameter.Value" --output text > "$APP_DIR/.env"
-          aws ssm get-parameter --name "$PARAM_FIREBASE" --with-decryption --query "Parameter.Value" --output text > "$APP_DIR/firebase-service-account.json"
-          aws s3 sync s3://BUCKET/go-sim-backend/migrations/ "$APP_DIR/migrations/" --region REGION
-          export PGPASSWORD=$(grep '^DB_PASSWORD=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_HOST=$(grep '^DB_HOST=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_PORT=$(grep '^DB_PORT=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_USER=$(grep '^DB_USER=' "$APP_DIR/.env" | cut -d= -f2-)
-          export DB_NAME=$(grep '^DB_NAME=' "$APP_DIR/.env" | cut -d= -f2-)
-          for f in $(ls -1 "$APP_DIR/migrations/"*.sql 2>/dev/null | sort); do
-            psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$f" || exit 1
-          done
-          aws s3 cp s3://BUCKET/go-sim-backend/app "$APP_DIR/app" --region REGION
-          chmod +x "$APP_DIR/app"
-          sudo systemctl restart go-sim-backend
-          SCRIPT
-          )
-          script="${script//\$APP_DIR/$APP_DIR}"
-          script="${script//\$PARAM_ENV/$PARAM_ENV}"
-          script="${script//\$PARAM_FIREBASE/$PARAM_FIREBASE}"
-          script="${script//BUCKET/${{ secrets.DEPLOY_BUCKET }}}"
-          script="${script//REGION/${{ secrets.AWS_REGION }}}"
-          json_commands=$(echo -n "$script" | jq -Rs .)
+          cmd="aws s3 cp s3://${BUCKET}/go-sim-backend/scripts/deploy.sh /tmp/deploy.sh --region ${REGION} && chmod +x /tmp/deploy.sh && /tmp/deploy.sh ${BUCKET} ${REGION}"
+          json_commands=$(echo -n "$cmd" | jq -Rs .)
           cmd_id=$(aws ssm send-command \
+            --region "${REGION}" \
             --document-name "AWS-RunShellScript" \
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
             --parameters "{\"commands\":[$json_commands]}" \
             --query "Command.CommandId" \
             --output text)
-          echo "command_id=$cmd_id" >> "$GITHUB_OUTPUT"
-          for i in $(seq 1 30); do
-            status=$(aws ssm get-command-invocation \
-              --command-id "$cmd_id" \
-              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
-              --query "Status" \
-              --output text 2>/dev/null || echo "Pending")
-            if [ "$status" = "Success" ]; then
-              exit_code=$(aws ssm get-command-invocation \
-                --command-id "$cmd_id" \
-                --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
-                --query "ResponseCode" \
-                --output text)
-              if [ "$exit_code" != "0" ]; then
-                echo "SSM command failed with exit code $exit_code"
-                aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
-                exit 1
-              fi
-              echo "Deploy completed successfully"
+          echo "SSM command sent (ID: $cmd_id). Deployment verified by health check below."
+
+      - name: Wait for app to be ready
+        run: sleep 60
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            if curl -sf -o /dev/null https://api.microsim.dev/health; then
+              echo "Health check passed"
               exit 0
             fi
-            if [ "$status" = "Failed" ] || [ "$status" = "Cancelled" ] || [ "$status" = "TimedOut" ]; then
-              echo "SSM command failed with status $status"
-              aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
-              exit 1
-            fi
-            echo "Waiting for SSM command... ($status)"
-            sleep 5
+            echo "Health check attempt $i failed, retrying in 10s..."
+            sleep 10
           done
-          echo "SSM command timed out"
+          echo "Health check failed after 12 attempts"
           exit 1

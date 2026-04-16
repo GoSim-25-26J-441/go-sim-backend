@@ -19,7 +19,7 @@ func SuggestionPreview(c *gin.Context) {
 		return
 	}
 	if req.OutDir == "" {
-		req.OutDir = "/app/out"
+		req.OutDir = DefaultOutDir()
 	}
 	if req.Title == "" {
 		req.Title = "Architecture"
@@ -45,7 +45,7 @@ func SuggestionApply(c *gin.Context) {
 		return
 	}
 	if req.OutDir == "" {
-		req.OutDir = "/app/out"
+		req.OutDir = DefaultOutDir()
 	}
 	if req.Title == "" {
 		req.Title = "Architecture"

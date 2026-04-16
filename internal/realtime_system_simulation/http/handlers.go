@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+<<<<<<< HEAD
+=======
+// allowedOptimizationObjectives is the set of valid values for optimization.objective (batch and engine contract).
+var allowedOptimizationObjectives = map[string]bool{
+	"p95_latency_ms":     true,
+	"p99_latency_ms":     true,
+	"mean_latency_ms":    true,
+	"throughput_rps":     true,
+	"error_rate":         true,
+	"cost":               true,
+	"cpu_utilization":    true,
+	"memory_utilization": true,
+}
+
+const errInvalidObjective = "invalid optimization.objective: must be one of p95_latency_ms, p99_latency_ms, mean_latency_ms, throughput_rps, error_rate, cost, cpu_utilization, memory_utilization"
+
+func isAllowedObjective(s string) bool { return allowedOptimizationObjectives[s] }
+
+>>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 // CreateRunForProject creates a new simulation run for a project (project_id in path)
 func (h *Handler) CreateRunForProject(c *gin.Context) {
 	projectID := c.Param("project_id")
@@ -31,6 +51,7 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	}
 
 	var body struct {
+<<<<<<< HEAD
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode *bool                  `json:"real_time_mode,omitempty"`
@@ -38,6 +59,32 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		Seed         int64                  `json:"seed,omitempty"`
 		Optimization json.RawMessage        `json:"optimization,omitempty"`
 		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+=======
+		ScenarioYAML string `json:"scenario_yaml,omitempty"`
+		DurationMs   int64  `json:"duration_ms,omitempty"`
+		RealTimeMode *bool  `json:"real_time_mode,omitempty"`
+		ConfigYAML   string `json:"config_yaml,omitempty"`
+		Seed         int64  `json:"seed,omitempty"`
+		Optimization *struct {
+			Objective                 string  `json:"objective,omitempty"`
+			MaxIterations             int32   `json:"max_iterations,omitempty"`
+			MaxEvaluations            int32   `json:"max_evaluations,omitempty"`
+			StepSize                  float64 `json:"step_size,omitempty"`
+			EvaluationDurationMs      int64   `json:"evaluation_duration_ms,omitempty"`
+			Online                    bool    `json:"online,omitempty"`
+			TargetP95LatencyMs        float64 `json:"target_p95_latency_ms,omitempty"`
+			ControlIntervalMs         int64   `json:"control_interval_ms,omitempty"`
+			MinHosts                  int32   `json:"min_hosts,omitempty"`
+			MaxHosts                  int32   `json:"max_hosts,omitempty"`
+			ScaleDownCPUUtilMax       float64 `json:"scale_down_cpu_util_max,omitempty"`
+			ScaleDownMemUtilMax       float64 `json:"scale_down_mem_util_max,omitempty"`
+			OptimizationTargetPrimary string  `json:"optimization_target_primary,omitempty"`
+			TargetUtilHigh            float64 `json:"target_util_high,omitempty"`
+			TargetUtilLow             float64 `json:"target_util_low,omitempty"`
+			ScaleDownHostCPUUtilMax   float64 `json:"scale_down_host_cpu_util_max,omitempty"`
+		} `json:"optimization,omitempty"`
+		Metadata map[string]interface{} `json:"metadata,omitempty"`
+>>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -101,7 +148,30 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			DurationMs:   body.DurationMs,
 			Seed:         body.Seed,
 			RealTimeMode: body.RealTimeMode,
+<<<<<<< HEAD
 			Optimization: optPayload,
+=======
+		}
+		if body.Optimization != nil {
+			input.Optimization = &OptimizationConfig{
+				Objective:                 body.Optimization.Objective,
+				MaxIterations:             body.Optimization.MaxIterations,
+				MaxEvaluations:            body.Optimization.MaxEvaluations,
+				StepSize:                  body.Optimization.StepSize,
+				EvaluationDurationMs:      body.Optimization.EvaluationDurationMs,
+				Online:                    body.Optimization.Online,
+				TargetP95LatencyMs:        body.Optimization.TargetP95LatencyMs,
+				ControlIntervalMs:         body.Optimization.ControlIntervalMs,
+				MinHosts:                  body.Optimization.MinHosts,
+				MaxHosts:                  body.Optimization.MaxHosts,
+				ScaleDownCPUUtilMax:       body.Optimization.ScaleDownCPUUtilMax,
+				ScaleDownMemUtilMax:       body.Optimization.ScaleDownMemUtilMax,
+				OptimizationTargetPrimary: body.Optimization.OptimizationTargetPrimary,
+				TargetUtilHigh:            body.Optimization.TargetUtilHigh,
+				TargetUtilLow:             body.Optimization.TargetUtilLow,
+				ScaleDownHostCPUUtilMax:   body.Optimization.ScaleDownHostCPUUtilMax,
+			}
+>>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 		}
 
 		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
@@ -206,6 +276,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	}
 
 	var body struct {
+<<<<<<< HEAD
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode *bool                  `json:"real_time_mode,omitempty"` // Enable real-time mode
@@ -213,6 +284,32 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		Seed         int64                  `json:"seed,omitempty"`
 		Optimization json.RawMessage        `json:"optimization,omitempty"`
 		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+=======
+		ScenarioYAML string `json:"scenario_yaml,omitempty"`
+		DurationMs   int64  `json:"duration_ms,omitempty"`
+		RealTimeMode *bool  `json:"real_time_mode,omitempty"` // Enable real-time mode
+		ConfigYAML   string `json:"config_yaml,omitempty"`
+		Seed         int64  `json:"seed,omitempty"`
+		Optimization *struct {
+			Objective                 string  `json:"objective,omitempty"`
+			MaxIterations             int32   `json:"max_iterations,omitempty"`
+			MaxEvaluations            int32   `json:"max_evaluations,omitempty"`
+			StepSize                  float64 `json:"step_size,omitempty"`
+			EvaluationDurationMs      int64   `json:"evaluation_duration_ms,omitempty"`
+			Online                    bool    `json:"online,omitempty"`
+			TargetP95LatencyMs        float64 `json:"target_p95_latency_ms,omitempty"`
+			ControlIntervalMs         int64   `json:"control_interval_ms,omitempty"`
+			MinHosts                  int32   `json:"min_hosts,omitempty"`
+			MaxHosts                  int32   `json:"max_hosts,omitempty"`
+			ScaleDownCPUUtilMax       float64 `json:"scale_down_cpu_util_max,omitempty"`
+			ScaleDownMemUtilMax       float64 `json:"scale_down_mem_util_max,omitempty"`
+			OptimizationTargetPrimary string  `json:"optimization_target_primary,omitempty"`
+			TargetUtilHigh            float64 `json:"target_util_high,omitempty"`
+			TargetUtilLow             float64 `json:"target_util_low,omitempty"`
+			ScaleDownHostCPUUtilMax   float64 `json:"scale_down_host_cpu_util_max,omitempty"`
+		} `json:"optimization,omitempty"`
+		Metadata map[string]interface{} `json:"metadata,omitempty"`
+>>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -771,6 +868,18 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		return
 	}
 
+	// Trigger persistence when run completes successfully
+	if body.Status != nil && *body.Status == domain.StatusCompleted && run.EngineRunID != "" {
+		go func() {
+			ctx := context.Background()
+			if err := h.simService.StoreRunSummaryAndMetrics(ctx, runID); err != nil {
+				log.Printf("Failed to persist summary and metrics for run_id=%s: %v", runID, err)
+			} else {
+				log.Printf("Successfully persisted summary and metrics for run_id=%s", runID)
+			}
+		}()
+	}
+
 	c.JSON(http.StatusOK, gin.H{"run": run})
 }
 
@@ -990,4 +1099,25 @@ func (h *Handler) DeleteRun(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "run deleted successfully"})
+}
+
+// GetRunSummary retrieves the persisted summary for a completed run
+func (h *Handler) GetRunSummary(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	summary, err := h.simService.GetStoredSummary(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "summary not found for this run"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get summary"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"summary": summary})
 }

@@ -23,7 +23,7 @@ $DB_USER = if ($env:DB_USER) { $env:DB_USER } else { "postgres" }
 $DB_NAME = if ($env:DB_NAME) { $env:DB_NAME } else { "gosim" }
 
 Write-Host "Running migration: $MigrationFile" -ForegroundColor Cyan
-Write-Host "Database: $DB_NAME on $DB_HOST:$DB_PORT" -ForegroundColor Yellow
+Write-Host "Database: $DB_NAME on ${DB_HOST}:${DB_PORT}" -ForegroundColor Yellow
 Write-Host ""
 
 # Run psql command

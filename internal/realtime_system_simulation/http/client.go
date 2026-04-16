@@ -143,6 +143,7 @@ type BatchScoreBreakdown struct {
 // Direct API clients and UIs should not interpret best_score as the full ranking objective for batch mode.
 type GetRunResponse struct {
 	Run struct {
+<<<<<<< HEAD
 		ID                     string `json:"id"`
 		Status                 string `json:"status"`
 		CreatedAt              int64  `json:"created_at_unix_ms"`
@@ -163,6 +164,16 @@ type GetRunResponse struct {
 		BatchEfficiencyScore        *float64             `json:"batch_efficiency_score,omitempty"`
 		BatchRecommendationSummary  string               `json:"batch_recommendation_summary,omitempty"`
 		BatchScoreBreakdown         *BatchScoreBreakdown `json:"batch_score_breakdown,omitempty"`
+=======
+		ID                   string `json:"id"`
+		Status               string `json:"status"`
+		CreatedAt            int64  `json:"created_at_unix_ms"`
+		StartedAt            int64  `json:"started_at_unix_ms"`
+		EndedAt              int64  `json:"ended_at_unix_ms"`
+		Error                string `json:"error,omitempty"`
+		RealDurationMs       int64  `json:"real_duration_ms,omitempty"`
+		SimulationDurationMs int64  `json:"simulation_duration_ms,omitempty"`
+>>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 	} `json:"run"`
 }
 

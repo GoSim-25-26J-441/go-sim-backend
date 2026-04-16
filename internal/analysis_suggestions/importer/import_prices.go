@@ -1,4 +1,4 @@
-package main
+package importer
 
 import (
 	"context"
@@ -20,12 +20,55 @@ import (
 
 const defaultBatchSize = 500
 
+// DefaultBatchSize is the default batch size for CSV imports (used by cron/HTTP).
+const DefaultBatchSize = defaultBatchSize
+
+// Run imports Azure and AWS price CSVs from dir/asm into the database
+func Run(ctx context.Context, dir string, batchSize int) error {
+	dsn, err := getDSN()
+	if err != nil {
+		return err
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to postgres: %w", err)
+	}
+	defer pool.Close()
+
+	azureFile := filepathJoin(dir, "asm", "azure_compute_prices.csv")
+	awsFile := filepathJoin(dir, "asm", "aws_compute_prices.csv")
+
+	if exists(azureFile) {
+		log.Printf("Importing Azure CSV: %s", azureFile)
+		if err := importAzureCSV(ctx, pool, azureFile, batchSize); err != nil {
+			return fmt.Errorf("Azure import: %w", err)
+		}
+	} else {
+		log.Printf("Azure CSV not found: %s (skipping)", azureFile)
+	}
+
+	if exists(awsFile) {
+		log.Printf("Importing AWS CSV: %s", awsFile)
+		if err := importAWSCSV(ctx, pool, awsFile, batchSize); err != nil {
+			return fmt.Errorf("AWS import: %w", err)
+		}
+	} else {
+		log.Printf("AWS CSV not found: %s (skipping)", awsFile)
+	}
+
+	log.Println("All imports finished successfully.")
+	return nil
+}
+
 func main() {
 	dir := flag.String("dir", "out", "directory containing provider CSV files (e.g. out/asm for Azure)")
 	batch := flag.Int("batch", defaultBatchSize, "batch size for inserts")
 	flag.Parse()
 
-	dsn := getDSN()
+	dsn, err := getDSN()
+	if err != nil {
+		log.Fatalf("failed to get DSN: %v (set DATABASE_URL or DB_* env vars)", err)
+	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -34,7 +77,6 @@ func main() {
 	defer pool.Close()
 
 	azureFile := filepathJoin(*dir, "asm", "azure_compute_prices.csv")
-	gcpFile := filepathJoin(*dir, "asm", "gcp_compute_prices.csv")
 	awsFile := filepathJoin(*dir, "asm", "aws_compute_prices.csv")
 
 	if exists(azureFile) {
@@ -46,15 +88,6 @@ func main() {
 		log.Printf("Azure CSV not found: %s (skipping)", azureFile)
 	}
 
-	if exists(gcpFile) {
-		log.Printf("Importing GCP CSV: %s", gcpFile)
-		if err := importGCPCSV(ctx, pool, gcpFile, *batch); err != nil {
-			log.Fatalf("GCP import failed: %v", err)
-		}
-	} else {
-		log.Printf("GCP CSV not found: %s (skipping)", gcpFile)
-	}
-
 	if exists(awsFile) {
 		log.Printf("Importing AWS CSV: %s", awsFile)
 		if err := importAWSCSV(ctx, pool, awsFile, *batch); err != nil {
@@ -64,18 +97,18 @@ func main() {
 		log.Printf("AWS CSV not found: %s (skipping)", awsFile)
 	}
 
-	log.Println("✅ All imports finished successfully.")
+	log.Println("All imports finished successfully.")
 }
 
-func getDSN() string {
+func getDSN() (string, error) {
 	if u := os.Getenv("DATABASE_URL"); u != "" {
-		return u
+		return u, nil
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("failed to load config: %v (set DATABASE_URL or DB_* env vars)", err)
+		return "", fmt.Errorf("load config: %w", err)
 	}
-	return postgres.DSN(&cfg.Database)
+	return postgres.DSN(&cfg.Database), nil
 }
 
 func filepathJoin(parts ...string) string {
@@ -176,90 +209,6 @@ func importAzureCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchS
 	}
 
 	log.Printf("Azure import complete — %d rows processed", count)
-	return nil
-}
-
-// ---------- GCP importer (UPDATED) ----------
-func importGCPCSV(ctx context.Context, pool *pgxpool.Pool, path string, batchSize int) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	r := csv.NewReader(f)
-	header, err := r.Read()
-	if err != nil {
-		return err
-	}
-
-	// Debug: print actual headers
-	log.Printf("GCP CSV headers: %v", header)
-
-	// Map the actual headers from your GCP CSV file
-	idx := mapHeaderIndices(header, []string{
-		"sku_id", "region", "instance_type", "resource_family", "vcpu", "memory_gb",
-		"price_per_hour", "currency", "unit", "purchase_option", "usage_type", "fetched_at",
-	})
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	count := 0
-	batch := make([][]interface{}, 0, batchSize)
-	for {
-		rec, err := r.Read()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("csv read error: %w", err)
-		}
-
-		priceStr := strings.TrimSpace(rec[idx["price_per_hour"]])
-		if priceStr != "" {
-			if v, err := strconv.ParseFloat(priceStr, 64); err == nil && v == 0 {
-				continue
-			}
-		}
-
-		row := []interface{}{
-			strings.TrimSpace(rec[idx["sku_id"]]),          // sku_id
-			"gcp",                                          // provider
-			strings.TrimSpace(rec[idx["region"]]),          // region
-			strings.TrimSpace(rec[idx["instance_type"]]),   // instance_type
-			strings.TrimSpace(rec[idx["resource_family"]]), // resource_family
-			parseNullableInt(rec[idx["vcpu"]]),             // vcpu
-			parseNullableFloat(rec[idx["memory_gb"]]),      // memory_gb
-			parseNullableFloat(rec[idx["price_per_hour"]]), // price_per_hour
-			strings.TrimSpace(rec[idx["currency"]]),        // currency
-			strings.TrimSpace(rec[idx["unit"]]),            // unit
-			strings.TrimSpace(rec[idx["purchase_option"]]), // purchase_option
-			strings.TrimSpace(rec[idx["usage_type"]]),      // usage_type
-			parseTimeOrNow(rec[idx["fetched_at"]]),         // fetched_at
-			"{}",                                           // metadata
-		}
-		batch = append(batch, row)
-		count++
-		if len(batch) >= batchSize {
-			if err := flushBatch(ctx, tx, "gcp_compute_prices", batch); err != nil {
-				return err
-			}
-			batch = batch[:0]
-		}
-	}
-	if len(batch) > 0 {
-		if err := flushBatch(ctx, tx, "gcp_compute_prices", batch); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	log.Printf("GCP import complete — %d rows processed", count)
 	return nil
 }
 

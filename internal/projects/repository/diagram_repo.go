@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/utils"
@@ -172,9 +173,12 @@ where public_id = $2
 //
 //	{
 //	  "services": ["service-label-1", "service-label-2", ...],
+//	  "service_types": { "client-1": "client", "gateway-1": "gateway" },
 //	  "datastores": ["db-label-1", ...],
 //	  "dependencies": ["fromLabel->toLabel(protocol)", ...]
 //	}
+//
+// service_types is optional for backward compatibility; when absent, YAML uses type "service" for all names in services.
 func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	if strings.TrimSpace(diagramText) == "" {
 		return "", nil
@@ -199,6 +203,7 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	idToLabel := make(map[string]string, len(payload.Nodes))
 	servicesSet := map[string]struct{}{}
 	datastoresSet := map[string]struct{}{}
+	serviceTypes := make(map[string]string)
 
 	for _, n := range payload.Nodes {
 		lbl := strings.TrimSpace(n.Label)
@@ -207,11 +212,15 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 		}
 		idToLabel[n.ID] = lbl
 
-		switch strings.ToLower(strings.TrimSpace(n.Type)) {
+		nodeType := strings.ToLower(strings.TrimSpace(n.Type))
+		switch nodeType {
 		case "db", "database", "datastore":
 			datastoresSet[lbl] = struct{}{}
 		default:
 			servicesSet[lbl] = struct{}{}
+			if nodeType != "" {
+				serviceTypes[lbl] = nodeType
+			}
 		}
 	}
 
@@ -239,9 +248,10 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	}
 
 	out := map[string]interface{}{
-		"services":     services,
-		"datastores":   datastores,
-		"dependencies": deps,
+		"services":       services,
+		"service_types":  serviceTypes,
+		"datastores":     datastores,
+		"dependencies":   deps,
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -255,6 +265,7 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 //
 //	{
 //	  "services": ["user-1", "service-1"],
+//	  "service_types": { "user-1": "client" },
 //	  "datastores": ["db-1"],
 //	  "dependencies": ["user-1->service-1(rest)"]
 //	}
@@ -269,9 +280,10 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 
 	// SpecSummaryJSON mirrors the JSON we store in spec_summary.
 	type SpecSummaryJSON struct {
-		Services     []string `json:"services"`
-		Datastores   []string `json:"datastores"`
-		Dependencies []string `json:"dependencies"`
+		Services      []string          `json:"services"`
+		ServiceTypes  map[string]string `json:"service_types"`
+		Datastores    []string          `json:"datastores"`
+		Dependencies  []string          `json:"dependencies"`
 	}
 
 	var ss SpecSummaryJSON
@@ -325,13 +337,19 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		Trace:           []any{},
 	}
 
-	// Services first (type: service), then former datastores (type: database).
+	// Services first (type from service_types when present, else "service"), then former datastores (type: database).
 	for _, s := range ss.Services {
 		name := strings.TrimSpace(s)
 		if name == "" {
 			continue
 		}
-		ys.Services = append(ys.Services, yamlService{Name: name, Type: "service"})
+		typ := "service"
+		if ss.ServiceTypes != nil {
+			if t := strings.TrimSpace(ss.ServiceTypes[name]); t != "" {
+				typ = strings.ToLower(t)
+			}
+		}
+		ys.Services = append(ys.Services, yamlService{Name: name, Type: typ})
 	}
 	for _, d := range ss.Datastores {
 		name := strings.TrimSpace(d)
@@ -382,6 +400,140 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// UpdateVersionInPlace updates diagram_json/spec_summary/yaml_content for an existing version row
+// (same id and version_number). Optional fields follow UpdateVersionInPlaceInput semantics.
+func (r *DiagramRepository) UpdateVersionInPlace(ctx context.Context, userFirebaseUID, projectPublicID, versionID string, in domain.UpdateVersionInPlaceInput) (*domain.DiagramVersion, error) {
+	if strings.TrimSpace(userFirebaseUID) == "" {
+		return nil, fmt.Errorf("user firebase uid required")
+	}
+	if strings.TrimSpace(projectPublicID) == "" {
+		return nil, fmt.Errorf("project public_id required")
+	}
+	if strings.TrimSpace(versionID) == "" {
+		return nil, fmt.Errorf("version id required")
+	}
+	if len(in.DiagramJSON) == 0 {
+		return nil, fmt.Errorf("diagram_json required")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var verNum int
+	var title, source string
+	var imgKey, hash sql.NullString
+	var createdAt time.Time
+
+	err = tx.QueryRowContext(ctx, `
+select dv.version_number, dv.title, dv.source, dv.image_object_key, dv.hash, dv.created_at
+from diagram_versions dv
+where dv.id = $1
+  and dv.project_public_id = $2
+  and dv.user_firebase_uid = $3
+  and exists (
+    select 1 from projects p
+    where p.public_id = dv.project_public_id
+      and p.user_firebase_uid = dv.user_firebase_uid
+      and p.deleted_at is null
+  )
+for update of dv
+`, versionID, projectPublicID, userFirebaseUID).Scan(&verNum, &title, &source, &imgKey, &hash, &createdAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+
+	diagramText := string(in.DiagramJSON)
+	specText := ""
+	if len(in.SpecSummary) > 0 {
+		specText = strings.TrimSpace(string(in.SpecSummary))
+	} else if diagramText != "" {
+		if generated, err := generateSpecSummaryFromDiagram(diagramText); err == nil && generated != "" {
+			specText = generated
+		}
+	}
+
+	yamlText := ""
+	if specText != "" {
+		if y, err := generateYAMLFromSpecSummary(specText); err == nil {
+			yamlText = y
+		}
+	}
+
+	newSource := source
+	if in.Source != nil && strings.TrimSpace(*in.Source) != "" {
+		newSource = strings.TrimSpace(*in.Source)
+	}
+
+	newHash := ""
+	if hash.Valid {
+		newHash = hash.String
+	}
+	if in.Hash != nil {
+		newHash = strings.TrimSpace(*in.Hash)
+	}
+
+	newImg := ""
+	if imgKey.Valid {
+		newImg = imgKey.String
+	}
+	if in.ImageObjectKey != nil {
+		newImg = strings.TrimSpace(*in.ImageObjectKey)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+update diagram_versions
+set diagram_json = $1::jsonb,
+    spec_summary = nullif($2,'')::jsonb,
+    yaml_content = nullif($3,''),
+    source = $4,
+    hash = nullif($5,''),
+    image_object_key = nullif($6,'')
+where id = $7
+  and project_public_id = $8
+  and user_firebase_uid = $9
+`, diagramText, specText, yamlText, newSource, newHash, newImg, versionID, projectPublicID, userFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+update projects
+set updated_at = now()
+where public_id = $1
+  and user_firebase_uid = $2
+  and deleted_at is null
+`, projectPublicID, userFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	out := &domain.DiagramVersion{
+		ID:              versionID,
+		ProjectPublicID: projectPublicID,
+		UserFirebaseUID: userFirebaseUID,
+		VersionNumber:   verNum,
+		Title:           title,
+		Source:          newSource,
+		Hash:            newHash,
+		ImageObjectKey:  newImg,
+		DiagramJSON:     in.DiagramJSON,
+		SpecSummary:     json.RawMessage([]byte(specText)),
+		YAMLContent:     yamlText,
+		CreatedAt:       createdAt,
+	}
+	return out, nil
 }
 
 func (r *DiagramRepository) Latest(ctx context.Context, userFirebaseUID, projectPublicID string) (*domain.DiagramVersion, error) {

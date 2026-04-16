@@ -1,82 +1,79 @@
-//go:build tools
-// +build tools
-
-package main
+package fetchers
 
 import (
+	"context"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
 )
 
-type Provider struct {
-	Name string
-	Path string
-}
-
-func main() {
+// RunAll runs Azure, AWS (and optionally GCP) fetchers concurrently and writes
+// CSVs under outDir/asm. It returns after all finish; errors are logged and
+// the first non-nil error is returned.
+func RunAll(ctx context.Context, outDir string) error {
 	log.Println("Starting Fetcher Manager: running Azure, GCP, and AWS fetchers concurrently...")
 
-	outDir := "out"
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		log.Fatalf("failed to create output dir: %v", err)
+	asmDir := filepath.Join(outDir, "asm")
+	if err := os.MkdirAll(asmDir, 0o755); err != nil {
+		return err
 	}
 
 	start := time.Now()
-	wd, _ := os.Getwd()
-
-	fetchers := []Provider{
-		{
-			Name: "Azure",
-
-			Path: filepath.Join(wd, "internal", "analysis_suggestions", "fetchers", "azure_compute_fetcher.go"),
-		},
-		// {
-		// 	Name: "GCP",
-		// 	Path: filepath.Join(wd, "internal", "analysis_suggestions", "fetchers", "gcp_compute_fetcher.go"),
-		// },
-		{
-			Name: "AWS",
-			Path: filepath.Join(wd, "internal", "analysis_suggestions", "fetchers", "aws_compute_fetcher.go"),
-		},
-	}
 
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(fetchers))
+	errChan := make(chan error, 3)
 
-	for _, f := range fetchers {
-		wg.Add(1)
-		go func(f Provider) {
-			defer wg.Done()
-			runFetcher(f, errChan)
-		}(f)
-	}
+	// Azure
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("Starting Azure fetcher...")
+		if err := RunAzure(ctx, outDir); err != nil {
+			errChan <- err
+			log.Printf("Azure fetcher failed: %v", err)
+			return
+		}
+		log.Printf("Azure fetcher completed successfully")
+	}()
+
+	// AWS
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("Starting AWS fetcher...")
+		if err := RunAWS(ctx, outDir); err != nil {
+			errChan <- err
+			log.Printf("AWS fetcher failed: %v", err)
+			return
+		}
+		log.Printf("AWS fetcher completed successfully")
+	}()
+
+	// GCP (commented in original; enable if needed)
+	// wg.Add(1)
+	// go func() {
+	// 	defer wg.Done()
+	// 	log.Printf("Starting GCP fetcher...")
+	// 	if err := RunGCP(ctx, outDir); err != nil {
+	// 		errChan <- err
+	// 		log.Printf("GCP fetcher failed: %v", err)
+	// 		return
+	// 	}
+	// 	log.Printf("GCP fetcher completed successfully")
+	// }()
 
 	wg.Wait()
 	close(errChan)
 
+	var firstErr error
 	for err := range errChan {
-		if err != nil {
-			log.Printf("Fetcher error: %v", err)
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 
-	log.Printf("All fetchers finished in %.2f seconds\n", time.Since(start).Seconds())
-}
-
-func runFetcher(f Provider, errChan chan<- error) {
-	log.Printf("Starting %s fetcher...", f.Name)
-	cmd := exec.Command("go", "run", f.Path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		errChan <- err
-		log.Printf("%s fetcher failed: %v", f.Name, err)
-		return
-	}
-	log.Printf("%s fetcher completed successfully", f.Name)
+	log.Printf("All fetchers finished in %.2f seconds", time.Since(start).Seconds())
+	return firstErr
 }
