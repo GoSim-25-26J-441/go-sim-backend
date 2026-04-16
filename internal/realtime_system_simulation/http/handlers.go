@@ -2,11 +2,14 @@ package http
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
@@ -15,25 +18,64 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-<<<<<<< HEAD
-=======
-// allowedOptimizationObjectives is the set of valid values for optimization.objective (batch and engine contract).
-var allowedOptimizationObjectives = map[string]bool{
-	"p95_latency_ms":     true,
-	"p99_latency_ms":     true,
-	"mean_latency_ms":    true,
-	"throughput_rps":     true,
-	"error_rate":         true,
-	"cost":               true,
-	"cpu_utilization":    true,
-	"memory_utilization": true,
+func stringFromTags(tags map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := tags[k]; ok && v != nil {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
-const errInvalidObjective = "invalid optimization.objective: must be one of p95_latency_ms, p99_latency_ms, mean_latency_ms, throughput_rps, error_rate, cost, cpu_utilization, memory_utilization"
+// enrichPersistedTimeSeriesPoint shapes a persisted DB point for JSON responses (nested /metrics and flat /metrics/timeseries).
+func enrichPersistedTimeSeriesPoint(p simrepo.TimeSeriesPoint) gin.H {
+	tags := p.Tags
+	if tags == nil {
+		tags = map[string]any{}
+	}
+	labels := make(map[string]any, len(tags))
+	for k, v := range tags {
+		labels[k] = v
+	}
+	serviceID := p.ServiceID
+	if serviceID == "" {
+		serviceID = stringFromTags(tags, "service_id", "service")
+	}
+	nodeID := p.NodeID
+	hostID := stringFromTags(tags, "host_id", "host")
+	instanceID := stringFromTags(tags, "instance_id", "instance")
+	if hostID == "" && nodeID != "" {
+		hostID = nodeID
+	}
+	if nodeID == "" {
+		if hostID != "" {
+			nodeID = hostID
+		} else if instanceID != "" {
+			nodeID = instanceID
+		}
+	}
+	return gin.H{
+		"time":         p.Time,
+		"value":        p.MetricValue,
+		"labels":       labels,
+		"service_id":   serviceID,
+		"node_id":      nodeID,
+		"host_id":      hostID,
+		"instance_id":  instanceID,
+		"tags":         tags,
+	}
+}
 
-func isAllowedObjective(s string) bool { return allowedOptimizationObjectives[s] }
+func persistedTimeSeriesPointFlat(p simrepo.TimeSeriesPoint) gin.H {
+	h := enrichPersistedTimeSeriesPoint(p)
+	delete(h, "time")
+	h["metric"] = p.MetricType
+	h["timestamp"] = p.Time.UTC().Format(time.RFC3339Nano)
+	return h
+}
 
->>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 // CreateRunForProject creates a new simulation run for a project (project_id in path)
 func (h *Handler) CreateRunForProject(c *gin.Context) {
 	projectID := c.Param("project_id")
@@ -51,40 +93,15 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	}
 
 	var body struct {
-<<<<<<< HEAD
-		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
-		DurationMs   int64                  `json:"duration_ms,omitempty"`
-		RealTimeMode *bool                  `json:"real_time_mode,omitempty"`
-		ConfigYAML   string                 `json:"config_yaml,omitempty"`
-		Seed         int64                  `json:"seed,omitempty"`
-		Optimization json.RawMessage        `json:"optimization,omitempty"`
-		Metadata     map[string]interface{} `json:"metadata,omitempty"`
-=======
-		ScenarioYAML string `json:"scenario_yaml,omitempty"`
-		DurationMs   int64  `json:"duration_ms,omitempty"`
-		RealTimeMode *bool  `json:"real_time_mode,omitempty"`
-		ConfigYAML   string `json:"config_yaml,omitempty"`
-		Seed         int64  `json:"seed,omitempty"`
-		Optimization *struct {
-			Objective                 string  `json:"objective,omitempty"`
-			MaxIterations             int32   `json:"max_iterations,omitempty"`
-			MaxEvaluations            int32   `json:"max_evaluations,omitempty"`
-			StepSize                  float64 `json:"step_size,omitempty"`
-			EvaluationDurationMs      int64   `json:"evaluation_duration_ms,omitempty"`
-			Online                    bool    `json:"online,omitempty"`
-			TargetP95LatencyMs        float64 `json:"target_p95_latency_ms,omitempty"`
-			ControlIntervalMs         int64   `json:"control_interval_ms,omitempty"`
-			MinHosts                  int32   `json:"min_hosts,omitempty"`
-			MaxHosts                  int32   `json:"max_hosts,omitempty"`
-			ScaleDownCPUUtilMax       float64 `json:"scale_down_cpu_util_max,omitempty"`
-			ScaleDownMemUtilMax       float64 `json:"scale_down_mem_util_max,omitempty"`
-			OptimizationTargetPrimary string  `json:"optimization_target_primary,omitempty"`
-			TargetUtilHigh            float64 `json:"target_util_high,omitempty"`
-			TargetUtilLow             float64 `json:"target_util_low,omitempty"`
-			ScaleDownHostCPUUtilMax   float64 `json:"scale_down_host_cpu_util_max,omitempty"`
-		} `json:"optimization,omitempty"`
-		Metadata map[string]interface{} `json:"metadata,omitempty"`
->>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
+		DiagramVersionID       string                 `json:"diagram_version_id,omitempty"`
+		ScenarioYAML           string                 `json:"scenario_yaml,omitempty"`
+		OverwriteScenarioCache bool                   `json:"overwrite_scenario_cache,omitempty"`
+		DurationMs             int64                  `json:"duration_ms,omitempty"`
+		RealTimeMode           *bool                  `json:"real_time_mode,omitempty"`
+		ConfigYAML             string                 `json:"config_yaml,omitempty"`
+		Seed                   int64                  `json:"seed,omitempty"`
+		Optimization           json.RawMessage        `json:"optimization,omitempty"`
+		Metadata               map[string]interface{} `json:"metadata,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -100,14 +117,58 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if opt.Online && opt.TargetP95LatencyMs <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "online optimization requires target_p95_latency_ms > 0"})
+		primary := strings.TrimSpace(opt.OptimizationTargetPrimary)
+		if primary == "" {
+			primary = "p95_latency"
+		}
+		if opt.Online && primary == "p95_latency" && opt.TargetP95LatencyMs <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "online optimization with primary target p95_latency requires target_p95_latency_ms > 0"})
 			return
 		}
 		if err := validateOptimizationObjective(opt.Objective, batchOptimizationSet(opt.Batch)); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+	}
+
+	resolvedDiagramVersionID := strings.TrimSpace(body.DiagramVersionID)
+	var cachedScenario *simrepo.CachedScenario
+	if h.scenarioCacheRepo != nil {
+		if resolvedDiagramVersionID != "" {
+			if err := h.scenarioCacheRepo.VerifyDiagramVersionForProject(c.Request.Context(), userID, projectID, resolvedDiagramVersionID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid diagram_version_id for project/user"})
+				return
+			}
+		} else {
+			dvID, err := h.scenarioCacheRepo.ResolveCurrentDiagramVersionID(c.Request.Context(), userID, projectID)
+			if err == nil {
+				resolvedDiagramVersionID = dvID
+			}
+		}
+	}
+
+	effectiveScenarioYAML := body.ScenarioYAML
+	if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil {
+		cached, err := h.scenarioCacheRepo.GetScenarioForDiagramVersion(c.Request.Context(), userID, projectID, resolvedDiagramVersionID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load cached scenario"})
+			return
+		}
+		cachedScenario = cached
+		if body.ScenarioYAML != "" && cachedScenario != nil {
+			reqHash := sha256.Sum256([]byte(body.ScenarioYAML))
+			if cachedScenario.ScenarioHash != hex.EncodeToString(reqHash[:]) && !body.OverwriteScenarioCache {
+				c.JSON(http.StatusConflict, gin.H{"error": "scenario cache conflict for diagram version; set overwrite_scenario_cache=true to replace"})
+				return
+			}
+		}
+		if effectiveScenarioYAML == "" && cachedScenario != nil {
+			effectiveScenarioYAML = cachedScenario.ScenarioYAML
+		}
+	}
+	if effectiveScenarioYAML == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required when no cached scenario exists for the diagram version"})
+		return
 	}
 
 	req := &domain.CreateRunRequest{
@@ -125,7 +186,8 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	online := hasOpt && opt.Online
 	batchOpt := hasOpt && batchOptimizationSet(opt.Batch)
 	var optimizationGuards []string
-	if body.ScenarioYAML != "" && (body.DurationMs > 0 || online || batchOpt) {
+
+	if effectiveScenarioYAML != "" {
 		var callbackURL string
 		if h.callbackURL != "" {
 			callbackURL = h.callbackURL + "/" + run.RunID
@@ -143,35 +205,12 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			}
 		}
 		input := &RunInput{
-			ScenarioYAML: body.ScenarioYAML,
+			ScenarioYAML: effectiveScenarioYAML,
 			ConfigYAML:   body.ConfigYAML,
 			DurationMs:   body.DurationMs,
 			Seed:         body.Seed,
 			RealTimeMode: body.RealTimeMode,
-<<<<<<< HEAD
 			Optimization: optPayload,
-=======
-		}
-		if body.Optimization != nil {
-			input.Optimization = &OptimizationConfig{
-				Objective:                 body.Optimization.Objective,
-				MaxIterations:             body.Optimization.MaxIterations,
-				MaxEvaluations:            body.Optimization.MaxEvaluations,
-				StepSize:                  body.Optimization.StepSize,
-				EvaluationDurationMs:      body.Optimization.EvaluationDurationMs,
-				Online:                    body.Optimization.Online,
-				TargetP95LatencyMs:        body.Optimization.TargetP95LatencyMs,
-				ControlIntervalMs:         body.Optimization.ControlIntervalMs,
-				MinHosts:                  body.Optimization.MinHosts,
-				MaxHosts:                  body.Optimization.MaxHosts,
-				ScaleDownCPUUtilMax:       body.Optimization.ScaleDownCPUUtilMax,
-				ScaleDownMemUtilMax:       body.Optimization.ScaleDownMemUtilMax,
-				OptimizationTargetPrimary: body.Optimization.OptimizationTargetPrimary,
-				TargetUtilHigh:            body.Optimization.TargetUtilHigh,
-				TargetUtilLow:             body.Optimization.TargetUtilLow,
-				ScaleDownHostCPUUtilMax:   body.Optimization.ScaleDownHostCPUUtilMax,
-			}
->>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 		}
 
 		engineRunID, err := h.engineClient.CreateRunWithInput(run.RunID, input, callbackURL, h.callbackSecret)
@@ -222,8 +261,49 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			c.JSON(http.StatusCreated, resp)
 			return
 		}
+
+		if h.db != nil {
+			metricsRepo := simrepo.NewMetricsRepository(h.db)
+			_ = metricsRepo.UpsertSummary(c.Request.Context(), &simrepo.SummaryUpsertParams{
+				RunID:        run.RunID,
+				EngineRunID:  engineRunID,
+				Metrics:      map[string]any{},
+				SummaryData:  map[string]any{},
+				ScenarioYAML: effectiveScenarioYAML,
+			})
+		}
+		if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil {
+			cacheSource := "request"
+			if body.ScenarioYAML == "" {
+				cacheSource = "cache"
+			}
+			s3Path := ""
+			if h.s3Client != nil {
+				key := "simulation/diagram_versions/" + resolvedDiagramVersionID + "/scenario.yaml"
+				if err := h.s3Client.PutObject(context.Background(), key, []byte(effectiveScenarioYAML)); err == nil {
+					s3Path = key
+				}
+			}
+			_, err := h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(
+				c.Request.Context(),
+				resolvedDiagramVersionID,
+				effectiveScenarioYAML,
+				cacheSource,
+				s3Path,
+				body.OverwriteScenarioCache,
+			)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist scenario cache"})
+				return
+			}
+		}
 	}
 	resp := gin.H{"run": run}
+	if resolvedDiagramVersionID != "" {
+		resp["diagram_version_id"] = resolvedDiagramVersionID
+	}
+	sum := sha256.Sum256([]byte(effectiveScenarioYAML))
+	resp["scenario_hash"] = hex.EncodeToString(sum[:])
 	if len(optimizationGuards) > 0 {
 		resp["warnings"] = optimizationGuards
 	}
@@ -276,7 +356,6 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	}
 
 	var body struct {
-<<<<<<< HEAD
 		ScenarioYAML string                 `json:"scenario_yaml,omitempty"`
 		DurationMs   int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode *bool                  `json:"real_time_mode,omitempty"` // Enable real-time mode
@@ -284,32 +363,6 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		Seed         int64                  `json:"seed,omitempty"`
 		Optimization json.RawMessage        `json:"optimization,omitempty"`
 		Metadata     map[string]interface{} `json:"metadata,omitempty"`
-=======
-		ScenarioYAML string `json:"scenario_yaml,omitempty"`
-		DurationMs   int64  `json:"duration_ms,omitempty"`
-		RealTimeMode *bool  `json:"real_time_mode,omitempty"` // Enable real-time mode
-		ConfigYAML   string `json:"config_yaml,omitempty"`
-		Seed         int64  `json:"seed,omitempty"`
-		Optimization *struct {
-			Objective                 string  `json:"objective,omitempty"`
-			MaxIterations             int32   `json:"max_iterations,omitempty"`
-			MaxEvaluations            int32   `json:"max_evaluations,omitempty"`
-			StepSize                  float64 `json:"step_size,omitempty"`
-			EvaluationDurationMs      int64   `json:"evaluation_duration_ms,omitempty"`
-			Online                    bool    `json:"online,omitempty"`
-			TargetP95LatencyMs        float64 `json:"target_p95_latency_ms,omitempty"`
-			ControlIntervalMs         int64   `json:"control_interval_ms,omitempty"`
-			MinHosts                  int32   `json:"min_hosts,omitempty"`
-			MaxHosts                  int32   `json:"max_hosts,omitempty"`
-			ScaleDownCPUUtilMax       float64 `json:"scale_down_cpu_util_max,omitempty"`
-			ScaleDownMemUtilMax       float64 `json:"scale_down_mem_util_max,omitempty"`
-			OptimizationTargetPrimary string  `json:"optimization_target_primary,omitempty"`
-			TargetUtilHigh            float64 `json:"target_util_high,omitempty"`
-			TargetUtilLow             float64 `json:"target_util_low,omitempty"`
-			ScaleDownHostCPUUtilMax   float64 `json:"scale_down_host_cpu_util_max,omitempty"`
-		} `json:"optimization,omitempty"`
-		Metadata map[string]interface{} `json:"metadata,omitempty"`
->>>>>>> e8ebbeaa79db92b95b8d427d0c829da327bb03d7
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -326,8 +379,12 @@ func (h *Handler) CreateRun(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if opt.Online && opt.TargetP95LatencyMs <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "online optimization requires target_p95_latency_ms > 0"})
+		primary := strings.TrimSpace(opt.OptimizationTargetPrimary)
+		if primary == "" {
+			primary = "p95_latency"
+		}
+		if opt.Online && primary == "p95_latency" && opt.TargetP95LatencyMs <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "online optimization with primary target p95_latency requires target_p95_latency_ms > 0"})
 			return
 		}
 		if err := validateOptimizationObjective(opt.Objective, batchOptimizationSet(opt.Batch)); err != nil {
@@ -355,7 +412,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	online := hasOpt && opt.Online
 	batchOpt := hasOpt && batchOptimizationSet(opt.Batch)
 	var optimizationGuards []string
-	if body.ScenarioYAML != "" && (body.DurationMs > 0 || online || batchOpt) {
+	if body.ScenarioYAML != "" {
 		// Generate unique callback URL per run (includes run_id in path for identification)
 		var callbackURL string
 		if h.callbackURL != "" {
@@ -562,23 +619,9 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 		return
 	}
 
-	type pointDTO struct {
-		Time      time.Time      `json:"time"`
-		Value     float64        `json:"value"`
-		ServiceID string         `json:"service_id,omitempty"`
-		NodeID    string         `json:"node_id,omitempty"`
-		Tags      map[string]any `json:"tags,omitempty"`
-	}
-
-	seriesMap := make(map[string][]pointDTO)
+	seriesMap := make(map[string][]gin.H)
 	for _, p := range points {
-		seriesMap[p.MetricType] = append(seriesMap[p.MetricType], pointDTO{
-			Time:      p.Time,
-			Value:     p.MetricValue,
-			ServiceID: p.ServiceID,
-			NodeID:    p.NodeID,
-			Tags:      p.Tags,
-		})
+		seriesMap[p.MetricType] = append(seriesMap[p.MetricType], enrichPersistedTimeSeriesPoint(p))
 	}
 
 	timeseries := make([]gin.H, 0, len(seriesMap))
@@ -597,6 +640,11 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 		if summary.SummaryData != nil {
 			summaryResp["summary_data"] = summary.SummaryData
 		}
+		fc := summary.FinalConfig
+		if fc == nil {
+			fc = map[string]any{}
+		}
+		summaryResp["final_config"] = fc
 		if summary.TotalRequests.Valid {
 			summaryResp["total_requests"] = summary.TotalRequests.Int64
 		}
@@ -612,6 +660,67 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 		"run_id":     run.RunID,
 		"summary":    summaryResp,
 		"timeseries": timeseries,
+	})
+}
+
+// GetRunPersistedMetricsTimeSeries returns flat persisted timeseries points from Postgres (not the engine live API).
+func (h *Handler) GetRunPersistedMetricsTimeSeries(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+	}
+
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not configured for metrics storage"})
+		return
+	}
+
+	metric := strings.TrimSpace(c.Query("metric"))
+	metricsRepo := simrepo.NewMetricsRepository(h.db)
+	var points []simrepo.TimeSeriesPoint
+	if metric != "" {
+		points, err = metricsRepo.ListTimeSeriesByRunIDAndMetric(c.Request.Context(), runID, metric)
+	} else {
+		points, err = metricsRepo.ListTimeSeriesByRunID(c.Request.Context(), runID)
+	}
+	if err != nil {
+		log.Printf("Failed to load persisted timeseries for run_id=%s: %v", runID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load timeseries metrics"})
+		return
+	}
+
+	out := make([]gin.H, 0, len(points))
+	for _, p := range points {
+		out = append(out, persistedTimeSeriesPointFlat(p))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"run_id": run.RunID,
+		"points": out,
 	})
 }
 
