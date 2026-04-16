@@ -26,6 +26,7 @@ type SuggestResponse struct {
 	Best      rules.CandidateScore   `json:"best"`
 	AllScores []rules.CandidateScore `json:"all_scores"`
 	StorageID string                 `json:"storage_id"`
+	Design    rules.DesignInput      `json:"design"`
 }
 
 type SuggestHandler struct {
@@ -199,6 +200,7 @@ func (h *SuggestHandler) HandleSuggest(c *gin.Context) {
 		Best:      results[0],
 		AllScores: results,
 		StorageID: storageID,
+		Design:    req.Design,
 	}
 	c.JSON(http.StatusOK, resp)
 }
