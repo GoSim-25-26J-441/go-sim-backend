@@ -28,3 +28,14 @@ type CreateVersionInput struct {
 	SpecSummary    json.RawMessage
 	Hash           string
 }
+
+// UpdateVersionInPlaceInput updates an existing diagram_versions row in place (same id / version_number).
+// DiagramJSON is required. SpecSummary: if empty, spec is regenerated from diagram_json (same as create).
+// ImageObjectKey, Hash, Source: nil means leave unchanged; pointer to "" clears the column where applicable.
+type UpdateVersionInPlaceInput struct {
+	DiagramJSON    json.RawMessage
+	SpecSummary    json.RawMessage
+	ImageObjectKey *string
+	Hash           *string
+	Source         *string
+}

@@ -303,15 +303,14 @@ returning id, title, binding_mode, pinned_diagram_version_id, created_at
 	}
 }
 
-// ResolveDiagramContext returns diagram version ID, spec_summary, and diagram_json separately
-func (r *ChatRepository) ResolveDiagramContext(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*string, json.RawMessage, json.RawMessage, error) {
+func (r *ChatRepository) ResolveDiagramContext(ctx context.Context, userFirebaseUID, projectPublicID, threadID string) (*string, json.RawMessage, json.RawMessage, string, error) {
 	p, err := r.getProject(ctx, userFirebaseUID, projectPublicID)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	t, err := r.getThread(ctx, userFirebaseUID, projectPublicID, threadID)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 
 	var use *string
@@ -322,60 +321,62 @@ func (r *ChatRepository) ResolveDiagramContext(ctx context.Context, userFirebase
 	}
 
 	if use == nil || *use == "" {
-		return nil, json.RawMessage(`{}`), json.RawMessage(`{}`), nil
+		return nil, json.RawMessage(`{}`), json.RawMessage(`{}`), "", nil
 	}
 
 	const q = `
 select
   coalesce(spec_summary, '{}'::jsonb)::text,
-  coalesce(diagram_json, '{}'::jsonb)::text
+  coalesce(diagram_json, '{}'::jsonb)::text,
+  coalesce(yaml_content, '')
 from diagram_versions
 where id=$1
   and project_public_id=$2
   and user_firebase_uid=$3
 `
-	var specText, diagramText string
-	if err := r.db.QueryRowContext(ctx, q, *use, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText); err != nil {
+	var specText, diagramText, yamlText string
+	if err := r.db.QueryRowContext(ctx, q, *use, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText, &yamlText); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, nil, domain.ErrNotFound
+			return nil, nil, nil, "", domain.ErrNotFound
 		}
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 
 	spec := json.RawMessage(specText)
 	diagram := json.RawMessage(diagramText)
 
-	return use, spec, diagram, nil
+	return use, spec, diagram, yamlText, nil
 }
 
-// Returns spec_summary and diagram_json as json.RawMessage.
-func (r *ChatRepository) GetDiagramVersionByID(ctx context.Context, userFirebaseUID, projectPublicID, diagramVersionID string) (json.RawMessage, json.RawMessage, error) {
+// Returns spec_summary, diagram_json, and yaml_content (may be empty).
+func (r *ChatRepository) GetDiagramVersionByID(ctx context.Context, userFirebaseUID, projectPublicID, diagramVersionID string) (json.RawMessage, json.RawMessage, string, error) {
 	// Ensure project belongs to user
 	if _, err := r.getProject(ctx, userFirebaseUID, projectPublicID); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	const q = `
 select
   coalesce(spec_summary, '{}'::jsonb)::text,
-  coalesce(diagram_json, '{}'::jsonb)::text
+  coalesce(diagram_json, '{}'::jsonb)::text,
+  coalesce(yaml_content, '')
 from diagram_versions
 where id=$1
   and project_public_id=$2
   and user_firebase_uid=$3
 `
-	var specText, diagramText string
-	if err := r.db.QueryRowContext(ctx, q, diagramVersionID, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText); err != nil {
+	var specText, diagramText, yamlText string
+	if err := r.db.QueryRowContext(ctx, q, diagramVersionID, projectPublicID, userFirebaseUID).Scan(&specText, &diagramText, &yamlText); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, domain.ErrNotFound
+			return nil, nil, "", domain.ErrNotFound
 		}
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	spec := json.RawMessage(specText)
 	diagram := json.RawMessage(diagramText)
 
-	return spec, diagram, nil
+	return spec, diagram, yamlText, nil
 }
 
 func (r *ChatRepository) ListHistoryForUIGP(ctx context.Context, userFirebaseUID, projectPublicID, threadID string, limit int) ([]string, []string, error) {

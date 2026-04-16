@@ -1,6 +1,14 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrDiagramPayloadNotReady is returned when the project/thread points at a diagram
+// version but spec_summary and diagram_json are still empty in the database (often a
+// race: chat message sent before the diagram body is persisted).
+var ErrDiagramPayloadNotReady = errors.New("diagram content not ready for this version; save the diagram and retry")
 
 const (
 	BindingFollowLatest = "FOLLOW_LATEST"

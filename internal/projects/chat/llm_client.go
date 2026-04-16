@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // LLMClient handles communication with the LLM service
@@ -22,7 +21,7 @@ func NewLLMClient(baseURL, apiKey string) *LLMClient {
 	return &LLMClient{
 		BaseURL: baseURL,
 		APIKey:  apiKey,
-		HTTP:    &http.Client{Timeout: 180 * time.Second},
+		HTTP:    &http.Client{},
 	}
 }
 
@@ -49,6 +48,7 @@ type ChatRequest struct {
 	Detail      string              `json:"detail,omitempty"`
 	DiagramJSON json.RawMessage     `json:"diagram_json,omitempty"`
 	SpecSummary json.RawMessage     `json:"spec_summary,omitempty"`
+	YamlContent string              `json:"yaml_content,omitempty"`
 	Attachments []AttachmentRequest `json:"attachments,omitempty"`
 }
 
