@@ -30,8 +30,8 @@ import (
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	simservice "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 
-	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
 	amgapdversion "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/amg_apd_version"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/postgres"
 	redisstorage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/redis"
 	s3storage "github.com/GoSim-25-26J-441/go-sim-backend/internal/storage/s3"
 
@@ -113,7 +113,7 @@ func main() {
 
 	// Configure CORS middleware (merged)
 	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:8080"}
+	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:8080", "https://app.microsim.dev", "https://microsim.dev", "https://arcfind.dev"}
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With", "X-User-Id"}
 	corsConfig.AllowCredentials = true
@@ -218,7 +218,7 @@ func main() {
 
 	log.Printf("Starting %s v%s in %s mode", serviceName, cfg.App.Version, cfg.App.Environment)
 	log.Printf("Server starting on port %s", cfg.Server.Port)
-	log.Printf("CORS enabled for origins: http://localhost:3000, http://localhost:8080, http://localhost:8000")
+	log.Printf("CORS enabled for origins: http://localhost:3000, http://localhost:8080, http://localhost:8000, %s, %s, %s", "https://app.microsim.dev", "https://microsim.dev", "https://arcfind.dev")
 	log.Printf("Health endpoint available at: http://localhost:%s/health", cfg.Server.Port)
 
 	if err := router.Run(":" + cfg.Server.Port); err != nil {

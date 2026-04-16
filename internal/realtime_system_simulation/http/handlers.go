@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -471,6 +472,11 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 		ServiceID string         `json:"service_id,omitempty"`
 		NodeID    string         `json:"node_id,omitempty"`
 		Tags      map[string]any `json:"tags,omitempty"`
+		Time      time.Time      `json:"time"`
+		Value     float64        `json:"value"`
+		ServiceID string         `json:"service_id,omitempty"`
+		NodeID    string         `json:"node_id,omitempty"`
+		Tags      map[string]any `json:"tags,omitempty"`
 	}
 
 	seriesMap := make(map[string][]pointDTO)
@@ -512,6 +518,8 @@ func (h *Handler) GetRunMetrics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"run_id":     run.RunID,
+		"summary":    summaryResp,
 		"run_id":     run.RunID,
 		"summary":    summaryResp,
 		"timeseries": timeseries,
@@ -771,6 +779,18 @@ func (h *Handler) UpdateRun(c *gin.Context) {
 		return
 	}
 
+	// Trigger persistence when run completes successfully
+	if body.Status != nil && *body.Status == domain.StatusCompleted && run.EngineRunID != "" {
+		go func() {
+			ctx := context.Background()
+			if err := h.simService.StoreRunSummaryAndMetrics(ctx, runID); err != nil {
+				log.Printf("Failed to persist summary and metrics for run_id=%s: %v", runID, err)
+			} else {
+				log.Printf("Successfully persisted summary and metrics for run_id=%s", runID)
+			}
+		}()
+	}
+
 	c.JSON(http.StatusOK, gin.H{"run": run})
 }
 
@@ -990,4 +1010,25 @@ func (h *Handler) DeleteRun(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "run deleted successfully"})
+}
+
+// GetRunSummary retrieves the persisted summary for a completed run
+func (h *Handler) GetRunSummary(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+
+	summary, err := h.simService.GetStoredSummary(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "summary not found for this run"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get summary"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"summary": summary})
 }

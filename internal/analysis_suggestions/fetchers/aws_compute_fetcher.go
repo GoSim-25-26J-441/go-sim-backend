@@ -1,7 +1,4 @@
-//go:build tools
-// +build tools
-
-package main
+package fetchers
 
 import (
 	"bufio"
@@ -28,7 +25,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-type CloudComputePrice struct {
+type AwsComputePrice struct {
 	ID                  string    `json:"id"`
 	Provider            string    `json:"provider"`
 	SKUID               string    `json:"sku_id"`
@@ -61,18 +58,18 @@ var (
 	reInstToken   = regexp.MustCompile(`([a-z]+[0-9]+[a-z0-9\.-]*)`)
 )
 
-func main() {
-	// Load credentials from .env (no fallback to system ~/.aws or IAM)
+// RunAWS fetches AWS EC2 pricing and writes CSV/TXT under outDir/asm.
+func RunAWS(ctx context.Context, outDir string) error {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("Warning: .env not found, using existing env (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): %v", err)
 	}
 
-	outDir := "out/asm"
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		log.Fatalf("mkdir out: %v", err)
+	asmDir := filepath.Join(outDir, "asm")
+	if err := os.MkdirAll(asmDir, 0o755); err != nil {
+		return err
 	}
-	csvPath := filepath.Join(outDir, "aws_compute_prices.csv")
-	txtPath := filepath.Join(outDir, "aws_compute_prices.txt")
+	csvPath := filepath.Join(asmDir, "aws_compute_prices.csv")
+	txtPath := filepath.Join(asmDir, "aws_compute_prices.txt")
 
 	config := FetchConfig{
 		MaxRecords:     800000,
@@ -85,16 +82,14 @@ func main() {
 		MaxRetries:     3,
 	}
 
-	ctx := context.Background()
-	// Prefer Pricing-specific env vars so you can keep AWS_* for MinIO/S3 and use real AWS here
 	accessKey := firstNonEmpty(os.Getenv("AWS_PRICING_ACCESS_KEY_ID"), os.Getenv("AWS_ACCESS_KEY_ID"))
 	secretKey := firstNonEmpty(os.Getenv("AWS_PRICING_SECRET_ACCESS_KEY"), os.Getenv("AWS_SECRET_ACCESS_KEY"))
 	sessionToken := firstNonEmpty(os.Getenv("AWS_PRICING_SESSION_TOKEN"), os.Getenv("AWS_SESSION_TOKEN"))
 	if accessKey == "" || secretKey == "" {
-		log.Fatalf("AWS credentials from .env required: set AWS_PRICING_ACCESS_KEY_ID and AWS_PRICING_SECRET_ACCESS_KEY (or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)")
+		return fmt.Errorf("AWS credentials required: set AWS_PRICING_ACCESS_KEY_ID and AWS_PRICING_SECRET_ACCESS_KEY (or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)")
 	}
 	if accessKey == "minioadmin" || secretKey == "minioadmin" {
-		log.Fatalf("MinIO credentials (minioadmin) are not valid for the real AWS Pricing API. Use real AWS IAM credentials (e.g. AWS_PRICING_ACCESS_KEY_ID / AWS_PRICING_SECRET_ACCESS_KEY) for this tool.")
+		return fmt.Errorf("MinIO credentials (minioadmin) are not valid for the real AWS Pricing API")
 	}
 	credsProvider := credentials.NewStaticCredentialsProvider(accessKey, secretKey, sessionToken)
 	cfg, err := awscfg.LoadDefaultConfig(ctx,
@@ -102,16 +97,17 @@ func main() {
 		awscfg.WithCredentialsProvider(credsProvider),
 	)
 	if err != nil {
-		log.Fatalf("aws config load: %v", err)
+		return fmt.Errorf("aws config load: %w", err)
 	}
 	client := pricing.NewFromConfig(cfg)
 
 	log.Printf("Starting AWS EC2 pricing fetcher with config: MaxRecords=%d, RateLimit=%v, Workers=%d",
 		config.MaxRecords, config.RateLimit, config.Workers)
 	if err := fetchAWSComputeOptimized(ctx, client, config, csvPath, txtPath); err != nil {
-		log.Fatalf("fetch failed: %v", err)
+		return err
 	}
 	log.Println("Done.")
+	return nil
 }
 
 func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg FetchConfig, csvPath, txtPath string) error {
@@ -144,7 +140,7 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 
 	limiter := rate.NewLimiter(cfg.RateLimit, cfg.BurstSize)
 
-	recordChan := make(chan *CloudComputePrice, cfg.BufferSize)
+	recordChan := make(chan *AwsComputePrice, cfg.BufferSize)
 	errChan := make(chan error, cfg.Workers)
 	var wg sync.WaitGroup
 	var writerMutex sync.Mutex
@@ -337,7 +333,7 @@ func fetchAWSComputeOptimized(ctx context.Context, client *pricing.Client, cfg F
 			priceEntries := extractAllPriceEntries(terms)
 
 			for _, pe := range priceEntries {
-				rec := &CloudComputePrice{
+				rec := &AwsComputePrice{
 					ID:                  fmt.Sprintf("aws|%s|%s|%s", skuID, region, pe.EntryID),
 					Provider:            "aws",
 					SKUID:               skuID,
