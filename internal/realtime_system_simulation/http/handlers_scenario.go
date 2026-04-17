@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -17,6 +18,11 @@ import (
 func validateCoreScenarioYAML(yamlStr string) error {
 	_, err := simconfig.ParseScenarioYAML([]byte(yamlStr))
 	return err
+}
+
+func serverScenarioError(c *gin.Context, msg string, err error) {
+	log.Printf("simulation scenario: %s: %v", msg, err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": msg, "details": err.Error()})
 }
 
 func cloneMetadata(m map[string]interface{}) map[string]interface{} {
@@ -120,13 +126,17 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "diagram version has no stored AMG/APD YAML"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load diagram YAML"})
+		if errors.Is(err, simrepo.ErrDiagramVersionNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid diagram_version_id for project/user"})
+			return
+		}
+		serverScenarioError(c, "failed to load diagram YAML", err)
 		return
 	}
 	sourceHash := simrepo.HashAMGAPDSource(amgYAML)
 	cached, err := h.scenarioCacheRepo.GetScenarioForDiagramVersion(c.Request.Context(), userID, projectID, diagramVersionID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load cached scenario"})
+		serverScenarioError(c, "failed to load cached scenario", err)
 		return
 	}
 	if cached != nil && cached.Source == "edited" && cached.SourceHash != "" && cached.SourceHash != sourceHash {
@@ -175,7 +185,7 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "scenario cache conflict; set overwrite=true on regenerate"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist scenario", "details": upErr.Error()})
+		serverScenarioError(c, "failed to persist scenario", upErr)
 		return
 	}
 	sum := sha256.Sum256([]byte(genYAML))
@@ -232,7 +242,11 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 	}
 	amgYAML, err := h.scenarioCacheRepo.GetDiagramYAMLContent(c.Request.Context(), userID, projectID, diagramVersionID)
 	if err != nil && !errors.Is(err, simrepo.ErrDiagramMissingYAML) {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load diagram YAML"})
+		if errors.Is(err, simrepo.ErrDiagramVersionNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid diagram_version_id for project/user"})
+			return
+		}
+		serverScenarioError(c, "failed to load diagram YAML", err)
 		return
 	}
 	var shPtr *string
@@ -247,7 +261,7 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "scenario cache conflict; set overwrite=true to replace"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist scenario"})
+		serverScenarioError(c, "failed to persist scenario", err)
 		return
 	}
 	sum := sha256.Sum256([]byte(saved.ScenarioYAML))
@@ -296,13 +310,17 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "diagram version has no stored AMG/APD YAML"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load diagram YAML"})
+		if errors.Is(err, simrepo.ErrDiagramVersionNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid diagram_version_id for project/user"})
+			return
+		}
+		serverScenarioError(c, "failed to load diagram YAML", err)
 		return
 	}
 	sourceHash := simrepo.HashAMGAPDSource(amgYAML)
 	cached, err := h.scenarioCacheRepo.GetScenarioForDiagramVersion(c.Request.Context(), userID, projectID, diagramVersionID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load cached scenario"})
+		serverScenarioError(c, "failed to load cached scenario", err)
 		return
 	}
 	if cached != nil && cached.Source == "edited" && !body.Overwrite {
@@ -318,7 +336,7 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 	s3Path := h.putScenarioToS3(c.Request.Context(), diagramVersionID, genYAML)
 	saved, upErr := h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(c.Request.Context(), diagramVersionID, genYAML, "generated", s3Path, &sh, true)
 	if upErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist scenario", "details": upErr.Error()})
+		serverScenarioError(c, "failed to persist scenario", upErr)
 		return
 	}
 	sum := sha256.Sum256([]byte(genYAML))
