@@ -38,3 +38,8 @@ func (s *DiagramService) ListAllVersions(ctx context.Context, userID, publicID s
 func (s *DiagramService) UpdateTitle(ctx context.Context, userID, publicID, versionID, title string) (bool, error) {
 	return s.repo.UpdateTitle(ctx, userID, publicID, versionID, title)
 }
+
+// UpdateVersionInPlace replaces diagram_json (and derived or explicit spec_summary / yaml) for an existing version id.
+func (s *DiagramService) UpdateVersionInPlace(ctx context.Context, userID, publicID, versionID string, input domain.UpdateVersionInPlaceInput) (*domain.DiagramVersion, error) {
+	return s.repo.UpdateVersionInPlace(ctx, userID, publicID, versionID, input)
+}

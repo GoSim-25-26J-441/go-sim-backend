@@ -1,0 +1,16 @@
+services:
+  - id: api-gateway
+    type: api_gateway
+    role: ingress
+  - id: orders
+    type: service
+dependencies:
+  - from: api-gateway
+    to: orders
+    sync: true
+    kind: rest
+configs:
+  slo:
+    target_rps: 42
+metadata:
+  name: test

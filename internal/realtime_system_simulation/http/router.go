@@ -7,12 +7,16 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	// Project-scoped routes (project_id in path)
 	rg.POST("/projects/:project_id/runs", h.CreateRunForProject)
 	rg.GET("/projects/:project_id/runs", h.ListRunsForProject)
+	rg.GET("/projects/:project_id/diagram-versions/:diagram_version_id/scenario", h.GetDiagramVersionScenario)
+	rg.PUT("/projects/:project_id/diagram-versions/:diagram_version_id/scenario", h.PutDiagramVersionScenario)
+	rg.POST("/projects/:project_id/diagram-versions/:diagram_version_id/scenario/regenerate", h.PostRegenerateDiagramVersionScenario)
 
 	// User-level routes
 	rg.POST("/runs", h.CreateRun)
 	rg.GET("/runs", h.ListRuns)
 	rg.GET("/runs/:id", h.GetRun)
 	rg.GET("/runs/:id/candidates", h.GetRunCandidates)
+	rg.GET("/runs/:id/metrics/timeseries", h.GetRunPersistedMetricsTimeSeries)
 	rg.GET("/runs/:id/metrics", h.GetRunMetrics)
 	rg.GET("/runs/:id/events", h.StreamRunEvents) // SSE endpoint for real-time updates
 	rg.GET("/runs/:id/summary", h.GetRunSummary)

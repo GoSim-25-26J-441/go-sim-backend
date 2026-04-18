@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -168,6 +169,10 @@ func (h *Handler) postMessage(c *gin.Context) {
 	if err != nil {
 		if err == chatdomain.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "project/thread/diagram not found"})
+			return
+		}
+		if errors.Is(err, chatdomain.ErrDiagramPayloadNotReady) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})

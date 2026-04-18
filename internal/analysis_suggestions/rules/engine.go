@@ -3,8 +3,8 @@ package rules
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -152,17 +152,25 @@ func (e *Engine) EvaluateCandidates(design DesignInput, candidates []Candidate) 
 			}
 		}
 
+		preferLargerSpec := targetUsers > 0 && !meetsI && !meetsJ
+
 		if ci.Candidate.Spec.VCPU != cj.Candidate.Spec.VCPU {
+			if preferLargerSpec {
+				return ci.Candidate.Spec.VCPU > cj.Candidate.Spec.VCPU
+			}
 			return ci.Candidate.Spec.VCPU < cj.Candidate.Spec.VCPU
 		}
 		if ci.Candidate.Spec.MemoryGB != cj.Candidate.Spec.MemoryGB {
+			if preferLargerSpec {
+				return ci.Candidate.Spec.MemoryGB > cj.Candidate.Spec.MemoryGB
+			}
 			return ci.Candidate.Spec.MemoryGB < cj.Candidate.Spec.MemoryGB
 		}
 
-		utilScoreI := math.Abs(ci.Candidate.Metrics.CPUUtilPct-70) + math.Abs(ci.Candidate.Metrics.MemUtilPct-70)
-		utilScoreJ := math.Abs(cj.Candidate.Metrics.CPUUtilPct-70) + math.Abs(cj.Candidate.Metrics.MemUtilPct-70)
-		if utilScoreI != utilScoreJ {
-			return utilScoreI < utilScoreJ
+		utilSumI := ci.Candidate.Metrics.CPUUtilPct + ci.Candidate.Metrics.MemUtilPct
+		utilSumJ := cj.Candidate.Metrics.CPUUtilPct + cj.Candidate.Metrics.MemUtilPct
+		if utilSumI != utilSumJ {
+			return utilSumI < utilSumJ
 		}
 
 		return ci.WorkloadDistance < cj.WorkloadDistance
@@ -273,6 +281,7 @@ UPDATE request_responses
 SET request = $1::jsonb,
     response = $2::jsonb,
     best_candidate = $3::jsonb,
+    global_cost_recommendation = NULL,
     created_at = now()
 WHERE id = $4
 RETURNING id;
