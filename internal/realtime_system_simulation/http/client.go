@@ -119,6 +119,96 @@ func (c *SimulationEngineClient) CreateRunWithInput(runID string, input *RunInpu
 	return createResp.Run.ID, nil
 }
 
+// ErrScenarioValidationUnavailable indicates the simulation engine could not run preflight validation (transport or 5xx).
+var ErrScenarioValidationUnavailable = errors.New("scenario validation unavailable")
+
+// ScenarioValidationIssue is a single validation issue from simulation-core POST /v1/scenarios:validate.
+type ScenarioValidationIssue struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	ServiceID string `json:"service_id,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// ScenarioValidationSummary counts entities returned by scenario preflight validation.
+type ScenarioValidationSummary struct {
+	Hosts     int `json:"hosts"`
+	Services  int `json:"services"`
+	Workloads int `json:"workloads"`
+}
+
+// ScenarioValidationResult is the JSON body from POST /v1/scenarios:validate.
+type ScenarioValidationResult struct {
+	Valid    bool                      `json:"valid"`
+	Errors   []ScenarioValidationIssue `json:"errors"`
+	Warnings []ScenarioValidationIssue `json:"warnings"`
+	Summary  ScenarioValidationSummary `json:"summary"`
+}
+
+// ScenarioValidationError is returned when the engine reports valid=false (HTTP 400 or 200 with valid false).
+type ScenarioValidationError struct {
+	Result *ScenarioValidationResult
+}
+
+func (e *ScenarioValidationError) Error() string {
+	if e == nil || e.Result == nil {
+		return "invalid scenario_yaml"
+	}
+	if len(e.Result.Errors) > 0 && e.Result.Errors[0].Message != "" {
+		return e.Result.Errors[0].Message
+	}
+	return "invalid scenario_yaml"
+}
+
+// ValidateScenario calls simulation-core POST /v1/scenarios:validate (preflight: parse + resource init).
+func (c *SimulationEngineClient) ValidateScenario(ctx context.Context, scenarioYAML string) (*ScenarioValidationResult, error) {
+	payload := map[string]string{"scenario_yaml": scenarioYAML}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrScenarioValidationUnavailable, err)
+	}
+	url := fmt.Sprintf("%s/v1/scenarios:validate", c.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrScenarioValidationUnavailable, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrScenarioValidationUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrScenarioValidationUnavailable, err)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var res ScenarioValidationResult
+		if err := json.Unmarshal(body, &res); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrScenarioValidationUnavailable, err)
+		}
+		if !res.Valid {
+			return &res, &ScenarioValidationError{Result: &res}
+		}
+		return &res, nil
+	case http.StatusBadRequest:
+		var res ScenarioValidationResult
+		if err := json.Unmarshal(body, &res); err != nil {
+			return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
+		}
+		return &res, &ScenarioValidationError{Result: &res}
+	default:
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return nil, fmt.Errorf("%w: engine returned status %d: %s", ErrScenarioValidationUnavailable, resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
+	}
+}
+
 // CreateRun creates a run in the simulation engine using a minimal set of fields.
 // It is kept for backwards compatibility and delegates to CreateRunWithInput.
 func (c *SimulationEngineClient) CreateRun(runID string, scenarioYAML string, durationMs int64, realTimeMode *bool, callbackURL string, callbackSecret string) (string, error) {

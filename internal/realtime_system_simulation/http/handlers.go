@@ -15,7 +15,6 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/scenario"
-	simconfig "github.com/GoSim-25-26J-441/simulation-core/pkg/config"
 	"github.com/gin-gonic/gin"
 )
 
@@ -109,12 +108,6 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	if strings.TrimSpace(body.ScenarioYAML) != "" {
-		if _, err := simconfig.ParseScenarioYAML([]byte(body.ScenarioYAML)); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scenario_yaml", "details": err.Error()})
-			return
-		}
-	}
 	opt, hasOpt, err := UnmarshalOptimizationConfig(body.Optimization)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
@@ -167,6 +160,10 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "save_scenario requires scenario_yaml"})
 			return
 		}
+		if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+			h.writeScenarioValidationError(c, err)
+			return
+		}
 		amgYAML, err := h.scenarioCacheRepo.GetDiagramYAMLContent(c.Request.Context(), userID, projectID, resolvedDiagramVersionID)
 		var sourceHashPtr *string
 		if err == nil {
@@ -202,6 +199,9 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil && effectiveScenarioYAML == "" {
 		yamlStr, _, _, err := h.resolveScenarioYAMLForDiagramVersion(c.Request.Context(), userID, projectID, resolvedDiagramVersionID)
 		if err != nil {
+			if h.writeScenarioValidationError(c, err) {
+				return
+			}
 			if errors.Is(err, simrepo.ErrDiagramMissingYAML) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "diagram version has no stored AMG/APD YAML"})
 				return
@@ -213,6 +213,10 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	}
 	if effectiveScenarioYAML == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required when no diagram version scenario can be resolved"})
+		return
+	}
+	if err := h.validateScenarioPreflight(c.Request.Context(), effectiveScenarioYAML); err != nil {
+		h.writeScenarioValidationError(c, err)
 		return
 	}
 
@@ -416,6 +420,13 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		}
 		if err := validateOptimizationObjective(opt.Objective, batchOptimizationSet(opt.Batch)); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if body.ScenarioYAML != "" {
+		if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+			h.writeScenarioValidationError(c, err)
 			return
 		}
 	}

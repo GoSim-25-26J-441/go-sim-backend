@@ -24,11 +24,21 @@ import (
 
 func TestCreateRunForProject_InlineScenarioWithoutSaveDoesNotTouchCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var engineCalls int32
+	var validateCalls, runCalls int32
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&engineCalls, 1)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			atomic.AddInt32(&validateCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			atomic.AddInt32(&runCalls, 1)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer engine.Close()
 
@@ -63,15 +73,25 @@ func TestCreateRunForProject_InlineScenarioWithoutSaveDoesNotTouchCache(t *testi
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	require.Equal(t, int32(1), atomic.LoadInt32(&engineCalls))
+	require.Equal(t, int32(1), atomic.LoadInt32(&validateCalls))
+	require.Equal(t, int32(1), atomic.LoadInt32(&runCalls))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCreateRunForProject_SaveScenarioTruePersistsEdited(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer engine.Close()
 
@@ -206,8 +226,19 @@ func TestPutDiagramVersionScenario_ThenGetReturnsSavedYAML(t *testing.T) {
 	require.NoError(t, err)
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer engine.Close()
 	h := &Handler{
 		simService:        service.NewSimulationService(simrepo.NewRunRepository(rdb)),
+		engineClient:      NewSimulationEngineClient(engine.URL),
 		scenarioCacheRepo: simrepo.NewScenarioCacheRepository(db),
 	}
 	router := gin.New()

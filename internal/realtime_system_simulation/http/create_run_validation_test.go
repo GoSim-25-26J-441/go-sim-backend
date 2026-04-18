@@ -61,15 +61,19 @@ func TestCreateRun_OnlineOptimization_RejectsWhenTargetP95MissingOrZero(t *testi
 func TestCreateRun_OnlineOptimization_AcceptsValidTargetP95(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	// Mock engine: accept POST /v1/runs and return 201
 	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/runs" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-123","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
 			w.WriteHeader(http.StatusNotFound)
-			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-123","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
 	}))
 	defer engineServer.Close()
 
@@ -90,7 +94,7 @@ func TestCreateRun_OnlineOptimization_AcceptsValidTargetP95(t *testing.T) {
 	router.POST("/runs", h.CreateRun)
 
 	body := map[string]interface{}{
-		"scenario_yaml": "hosts: []",
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-online-p95-ok"),
 		"duration_ms":   10000,
 		"optimization": map[string]interface{}{
 			"online":                true,
@@ -203,15 +207,24 @@ func TestCreateRun_BatchOptimization_DefaultMaxEvaluationsForwarded(t *testing.T
 	gin.SetMode(gin.TestMode)
 	var captured []byte
 	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		captured, err = io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			var err error
+			captured, err = io.ReadAll(r.Body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-b","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-b","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
 	}))
 	defer engineServer.Close()
 
@@ -231,7 +244,7 @@ func TestCreateRun_BatchOptimization_DefaultMaxEvaluationsForwarded(t *testing.T
 	router.POST("/runs", h.CreateRun)
 
 	body := map[string]interface{}{
-		"scenario_yaml": "hosts: []",
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-batch-max-eval"),
 		"duration_ms":   5000,
 		"optimization": map[string]interface{}{
 			"online": false,
@@ -298,15 +311,24 @@ func TestCreateRun_Batch_RecommendedConfig_StartsAndForwardsP95Placeholder(t *te
 	gin.SetMode(gin.TestMode)
 	var captured []byte
 	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		captured, err = io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			var err error
+			captured, err = io.ReadAll(r.Body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-rc","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-rc","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
 	}))
 	defer engineServer.Close()
 
@@ -326,7 +348,7 @@ func TestCreateRun_Batch_RecommendedConfig_StartsAndForwardsP95Placeholder(t *te
 	router.POST("/runs", h.CreateRun)
 
 	body := map[string]interface{}{
-		"scenario_yaml": "hosts: []",
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-rc-rec"),
 		"duration_ms":   5000,
 		"optimization": map[string]interface{}{
 			"objective": ObjectiveRecommendedConfig,
@@ -353,13 +375,18 @@ func TestCreateRun_Batch_RecommendedConfig_StartsAndForwardsP95Placeholder(t *te
 func TestCreateRun_OptimizationObjective_AcceptsCpuAndMemoryUtilization(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/runs" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-123","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
 			w.WriteHeader(http.StatusNotFound)
-			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-123","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
 	}))
 	defer engineServer.Close()
 
@@ -382,7 +409,7 @@ func TestCreateRun_OptimizationObjective_AcceptsCpuAndMemoryUtilization(t *testi
 	for _, objective := range []string{"cpu_utilization", "memory_utilization"} {
 		t.Run(objective, func(t *testing.T) {
 			body := map[string]interface{}{
-				"scenario_yaml": "hosts: []",
+				"scenario_yaml": minimalValidCoreScenarioYAML("svc-obj-" + objective),
 				"duration_ms":   5000,
 				"optimization": map[string]interface{}{
 					"objective": objective,

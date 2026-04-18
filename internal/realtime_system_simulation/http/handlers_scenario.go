@@ -11,14 +11,8 @@ import (
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/amg_apd_scenario"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
-	simconfig "github.com/GoSim-25-26J-441/simulation-core/pkg/config"
 	"github.com/gin-gonic/gin"
 )
-
-func validateCoreScenarioYAML(yamlStr string) error {
-	_, err := simconfig.ParseScenarioYAML([]byte(yamlStr))
-	return err
-}
 
 func serverScenarioError(c *gin.Context, msg string, err error) {
 	log.Printf("simulation scenario: %s: %v", msg, err)
@@ -84,6 +78,9 @@ func (h *Handler) resolveScenarioYAMLForDiagramVersion(ctx context.Context, user
 	}
 	genYAML, err := amg_apd_scenario.GenerateScenarioYAML([]byte(amgYAML))
 	if err != nil {
+		return "", diagramSourceHash, cached, err
+	}
+	if err := h.validateScenarioPreflight(ctx, genYAML); err != nil {
 		return "", diagramSourceHash, cached, err
 	}
 	sh := diagramSourceHash
@@ -176,6 +173,10 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
 		return
 	}
+	if err := h.validateScenarioPreflight(c.Request.Context(), genYAML); err != nil {
+		h.writeScenarioValidationError(c, err)
+		return
+	}
 	sh := sourceHash
 	s3Path := h.putScenarioToS3(c.Request.Context(), diagramVersionID, genYAML)
 	overwrite := cached != nil
@@ -228,8 +229,8 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required"})
 		return
 	}
-	if err := validateCoreScenarioYAML(body.ScenarioYAML); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scenario_yaml", "details": err.Error()})
+	if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+		h.writeScenarioValidationError(c, err)
 		return
 	}
 	if h.scenarioCacheRepo == nil {
@@ -330,6 +331,10 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 	genYAML, genErr := amg_apd_scenario.GenerateScenarioYAML([]byte(amgYAML))
 	if genErr != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
+		return
+	}
+	if err := h.validateScenarioPreflight(c.Request.Context(), genYAML); err != nil {
+		h.writeScenarioValidationError(c, err)
 		return
 	}
 	sh := sourceHash

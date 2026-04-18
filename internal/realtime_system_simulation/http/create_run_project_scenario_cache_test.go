@@ -52,17 +52,26 @@ func TestCreateRunForProject_CachesAndReusesScenario(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	validYAML := minimalValidCoreScenarioYAML("svc-first")
 	var capturedFirst, capturedSecond []byte
-	call := 0
+	runCall := 0
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if call == 0 {
-			capturedFirst = body
-		} else {
-			capturedSecond = body
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			body, _ := io.ReadAll(r.Body)
+			if runCall == 0 {
+				capturedFirst = body
+			} else {
+				capturedSecond = body
+			}
+			runCall++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		call++
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
 	}))
 	defer engine.Close()
 
@@ -178,11 +187,21 @@ func TestCreateRunForProject_MissingScenarioAndCacheReturns400(t *testing.T) {
 
 func TestCreateRunForProject_ScenarioConflictReturns409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var engineCalls int32
+	var validateCalls, runCalls int32
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&engineCalls, 1)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			atomic.AddInt32(&validateCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			atomic.AddInt32(&runCalls, 1)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer engine.Close()
 
@@ -222,7 +241,8 @@ func TestCreateRunForProject_ScenarioConflictReturns409(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusConflict, w.Code)
-	require.Equal(t, int32(0), atomic.LoadInt32(&engineCalls))
+	require.GreaterOrEqual(t, atomic.LoadInt32(&validateCalls), int32(1))
+	require.Equal(t, int32(0), atomic.LoadInt32(&runCalls))
 	runIDs, listErr := runRepo.ListByProjectID("project-1")
 	require.NoError(t, listErr)
 	require.Empty(t, runIDs)
@@ -231,11 +251,21 @@ func TestCreateRunForProject_ScenarioConflictReturns409(t *testing.T) {
 
 func TestCreateRunForProject_InvalidDiagramVersionReturns400(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var engineCalls int32
+	var validateCalls, runCalls int32
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&engineCalls, 1)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			atomic.AddInt32(&validateCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			atomic.AddInt32(&runCalls, 1)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-1","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer engine.Close()
 
@@ -269,7 +299,8 @@ func TestCreateRunForProject_InvalidDiagramVersionReturns400(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, int32(0), atomic.LoadInt32(&engineCalls))
+	require.Equal(t, int32(0), atomic.LoadInt32(&validateCalls))
+	require.Equal(t, int32(0), atomic.LoadInt32(&runCalls))
 	runIDs, listErr := runRepo.ListByProjectID("project-1")
 	require.NoError(t, listErr)
 	require.Empty(t, runIDs)
