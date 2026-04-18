@@ -57,14 +57,14 @@ func enrichPersistedTimeSeriesPoint(p simrepo.TimeSeriesPoint) gin.H {
 		}
 	}
 	return gin.H{
-		"time":         p.Time,
-		"value":        p.MetricValue,
-		"labels":       labels,
-		"service_id":   serviceID,
-		"node_id":      nodeID,
-		"host_id":      hostID,
-		"instance_id":  instanceID,
-		"tags":         tags,
+		"time":        p.Time,
+		"value":       p.MetricValue,
+		"labels":      labels,
+		"service_id":  serviceID,
+		"node_id":     nodeID,
+		"host_id":     hostID,
+		"instance_id": instanceID,
+		"tags":        tags,
 	}
 }
 
@@ -95,6 +95,7 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	var body struct {
 		DiagramVersionID       string                 `json:"diagram_version_id,omitempty"`
 		ScenarioYAML           string                 `json:"scenario_yaml,omitempty"`
+		SaveScenario           bool                   `json:"save_scenario,omitempty"`
 		OverwriteScenarioCache bool                   `json:"overwrite_scenario_cache,omitempty"`
 		DurationMs             int64                  `json:"duration_ms,omitempty"`
 		RealTimeMode           *bool                  `json:"real_time_mode,omitempty"`
@@ -132,7 +133,6 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	}
 
 	resolvedDiagramVersionID := strings.TrimSpace(body.DiagramVersionID)
-	var cachedScenario *simrepo.CachedScenario
 	if h.scenarioCacheRepo != nil {
 		if resolvedDiagramVersionID != "" {
 			if err := h.scenarioCacheRepo.VerifyDiagramVersionForProject(c.Request.Context(), userID, projectID, resolvedDiagramVersionID); err != nil {
@@ -147,34 +147,90 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		}
 	}
 
-	effectiveScenarioYAML := body.ScenarioYAML
-	if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil {
-		cached, err := h.scenarioCacheRepo.GetScenarioForDiagramVersion(c.Request.Context(), userID, projectID, resolvedDiagramVersionID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load cached scenario"})
+	if body.SaveScenario {
+		if resolvedDiagramVersionID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "save_scenario requires diagram_version_id"})
 			return
 		}
-		cachedScenario = cached
-		if body.ScenarioYAML != "" && cachedScenario != nil {
-			reqHash := sha256.Sum256([]byte(body.ScenarioYAML))
-			if cachedScenario.ScenarioHash != hex.EncodeToString(reqHash[:]) && !body.OverwriteScenarioCache {
-				c.JSON(http.StatusConflict, gin.H{"error": "scenario cache conflict for diagram version; set overwrite_scenario_cache=true to replace"})
+		if h.scenarioCacheRepo == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "scenario cache not configured"})
+			return
+		}
+		if strings.TrimSpace(body.ScenarioYAML) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "save_scenario requires scenario_yaml"})
+			return
+		}
+		if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+			h.writeScenarioValidationError(c, err)
+			return
+		}
+		amgYAML, err := h.scenarioCacheRepo.GetDiagramYAMLContent(c.Request.Context(), userID, projectID, resolvedDiagramVersionID)
+		var sourceHashPtr *string
+		if err == nil {
+			sh := simrepo.HashAMGAPDSource(amgYAML)
+			sourceHashPtr = &sh
+		} else if errors.Is(err, simrepo.ErrDiagramMissingYAML) {
+			sourceHashPtr = nil
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load diagram YAML for scenario save"})
+			return
+		}
+		s3Path := h.putScenarioToS3(c.Request.Context(), resolvedDiagramVersionID, body.ScenarioYAML)
+		_, err = h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(
+			c.Request.Context(),
+			resolvedDiagramVersionID,
+			body.ScenarioYAML,
+			"edited",
+			s3Path,
+			sourceHashPtr,
+			body.OverwriteScenarioCache,
+		)
+		if err != nil {
+			if errors.Is(err, simrepo.ErrScenarioCacheConflict) {
+				c.JSON(http.StatusConflict, gin.H{"error": "scenario cache conflict for diagram version; set overwrite_scenario_cache=true to replace saved scenario"})
 				return
 			}
-		}
-		if effectiveScenarioYAML == "" && cachedScenario != nil {
-			effectiveScenarioYAML = cachedScenario.ScenarioYAML
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save scenario for diagram version"})
+			return
 		}
 	}
+
+	effectiveScenarioYAML := body.ScenarioYAML
+	if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil && effectiveScenarioYAML == "" {
+		yamlStr, _, _, err := h.resolveScenarioYAMLForDiagramVersion(c.Request.Context(), userID, projectID, resolvedDiagramVersionID)
+		if err != nil {
+			if h.writeScenarioValidationError(c, err) {
+				return
+			}
+			if errors.Is(err, simrepo.ErrDiagramMissingYAML) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "diagram version has no stored AMG/APD YAML"})
+				return
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to resolve scenario for diagram version", "details": err.Error()})
+			return
+		}
+		effectiveScenarioYAML = yamlStr
+	}
 	if effectiveScenarioYAML == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required when no cached scenario exists for the diagram version"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required when no diagram version scenario can be resolved"})
+		return
+	}
+	if err := h.validateScenarioPreflight(c.Request.Context(), effectiveScenarioYAML); err != nil {
+		h.writeScenarioValidationError(c, err)
 		return
 	}
 
+	meta := cloneMetadata(body.Metadata)
+	if resolvedDiagramVersionID != "" {
+		if meta == nil {
+			meta = make(map[string]interface{})
+		}
+		meta["diagram_version_id"] = resolvedDiagramVersionID
+	}
 	req := &domain.CreateRunRequest{
 		UserID:          userID,
 		ProjectPublicID: projectID,
-		Metadata:        body.Metadata,
+		Metadata:        meta,
 	}
 	run, err := h.simService.CreateRun(req)
 	if err != nil {
@@ -272,31 +328,6 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 				ScenarioYAML: effectiveScenarioYAML,
 			})
 		}
-		if resolvedDiagramVersionID != "" && h.scenarioCacheRepo != nil {
-			cacheSource := "request"
-			if body.ScenarioYAML == "" {
-				cacheSource = "cache"
-			}
-			s3Path := ""
-			if h.s3Client != nil {
-				key := "simulation/diagram_versions/" + resolvedDiagramVersionID + "/scenario.yaml"
-				if err := h.s3Client.PutObject(context.Background(), key, []byte(effectiveScenarioYAML)); err == nil {
-					s3Path = key
-				}
-			}
-			_, err := h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(
-				c.Request.Context(),
-				resolvedDiagramVersionID,
-				effectiveScenarioYAML,
-				cacheSource,
-				s3Path,
-				body.OverwriteScenarioCache,
-			)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist scenario cache"})
-				return
-			}
-		}
 	}
 	resp := gin.H{"run": run}
 	if resolvedDiagramVersionID != "" {
@@ -389,6 +420,13 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		}
 		if err := validateOptimizationObjective(opt.Objective, batchOptimizationSet(opt.Batch)); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if body.ScenarioYAML != "" {
+		if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+			h.writeScenarioValidationError(c, err)
 			return
 		}
 	}

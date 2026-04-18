@@ -2,6 +2,12 @@
 # Deploy script for EC2: fetch config, run migrations, install binary, restart service.
 # Invoke with: ./ec2-deploy.sh <S3_BUCKET> <AWS_REGION>
 # Example: ./ec2-deploy.sh arcfind-builds us-east-1
+#
+# Optional env:
+#   APP_DIR          install directory (default /opt/go-sim-backend)
+#   SYSTEMD_SERVICE  unit name without path (default go-sim-backend)
+#   DEPLOY_USER      user:group for the service (default ec2-user)
+#   SKIP_NGINX       set to 1 to skip nginx vhost install / reload
 
 set -e
 export PATH="/usr/local/bin:/usr/bin:${PATH}"
@@ -13,6 +19,9 @@ fi
 BUCKET="$1"
 REGION="$2"
 APP_DIR="${APP_DIR:-/opt/go-sim-backend}"
+SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-go-sim-backend}"
+UNIT_FILE="/etc/systemd/system/${SYSTEMD_SERVICE}.service"
+DEPLOY_USER="${DEPLOY_USER:-ec2-user}"
 
 SSM_PARAM_ENV="/arcfind/production/backend"
 SSM_PARAM_FIREBASE="/arcfind/production/firebase-sa"
@@ -58,7 +67,47 @@ echo "Downloading app binary from S3..."
 aws s3 cp "s3://${BUCKET}/go-sim-backend/app" "$APP_DIR/app" --region "$REGION"
 chmod +x "$APP_DIR/app"
 
-echo "Restarting go-sim-backend..."
-sudo systemctl restart go-sim-backend
+if [ ! -f "$UNIT_FILE" ]; then
+  echo "Systemd unit not found; creating ${UNIT_FILE}..."
+  sudo tee "$UNIT_FILE" > /dev/null <<EOF
+[Unit]
+Description=go-sim-backend API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${DEPLOY_USER}
+Group=${DEPLOY_USER}
+WorkingDirectory=${APP_DIR}
+# godotenv.Load() reads .env from WorkingDirectory
+ExecStart=${APP_DIR}/app
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable "${SYSTEMD_SERVICE}"
+fi
+
+echo "Restarting ${SYSTEMD_SERVICE}..."
+sudo systemctl restart "${SYSTEMD_SERVICE}"
+
+if [ "${SKIP_NGINX:-0}" != "1" ] && command -v nginx >/dev/null 2>&1; then
+  echo "Installing nginx vhost (api.microsim.dev)..."
+  NGINX_DST="/etc/nginx/conf.d/api.microsim.dev.conf"
+  aws s3 cp "s3://${BUCKET}/go-sim-backend/nginx/api.microsim.dev.conf" /tmp/api.microsim.dev.conf --region "$REGION"
+  sudo cp /tmp/api.microsim.dev.conf "$NGINX_DST"
+  sudo chmod 644 "$NGINX_DST"
+  sudo nginx -t
+  sudo systemctl reload nginx
+  echo "Nginx reloaded."
+elif [ "${SKIP_NGINX:-0}" != "1" ]; then
+  echo "Warning: nginx not found in PATH; skipping vhost install. Set SKIP_NGINX=1 to silence this."
+fi
 
 echo "Deploy completed successfully."
