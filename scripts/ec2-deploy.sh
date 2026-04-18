@@ -7,7 +7,9 @@
 #   APP_DIR          install directory (default /opt/go-sim-backend)
 #   SYSTEMD_SERVICE  unit name without path (default go-sim-backend)
 #   DEPLOY_USER      user:group for the service (default ec2-user)
-#   SKIP_NGINX       set to 1 to skip nginx vhost install / reload
+#   SKIP_NGINX       set to 1 to skip nginx vhost logic entirely
+#                    When nginx is present, api.microsim.dev.conf is copied from S3 only if
+#                    /etc/nginx/conf.d/api.microsim.dev.conf does not already exist.
 
 set -e
 export PATH="/usr/local/bin:/usr/bin:${PATH}"
@@ -98,14 +100,18 @@ echo "Restarting ${SYSTEMD_SERVICE}..."
 sudo systemctl restart "${SYSTEMD_SERVICE}"
 
 if [ "${SKIP_NGINX:-0}" != "1" ] && command -v nginx >/dev/null 2>&1; then
-  echo "Installing nginx vhost (api.microsim.dev)..."
   NGINX_DST="/etc/nginx/conf.d/api.microsim.dev.conf"
-  aws s3 cp "s3://${BUCKET}/go-sim-backend/nginx/api.microsim.dev.conf" /tmp/api.microsim.dev.conf --region "$REGION"
-  sudo cp /tmp/api.microsim.dev.conf "$NGINX_DST"
-  sudo chmod 644 "$NGINX_DST"
-  sudo nginx -t
-  sudo systemctl reload nginx
-  echo "Nginx reloaded."
+  if [ -f "$NGINX_DST" ]; then
+    echo "Nginx vhost already present at ${NGINX_DST}; skipping api.microsim.dev.conf install."
+  else
+    echo "Installing nginx vhost (api.microsim.dev)..."
+    aws s3 cp "s3://${BUCKET}/go-sim-backend/nginx/api.microsim.dev.conf" /tmp/api.microsim.dev.conf --region "$REGION"
+    sudo cp /tmp/api.microsim.dev.conf "$NGINX_DST"
+    sudo chmod 644 "$NGINX_DST"
+    sudo nginx -t
+    sudo systemctl reload nginx
+    echo "Nginx vhost installed and nginx reloaded."
+  fi
 elif [ "${SKIP_NGINX:-0}" != "1" ]; then
   echo "Warning: nginx not found in PATH; skipping vhost install. Set SKIP_NGINX=1 to silence this."
 fi
