@@ -160,7 +160,7 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "save_scenario requires scenario_yaml"})
 			return
 		}
-		if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+		if _, err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
 			h.writeScenarioValidationError(c, err)
 			return
 		}
@@ -215,7 +215,8 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required when no diagram version scenario can be resolved"})
 		return
 	}
-	if err := h.validateScenarioPreflight(c.Request.Context(), effectiveScenarioYAML); err != nil {
+	// Authoritative engine validation before any backend run row or POST /v1/runs.
+	if _, err := h.validateScenarioPreflight(c.Request.Context(), effectiveScenarioYAML); err != nil {
 		h.writeScenarioValidationError(c, err)
 		return
 	}
@@ -425,7 +426,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	}
 
 	if body.ScenarioYAML != "" {
-		if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+		if _, err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
 			h.writeScenarioValidationError(c, err)
 			return
 		}

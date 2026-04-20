@@ -42,6 +42,14 @@ func (a *EngineClientAdapter) GetRunSummary(engineRunID string) (*service.RunSum
 		}
 	}
 
+	var finalConfig map[string]interface{}
+	if exportResp.FinalConfig != nil {
+		finalConfig = make(map[string]interface{}, len(exportResp.FinalConfig))
+		for k, v := range exportResp.FinalConfig {
+			finalConfig[k] = v
+		}
+	}
+
 	return &service.RunSummaryResponse{
 		Summary: struct {
 			RunID            string                 `json:"run_id"`
@@ -50,6 +58,7 @@ func (a *EngineClientAdapter) GetRunSummary(engineRunID string) (*service.RunSum
 			TotalDurationMs  int64                  `json:"total_duration_ms,omitempty"`
 			Metrics          map[string]interface{} `json:"metrics,omitempty"`
 			SummaryData      map[string]interface{} `json:"summary_data,omitempty"`
+			FinalConfig      map[string]interface{} `json:"final_config,omitempty"`
 			CreatedAtUnixMs  int64                  `json:"created_at_unix_ms,omitempty"`
 			StartedAtUnixMs  int64                  `json:"started_at_unix_ms,omitempty"`
 			EndedAtUnixMs    int64                  `json:"ended_at_unix_ms,omitempty"`
@@ -58,6 +67,7 @@ func (a *EngineClientAdapter) GetRunSummary(engineRunID string) (*service.RunSum
 			TotalDurationMs: totalDurationMs,
 			Metrics:         metricsMap,
 			SummaryData:     metricsMap,
+			FinalConfig:     finalConfig,
 		},
 	}, nil
 }

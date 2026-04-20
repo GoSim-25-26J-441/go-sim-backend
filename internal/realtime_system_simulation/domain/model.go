@@ -51,6 +51,7 @@ type SimulationSummary struct {
 	// Aggregated metrics and additional summary data are stored as flexible JSON blobs.
 	Metrics     map[string]interface{} `json:"metrics,omitempty"`      // JSONB metrics column
 	SummaryData map[string]interface{} `json:"summary_data,omitempty"` // JSONB summary_data column
+	FinalConfig map[string]interface{} `json:"final_config,omitempty"` // JSONB final_config (simulation-core export)
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 }

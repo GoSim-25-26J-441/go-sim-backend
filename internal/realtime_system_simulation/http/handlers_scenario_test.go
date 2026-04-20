@@ -9,13 +9,13 @@ import (
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 )
 
 func TestPostRegenerateDiagramVersionScenario_RequiresOverwriteWhenEdited(t *testing.T) {
@@ -58,6 +58,17 @@ func TestPostRegenerateDiagramVersionScenario_RequiresOverwriteWhenEdited(t *tes
 
 func TestPutDiagramVersionScenario_InvalidYAML(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"valid":false,"errors":[{"code":"X","message":"bad"}],"warnings":[],"summary":{}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer engine.Close()
+
 	db, _, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -68,6 +79,7 @@ func TestPutDiagramVersionScenario_InvalidYAML(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	h := &Handler{
 		simService:        service.NewSimulationService(simrepo.NewRunRepository(rdb)),
+		engineClient:      NewSimulationEngineClient(engine.URL),
 		scenarioCacheRepo: simrepo.NewScenarioCacheRepository(db),
 	}
 	router := gin.New()
@@ -80,5 +92,5 @@ func TestPutDiagramVersionScenario_InvalidYAML(t *testing.T) {
 	req.Header.Set("X-User-Id", "user-1")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }

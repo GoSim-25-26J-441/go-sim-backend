@@ -55,7 +55,7 @@ func useCachedGeneratedScenario(cached *simrepo.CachedScenario, diagramSourceHas
 	return true
 }
 
-// resolveScenarioYAMLForDiagramVersion loads or generates simulation-core scenario YAML for a diagram version.
+// resolveScenarioYAMLForDiagramVersion loads or generates scenario YAML for a diagram version.
 // It may persist a generated scenario. Edited scenarios are always returned as-is for runs.
 func (h *Handler) resolveScenarioYAMLForDiagramVersion(ctx context.Context, userID, projectID, diagramVersionID string) (effectiveYAML string, diagramSourceHash string, cached *simrepo.CachedScenario, err error) {
 	if h.scenarioCacheRepo == nil {
@@ -80,7 +80,7 @@ func (h *Handler) resolveScenarioYAMLForDiagramVersion(ctx context.Context, user
 	if err != nil {
 		return "", diagramSourceHash, cached, err
 	}
-	if err := h.validateScenarioPreflight(ctx, genYAML); err != nil {
+	if _, err := h.validateScenarioPreflight(ctx, genYAML); err != nil {
 		return "", diagramSourceHash, cached, err
 	}
 	sh := diagramSourceHash
@@ -173,8 +173,9 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
 		return
 	}
-	if err := h.validateScenarioPreflight(c.Request.Context(), genYAML); err != nil {
-		h.writeScenarioValidationError(c, err)
+	valRes, err := h.validateScenarioPreflight(c.Request.Context(), genYAML)
+	if err != nil {
+		h.writeScenarioValidationError(c, err, genYAML)
 		return
 	}
 	sh := sourceHash
@@ -198,6 +199,7 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 		"diagram_source_hash": sourceHash,
 		"s3_path":             saved.S3Path,
 		"updated_at":          saved.UpdatedAt,
+		"validation":          valRes,
 	})
 }
 
@@ -229,7 +231,8 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required"})
 		return
 	}
-	if err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML); err != nil {
+	valRes, err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML)
+	if err != nil {
 		h.writeScenarioValidationError(c, err)
 		return
 	}
@@ -273,6 +276,7 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 		"source_hash":   saved.SourceHash,
 		"s3_path":       saved.S3Path,
 		"updated_at":    saved.UpdatedAt,
+		"validation":    valRes,
 	})
 }
 
@@ -333,8 +337,9 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
 		return
 	}
-	if err := h.validateScenarioPreflight(c.Request.Context(), genYAML); err != nil {
-		h.writeScenarioValidationError(c, err)
+	valRes, err := h.validateScenarioPreflight(c.Request.Context(), genYAML)
+	if err != nil {
+		h.writeScenarioValidationError(c, err, genYAML)
 		return
 	}
 	sh := sourceHash
@@ -353,5 +358,6 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 		"diagram_source_hash": sourceHash,
 		"s3_path":             saved.S3Path,
 		"updated_at":          saved.UpdatedAt,
+		"validation":          valRes,
 	})
 }

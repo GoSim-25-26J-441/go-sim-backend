@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	simconfig "github.com/GoSim-25-26J-441/simulation-core/pkg/config"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/amg_apd_scenario"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/scenario"
@@ -521,7 +521,7 @@ func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics
 		rateRPS      float64
 	)
 	if scenarioYAML != "" {
-		if coreParsed, err := simconfig.ParseScenarioYAML([]byte(scenarioYAML)); err == nil {
+		if coreParsed, err := amg_apd_scenario.ParseScenarioDocYAML([]byte(scenarioYAML)); err == nil {
 			if len(coreParsed.Hosts) > 0 {
 				spec["hosts"] = coreParsed.Hosts
 			}
@@ -533,7 +533,7 @@ func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics
 			}
 			for _, h := range coreParsed.Hosts {
 				vcpu += float64(h.Cores)
-				memoryGB += float64(h.MemoryGB)
+				memoryGB += h.MemoryGB
 			}
 			for _, w := range coreParsed.Workload {
 				if w.Arrival.RateRPS > 0 {

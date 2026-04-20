@@ -120,6 +120,7 @@ func (m *mockEngineClient) GetRunSummary(engineRunID string) (*simservice.RunSum
 			TotalDurationMs int64                  `json:"total_duration_ms,omitempty"`
 			Metrics         map[string]interface{} `json:"metrics,omitempty"`
 			SummaryData     map[string]interface{} `json:"summary_data,omitempty"`
+			FinalConfig     map[string]interface{} `json:"final_config,omitempty"`
 			CreatedAtUnixMs int64                  `json:"created_at_unix_ms,omitempty"`
 			StartedAtUnixMs int64                  `json:"started_at_unix_ms,omitempty"`
 			EndedAtUnixMs   int64                  `json:"ended_at_unix_ms,omitempty"`
@@ -134,6 +135,7 @@ func (m *mockEngineClient) GetRunSummary(engineRunID string) (*simservice.RunSum
 					"p95": 250.0,
 				},
 			},
+			FinalConfig: nil,
 		},
 	}, nil
 }

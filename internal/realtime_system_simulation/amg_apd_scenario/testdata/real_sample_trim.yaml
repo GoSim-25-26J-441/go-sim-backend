@@ -1,0 +1,25 @@
+# Trimmed representative shape (services[].name, topics/datastores empty) for regression tests.
+services:
+  - name: web-ui
+    type: service
+  - name: customer-bff
+    type: service
+  - name: catalog-service
+    type: service
+  - name: profile-service-db
+    type: database
+  - name: bff
+    type: api_gateway
+
+dependencies:
+  - from: customer-bff
+    to: catalog-service
+    kind: rest
+    sync: true
+
+configs:
+  slo:
+    target_rps: 700
+
+topics: []
+datastores: []
