@@ -83,9 +83,9 @@ func TestSimulationEngineClient_GetRun(t *testing.T) {
 				"id":                     "run-123",
 				"status":                 "RUN_STATUS_RUNNING",
 				"created_at_unix_ms":     1705312200000,
-				"started_at_unix_ms":    1705312201000,
-				"ended_at_unix_ms":      0,
-				"real_duration_ms":      5000,
+				"started_at_unix_ms":     1705312201000,
+				"ended_at_unix_ms":       0,
+				"real_duration_ms":       5000,
 				"simulation_duration_ms": 5000,
 			},
 		})
@@ -101,6 +101,85 @@ func TestSimulationEngineClient_GetRun(t *testing.T) {
 	assert.Equal(t, int64(1705312201000), resp.Run.StartedAt)
 	assert.Equal(t, int64(5000), resp.Run.RealDurationMs)
 	assert.Equal(t, int64(5000), resp.Run.SimulationDurationMs)
+}
+
+func TestSimulationEngineClient_ValidateScenario_SendsPreflightMode(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/scenarios:validate", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"valid": true, "errors": []any{}, "warnings": []any{}, "summary": map[string]any{}})
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	_, err := client.ValidateScenario(context.Background(), "scenario: yaml")
+	require.NoError(t, err)
+	require.Equal(t, "preflight", gotBody["mode"])
+	require.Equal(t, "scenario: yaml", gotBody["scenario_yaml"])
+}
+
+func TestSimulationEngineClient_ValidateScenario_OK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"valid":    true,
+			"errors":   []any{},
+			"warnings": []any{},
+			"summary":  map[string]any{"hosts": 1, "services": 1, "workloads": 1},
+		})
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	res, err := client.ValidateScenario(context.Background(), "x")
+	require.NoError(t, err)
+	require.True(t, res.Valid)
+}
+
+func TestSimulationEngineClient_ValidateScenario_UnprocessableEntity_StructuredError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"valid": false,
+			"errors": []any{map[string]any{
+				"code":    "UNKNOWN_WORKLOAD_ENDPOINT",
+				"message": "workload target checkout:/write references missing endpoint /write on service checkout",
+				"path":    "workload[0].to",
+			}},
+			"warnings": []any{},
+		})
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	_, err := client.ValidateScenario(context.Background(), "workload: []")
+	var sve *simhttp.ScenarioValidationError
+	require.Error(t, err)
+	require.ErrorAs(t, err, &sve)
+	require.NotNil(t, sve.Result)
+	require.False(t, sve.Result.Valid)
+	require.Len(t, sve.Result.Errors, 1)
+	assert.Equal(t, "UNKNOWN_WORKLOAD_ENDPOINT", sve.Result.Errors[0].Code)
+	assert.Equal(t, "workload[0].to", sve.Result.Errors[0].Path)
+}
+
+func TestSimulationEngineClient_ValidateScenario_InternalServerError_Unavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal"}`))
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	_, err := client.ValidateScenario(context.Background(), "x")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, simhttp.ErrScenarioValidationUnavailable))
 }
 
 func TestSimulationEngineClient_ExportRun_WithRunDurations(t *testing.T) {
@@ -140,8 +219,8 @@ func TestSimulationEngineClient_CreateRunWithInput_BatchOptimizationConfig(t *te
 		var body struct {
 			Input struct {
 				Optimization *struct {
-					Online                      bool    `json:"online"`
-					Batch                       *struct {
+					Online bool `json:"online"`
+					Batch  *struct {
 						EnableLocalRefinement       *bool   `json:"enable_local_refinement,omitempty"`
 						DeterministicCandidateSeeds []int64 `json:"deterministic_candidate_seeds,omitempty"`
 					} `json:"batch,omitempty"`
@@ -257,7 +336,7 @@ func TestSimulationEngineClient_ExportRun_WithFinalConfig(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"input":  map[string]interface{}{"scenario_yaml": "", "duration_ms": 1000},
+			"input": map[string]interface{}{"scenario_yaml": "", "duration_ms": 1000},
 			"final_config": map[string]interface{}{
 				"services": []interface{}{map[string]interface{}{"id": "svc1", "replicas": 2}},
 				"hosts":    []interface{}{},
@@ -293,7 +372,7 @@ func TestSimulationEngineClient_GetRunMetricsTimeSeries(t *testing.T) {
 					"timestamp": "2024-01-15T10:00:00.123456789Z",
 					"metric":    "request_count",
 					"value":     42.0,
-					"labels":   map[string]string{"service": "svc1", "instance": "host-1"},
+					"labels":    map[string]string{"service": "svc1", "instance": "host-1"},
 				},
 			},
 		})
@@ -347,10 +426,10 @@ func TestSimulationEngineClient_GetRunMetrics(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"metrics": map[string]interface{}{
-				"total_requests":   float64(1000),
-				"throughput_rps":   float64(50),
-				"latency_p95_ms":   float64(12.5),
-				"service_metrics":  []interface{}{},
+				"total_requests":  float64(1000),
+				"throughput_rps":  float64(50),
+				"latency_p95_ms":  float64(12.5),
+				"service_metrics": []interface{}{},
 			},
 		})
 	}))

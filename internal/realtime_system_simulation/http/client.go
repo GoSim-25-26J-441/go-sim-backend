@@ -126,6 +126,7 @@ var ErrScenarioValidationUnavailable = errors.New("scenario validation unavailab
 type ScenarioValidationIssue struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
+	Path      string `json:"path,omitempty"`
 	ServiceID string `json:"service_id,omitempty"`
 	Hint      string `json:"hint,omitempty"`
 }
@@ -160,9 +161,13 @@ func (e *ScenarioValidationError) Error() string {
 	return "invalid scenario_yaml"
 }
 
-// ValidateScenario calls simulation-core POST /v1/scenarios:validate (preflight: parse + resource init).
+// ValidateScenario calls simulation-core POST /v1/scenarios:validate (authoritative preflight).
+// Request JSON: {"scenario_yaml":"...","mode":"preflight"} — mode defaults to preflight when omitted by the engine.
 func (c *SimulationEngineClient) ValidateScenario(ctx context.Context, scenarioYAML string) (*ScenarioValidationResult, error) {
-	payload := map[string]string{"scenario_yaml": scenarioYAML}
+	payload := map[string]any{
+		"scenario_yaml": scenarioYAML,
+		"mode":          "preflight",
+	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrScenarioValidationUnavailable, err)
@@ -195,16 +200,21 @@ func (c *SimulationEngineClient) ValidateScenario(ctx context.Context, scenarioY
 			return &res, &ScenarioValidationError{Result: &res}
 		}
 		return &res, nil
-	case http.StatusBadRequest:
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		var res ScenarioValidationResult
 		if err := json.Unmarshal(body, &res); err != nil {
 			return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 		}
-		return &res, &ScenarioValidationError{Result: &res}
+		// Semantic / schema failures: engine returns structured body; surface as ScenarioValidationError (422 to clients).
+		if !res.Valid || len(res.Errors) > 0 {
+			return &res, &ScenarioValidationError{Result: &res}
+		}
+		return &res, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 	default:
 		if resp.StatusCode >= http.StatusInternalServerError {
 			return nil, fmt.Errorf("%w: engine returned status %d: %s", ErrScenarioValidationUnavailable, resp.StatusCode, strings.TrimSpace(string(body)))
 		}
+		// Non-validation 4xx (e.g. 404) — not user-fixable scenario shape; treat as gateway error for handlers.
 		return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 	}
 }
