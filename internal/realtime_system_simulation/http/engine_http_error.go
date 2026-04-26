@@ -45,6 +45,17 @@ func HTTPStatusForEnginePOST(engineStatus int) int {
 	}
 }
 
+// HTTPStatusForEngineRuntimeMutation maps runtime configuration/workload mutation errors.
+// Preserve expected validator/conflict/precondition statuses; map unknown statuses to 502.
+func HTTPStatusForEngineRuntimeMutation(engineStatus int) int {
+	switch engineStatus {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusPreconditionFailed:
+		return engineStatus
+	default:
+		return http.StatusBadGateway
+	}
+}
+
 // ExtractEngineErrorMessage parses a JSON error or message field from an engine error body; otherwise returns trimmed raw text.
 func ExtractEngineErrorMessage(body []byte) string {
 	var m struct {

@@ -535,6 +535,39 @@ func TestSimulationEngineClient_UpdateWorkloadRate(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestSimulationEngineClient_GetRunConfiguration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/v1/runs/run-123/configuration", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"services":[{"id":"svc","replicas":2}]}`))
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	cfg, err := client.GetRunConfiguration("run-123")
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	_, ok := cfg["services"]
+	assert.True(t, ok)
+}
+
+func TestSimulationEngineClient_GetRunConfiguration_Non200(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"conflict"}`))
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	_, err := client.GetRunConfiguration("run-123")
+	require.Error(t, err)
+	var eng *simhttp.EngineHTTPError
+	require.ErrorAs(t, err, &eng)
+	assert.Equal(t, http.StatusConflict, eng.StatusCode)
+}
+
 func TestSimulationEngineClient_UpdateWorkloadRate_Non200(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -545,7 +578,33 @@ func TestSimulationEngineClient_UpdateWorkloadRate_Non200(t *testing.T) {
 	client := simhttp.NewSimulationEngineClient(server.URL)
 	err := client.UpdateWorkloadRate("run-123", "client:svc1:/test", 50.0)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "400")
+	var eng *simhttp.EngineHTTPError
+	require.ErrorAs(t, err, &eng)
+	assert.Equal(t, http.StatusBadRequest, eng.StatusCode)
+}
+
+func TestSimulationEngineClient_UpdateRunConfiguration_Non200(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPreconditionFailed)
+		_, _ = w.Write([]byte(`{"error":"precondition failed"}`))
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	err := client.UpdateRunConfiguration("run-123", &simhttp.UpdateRunConfigurationRequest{
+		Services: []struct {
+			ID       string   `json:"id"`
+			Replicas int      `json:"replicas"`
+			CPUCores *float64 `json:"cpu_cores,omitempty"`
+			MemoryMB *float64 `json:"memory_mb,omitempty"`
+		}{
+			{ID: "svc", Replicas: 2},
+		},
+	})
+	require.Error(t, err)
+	var eng *simhttp.EngineHTTPError
+	require.ErrorAs(t, err, &eng)
+	assert.Equal(t, http.StatusPreconditionFailed, eng.StatusCode)
 }
 
 func TestSimulationEngineClient_StreamMetrics_URL(t *testing.T) {

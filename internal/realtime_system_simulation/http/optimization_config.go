@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -31,29 +32,68 @@ type OptimizationConfig struct {
 	// Host scale-in (Phase 3): 0–1, 0 = host scale-in disabled
 	ScaleDownHostCPUUtilMax float64 `json:"scale_down_host_cpu_util_max,omitempty"`
 	// Online controller & wall-clock limits
-	MaxControllerSteps   int32   `json:"max_controller_steps,omitempty"`
-	MaxOnlineDurationMs  int64   `json:"max_online_duration_ms,omitempty"`
-	AllowUnboundedOnline *bool   `json:"allow_unbounded_online,omitempty"`
-	MaxNoopIntervals     int32   `json:"max_noop_intervals,omitempty"`
-	LeaseTTLMs           int64   `json:"lease_ttl_ms,omitempty"`
-	ScaleDownCooldownMs  int64   `json:"scale_down_cooldown_ms,omitempty"`
-	HostDrainTimeoutMs   int64   `json:"host_drain_timeout_ms,omitempty"`
-	MemoryHeadroomMB     float64 `json:"memory_headroom_mb,omitempty"`
+	MaxControllerSteps       int32   `json:"max_controller_steps,omitempty"`
+	MaxOnlineDurationMs      int64   `json:"max_online_duration_ms,omitempty"`
+	AllowUnboundedOnline     *bool   `json:"allow_unbounded_online,omitempty"`
+	MaxNoopIntervals         int32   `json:"max_noop_intervals,omitempty"`
+	LeaseTTLMs               int64   `json:"lease_ttl_ms,omitempty"`
+	ScaleDownCooldownMs      int64   `json:"scale_down_cooldown_ms,omitempty"`
+	DrainTimeoutMs           int64   `json:"drain_timeout_ms,omitempty"`
+	MemoryDownsizeHeadroomMB float64 `json:"memory_downsize_headroom_mb,omitempty"`
+	// Legacy aliases accepted at request boundary only; never marshaled to engine payload.
+	HostDrainTimeoutMs int64   `json:"-"`
+	MemoryHeadroomMB   float64 `json:"-"`
 	// When non-empty and online is false, simulation-core runs batch (beam) optimization instead of hill-climb.
 	Batch json.RawMessage `json:"batch,omitempty"`
 }
 
 // UnmarshalOptimizationConfig parses optimization JSON for validation. Returns false if optJSON is empty or whitespace.
 func UnmarshalOptimizationConfig(optJSON json.RawMessage) (OptimizationConfig, bool, error) {
-	if len(bytes.TrimSpace(optJSON)) == 0 {
-		return OptimizationConfig{}, false, nil
+	normalized, _, err := NormalizeOptimizationPayload(optJSON)
+	if err != nil {
+		return OptimizationConfig{}, true, err
 	}
-	if strings.TrimSpace(string(optJSON)) == "null" {
+	if len(normalized) == 0 {
 		return OptimizationConfig{}, false, nil
 	}
 	var opt OptimizationConfig
-	if err := json.Unmarshal(optJSON, &opt); err != nil {
+	if err := json.Unmarshal(normalized, &opt); err != nil {
 		return OptimizationConfig{}, true, err
 	}
 	return opt, true, nil
+}
+
+// NormalizeOptimizationPayload accepts legacy aliases and canonical names, and always outputs canonical JSON.
+// Rules:
+// - accepts both `host_drain_timeout_ms` and `drain_timeout_ms` (canonical wins)
+// - accepts both `memory_headroom_mb` and `memory_downsize_headroom_mb` (canonical wins)
+// - does not emit legacy alias keys in output
+func NormalizeOptimizationPayload(optJSON json.RawMessage) (json.RawMessage, bool, error) {
+	if len(bytes.TrimSpace(optJSON)) == 0 {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(string(optJSON)) == "null" {
+		return nil, false, nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(optJSON, &raw); err != nil {
+		return nil, true, err
+	}
+	if _, ok := raw["drain_timeout_ms"]; !ok {
+		if v, legacyOK := raw["host_drain_timeout_ms"]; legacyOK {
+			raw["drain_timeout_ms"] = v
+		}
+	}
+	if _, ok := raw["memory_downsize_headroom_mb"]; !ok {
+		if v, legacyOK := raw["memory_headroom_mb"]; legacyOK {
+			raw["memory_downsize_headroom_mb"] = v
+		}
+	}
+	delete(raw, "host_drain_timeout_ms")
+	delete(raw, "memory_headroom_mb")
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return nil, true, fmt.Errorf("marshal normalized optimization: %w", err)
+	}
+	return json.RawMessage(out), true, nil
 }

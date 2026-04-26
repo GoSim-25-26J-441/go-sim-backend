@@ -18,6 +18,162 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 )
 
+func TestCreateRun_OptimizationCanonicalFields_PrefersCanonicalAndPersistsMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured []byte
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			var err error
+			captured, err = io.ReadAll(r.Body)
+			require.NoError(t, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-optim","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer engineServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+	h := &Handler{simService: simSvc, engineClient: NewSimulationEngineClient(engineServer.URL), callbackURL: "http://localhost/callback"}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+	router.GET("/runs/:id", h.GetRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-canonical"),
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"online":                       true,
+			"objective":                    "p95_latency_ms",
+			"optimization_target_primary":  "p95_latency",
+			"target_p95_latency_ms":        100,
+			"drain_timeout_ms":             12000,
+			"host_drain_timeout_ms":        5000, // canonical wins
+			"memory_downsize_headroom_mb":  128,
+			"memory_headroom_mb":           64, // canonical wins
+			"max_controller_steps":         15,
+			"max_online_duration_ms":       300000,
+			"max_noop_intervals":           10,
+			"lease_ttl_ms":                 45000,
+			"scale_down_cooldown_ms":       60000,
+			"scale_down_cpu_util_max":      0.4,
+			"scale_down_mem_util_max":      0.5,
+			"scale_down_host_cpu_util_max": 0.35,
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var outer map[string]interface{}
+	require.NoError(t, json.Unmarshal(captured, &outer))
+	input := outer["input"].(map[string]interface{})
+	opt := input["optimization"].(map[string]interface{})
+	assert.Equal(t, float64(12000), opt["drain_timeout_ms"])
+	assert.Equal(t, float64(128), opt["memory_downsize_headroom_mb"])
+	_, hasLegacyDrain := opt["host_drain_timeout_ms"]
+	_, hasLegacyMemory := opt["memory_headroom_mb"]
+	assert.False(t, hasLegacyDrain)
+	assert.False(t, hasLegacyMemory)
+
+	var createResp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &createResp))
+	runObj := createResp["run"].(map[string]interface{})
+	runID := runObj["run_id"].(string)
+	getReq := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	getReq.Header.Set("X-User-Id", "user-1")
+	getW := httptest.NewRecorder()
+	router.ServeHTTP(getW, getReq)
+	require.Equal(t, http.StatusOK, getW.Code)
+	var getResp map[string]interface{}
+	require.NoError(t, json.Unmarshal(getW.Body.Bytes(), &getResp))
+	meta := getResp["run"].(map[string]interface{})["metadata"].(map[string]interface{})
+	cfg := meta["optimization_config"].(map[string]interface{})
+	assert.Equal(t, "online", cfg["mode"])
+	assert.Equal(t, float64(12000), cfg["drain_timeout_ms"])
+	assert.Equal(t, float64(128), cfg["memory_downsize_headroom_mb"])
+}
+
+func TestCreateRun_OptimizationLegacyAliases_NormalizedToCanonical(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured []byte
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			var err error
+			captured, err = io.ReadAll(r.Body)
+			require.NoError(t, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-optim-legacy","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer engineServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+	h := &Handler{simService: simSvc, engineClient: NewSimulationEngineClient(engineServer.URL), callbackURL: "http://localhost/callback"}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-legacy"),
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"online":                true,
+			"target_p95_latency_ms": 100,
+			"host_drain_timeout_ms": 9000,
+			"memory_headroom_mb":    222,
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var outer map[string]interface{}
+	require.NoError(t, json.Unmarshal(captured, &outer))
+	input := outer["input"].(map[string]interface{})
+	opt := input["optimization"].(map[string]interface{})
+	assert.Equal(t, float64(9000), opt["drain_timeout_ms"])
+	assert.Equal(t, float64(222), opt["memory_downsize_headroom_mb"])
+	_, hasLegacyDrain := opt["host_drain_timeout_ms"]
+	_, hasLegacyMemory := opt["memory_headroom_mb"]
+	assert.False(t, hasLegacyDrain)
+	assert.False(t, hasLegacyMemory)
+}
+
 func TestCreateRun_OnlineOptimization_RejectsWhenTargetP95MissingOrZero(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
