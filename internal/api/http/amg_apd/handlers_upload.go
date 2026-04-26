@@ -11,8 +11,29 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/service"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/utils"
 )
+
+type nodeLayoutXY struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+func mergeNodeLayoutIntoGraph(g *domain.Graph, layout map[string]nodeLayoutXY) {
+	if g == nil || len(layout) == 0 {
+		return
+	}
+	for id, pos := range layout {
+		n := g.Nodes[id]
+		if n == nil {
+			continue
+		}
+		x, y := pos.X, pos.Y
+		n.X = &x
+		n.Y = &y
+	}
+}
 
 func getIncomingDir() string {
 	if d := os.Getenv("AMG_APD_INCOMING_DIR"); d != "" {
@@ -22,9 +43,10 @@ func getIncomingDir() string {
 }
 
 type analyzeRawReq struct {
-	YAML   string `json:"yaml"`
-	Title  string `json:"title"`
-	OutDir string `json:"out_dir"`
+	YAML       string                    `json:"yaml"`
+	Title      string                    `json:"title"`
+	OutDir     string                    `json:"out_dir"`
+	NodeLayout map[string]nodeLayoutXY   `json:"node_layout,omitempty"`
 }
 
 // AnalyzeRaw runs analysis and persists to DB (user_id/chat_id from headers or TestUser123/TestChat123).
@@ -49,6 +71,7 @@ func (h *Handlers) AnalyzeRaw(c *gin.Context) {
 		c.String(http.StatusBadRequest, fmt.Sprintf("analyze failed: %v", err))
 		return
 	}
+	mergeNodeLayoutIntoGraph(res.Graph, req.NodeLayout)
 	graphJSON, _ := json.Marshal(res.Graph)
 	detectionsJSON, _ := json.Marshal(res.Detections)
 	row, err := h.versionRepo.Save(userID, chatID, req.Title, req.YAML, graphJSON, detectionsJSON, dotContent)
@@ -129,8 +152,9 @@ func (h *Handlers) AnalyzeUpload(c *gin.Context) {
 }
 
 type updateVersionAnalysisReq struct {
-	VersionID string `json:"version_id"`
-	YAML      string `json:"yaml"`
+	VersionID  string                  `json:"version_id"`
+	YAML       string                  `json:"yaml"`
+	NodeLayout map[string]nodeLayoutXY `json:"node_layout,omitempty"`
 }
 
 // UpdateVersionAnalysis runs analysis and updates an existing diagram version in place (no new version).
@@ -175,6 +199,7 @@ func (h *Handlers) UpdateVersionAnalysis(c *gin.Context) {
 		c.String(http.StatusBadRequest, fmt.Sprintf("analyze failed: %v", errAnalyze))
 		return
 	}
+	mergeNodeLayoutIntoGraph(res.Graph, req.NodeLayout)
 	graphJSON, _ := json.Marshal(res.Graph)
 	detectionsJSON, _ := json.Marshal(res.Detections)
 	if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(req.VersionID, userID, chatID, graphJSON, detectionsJSON, dotContent); err != nil {

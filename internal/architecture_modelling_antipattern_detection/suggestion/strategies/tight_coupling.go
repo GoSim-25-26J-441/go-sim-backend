@@ -23,13 +23,19 @@ func (tightCoupling) Suggest(g *domain.Graph, det domain.Detection) suggestion.S
 		title = fmt.Sprintf("Reduce tight coupling (%s ↔ %s)", a, b)
 	}
 
-	bullets := []string{
-		"Two services heavily depend on each other (often sync both ways).",
-		"Fix: make one direction async or remove one direction.",
-		"Auto-fix: set sync=false on one direction.",
+	sug := suggestion.Suggestion{
+		Kind:    det.Kind,
+		Title:   title,
+		Bullets: []string{
+			"Two services heavily depend on each other (often sync both ways).",
+			"Fix: make one direction async or remove one direction.",
+			"Auto-fix: tries to set sync=false on the second service → first service edge first, then the other direction if needed.",
+		},
 	}
-
-	return suggestion.Suggestion{Kind: det.Kind, Title: title, Bullets: bullets}
+	if a != "" && b != "" {
+		sug.PreviewFrom, sug.PreviewTo = a, b
+	}
+	return sug
 }
 
 func (tightCoupling) Apply(spec *parser.YSpec, g *domain.Graph, det domain.Detection) (bool, []string) {

@@ -27,7 +27,7 @@ func (breakCycle) Suggest(g *domain.Graph, det domain.Detection) suggestion.Sugg
 	bullets := []string{
 		"Services form a loop of dependencies.",
 		"Fix: remove one edge in the cycle or convert it to async/event-based.",
-		"Auto-fix: remove one dependency edge inside the loop.",
+		"Auto-fix: removes the first matching dependency edge found between nodes in the cycle (does not add replacement edges).",
 	}
 
 	return suggestion.Suggestion{Kind: det.Kind, Title: title, Bullets: bullets}

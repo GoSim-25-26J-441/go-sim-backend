@@ -8,14 +8,22 @@ import (
 	specpkg "github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/spec"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/mapper"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/parser"
 )
 
 type Suggestion struct {
-	ID     string                 `json:"id" yaml:"id"`
-	Kind   domain.AntiPatternKind `json:"kind" yaml:"kind"`
-	Title  string                 `json:"title" yaml:"title"`
-	Bullets []string              `json:"bullets" yaml:"bullets"`
+	ID      string                 `json:"id" yaml:"id"`
+	Kind    domain.AntiPatternKind `json:"kind" yaml:"kind"`
+	Title   string                 `json:"title" yaml:"title"`
+	Bullets []string               `json:"bullets" yaml:"bullets"`
+
+	// PreviewFrom / PreviewTo preserve dependency direction for UI previews.
+	// Suggestion id uses sorted node lists; these optional fields keep caller → callee order.
+	PreviewFrom string `json:"preview_from,omitempty" yaml:"preview_from,omitempty"`
+	PreviewTo   string `json:"preview_to,omitempty" yaml:"preview_to,omitempty"`
+	// PreviewRemoveLeg is "top" or "bottom" for ping-pong bidirectional preview (which call is removed).
+	PreviewRemoveLeg string `json:"preview_remove_leg,omitempty" yaml:"preview_remove_leg,omitempty"`
 
 	AutoFixApplied bool     `json:"auto_fix_applied" yaml:"auto_fix_applied"`
 	AutoFixNotes   []string `json:"auto_fix_notes,omitempty" yaml:"auto_fix_notes,omitempty"`
@@ -82,9 +90,9 @@ func BuildSuggestions(g *domain.Graph, dets []domain.Detection) []Suggestion {
 		s := findStrategy(d.Kind)
 		if s == nil {
 			out = append(out, Suggestion{
-				ID:     key,
-				Kind:   d.Kind,
-				Title:  d.Title,
+				ID:      key,
+				Kind:    d.Kind,
+				Title:   d.Title,
 				Bullets: []string{"No suggestion strategy found for this anti-pattern yet."},
 			})
 			continue
@@ -157,6 +165,7 @@ func ApplyFixesYAMLBytesFiltered(yamlBytes []byte, g *domain.Graph, dets []domai
 	if err != nil {
 		return nil, nil, err
 	}
+	mapper.NormalizeYAMLSpecInPlace(specStruct)
 
 	tmp := make([]domain.Detection, 0, len(dets))
 	tmp = append(tmp, dets...)

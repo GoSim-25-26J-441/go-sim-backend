@@ -18,7 +18,7 @@ func (sharedDatabase) Suggest(g *domain.Graph, det domain.Detection) suggestion.
 	bullets := []string{
 		"Multiple services depend on the same database component.",
 		"Fix: split DB per bounded context or access via one owning service.",
-		"Auto-fix: create per-service DB nodes and retarget edges.",
+		"Auto-fix: creates per-service DB nodes, retargets dependencies, and removes the old shared DB entry from the spec when it becomes unused.",
 	}
 	return suggestion.Suggestion{Kind: det.Kind, Title: title, Bullets: bullets}
 }

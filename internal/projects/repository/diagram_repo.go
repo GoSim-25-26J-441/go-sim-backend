@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/ingest/mapper"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/utils"
 	"gopkg.in/yaml.v3"
@@ -219,7 +220,7 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 		default:
 			servicesSet[lbl] = struct{}{}
 			if nodeType != "" {
-				serviceTypes[lbl] = nodeType
+				serviceTypes[lbl] = mapper.CanonicalServiceTypeForYAML(nodeType)
 			}
 		}
 	}
@@ -248,10 +249,10 @@ func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	}
 
 	out := map[string]interface{}{
-		"services":       services,
-		"service_types":  serviceTypes,
-		"datastores":     datastores,
-		"dependencies":   deps,
+		"services":      services,
+		"service_types": serviceTypes,
+		"datastores":    datastores,
+		"dependencies":  deps,
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -280,10 +281,10 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 
 	// SpecSummaryJSON mirrors the JSON we store in spec_summary.
 	type SpecSummaryJSON struct {
-		Services      []string          `json:"services"`
-		ServiceTypes  map[string]string `json:"service_types"`
-		Datastores    []string          `json:"datastores"`
-		Dependencies  []string          `json:"dependencies"`
+		Services     []string          `json:"services"`
+		ServiceTypes map[string]string `json:"service_types"`
+		Datastores   []string          `json:"datastores"`
+		Dependencies []string          `json:"dependencies"`
 	}
 
 	var ss SpecSummaryJSON
@@ -309,17 +310,17 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 	// Full YAML structure: databases go under services with type: database; datastores stays empty.
 	type fullYAMLSpec struct {
 		APIs            []yamlAPI        `yaml:"apis"`
-		Configs          map[string]any       `yaml:"configs"`
-		Conflicts        []any                `yaml:"conflicts"`
-		Constraints      map[string]any       `yaml:"constraints"`
-		Datastores       []any                `yaml:"datastores"`
-		Dependencies     []yamlDependency     `yaml:"dependencies"`
-		DeploymentHints  map[string]any      `yaml:"deploymentHints"`
-		Gaps             []any                `yaml:"gaps"`
-		Metadata         map[string]any       `yaml:"metadata"`
-		Services         []yamlService        `yaml:"services"`
-		Topics           []any                `yaml:"topics"`
-		Trace            []any                `yaml:"trace"`
+		Configs         map[string]any   `yaml:"configs"`
+		Conflicts       []any            `yaml:"conflicts"`
+		Constraints     map[string]any   `yaml:"constraints"`
+		Datastores      []any            `yaml:"datastores"`
+		Dependencies    []yamlDependency `yaml:"dependencies"`
+		DeploymentHints map[string]any   `yaml:"deploymentHints"`
+		Gaps            []any            `yaml:"gaps"`
+		Metadata        map[string]any   `yaml:"metadata"`
+		Services        []yamlService    `yaml:"services"`
+		Topics          []any            `yaml:"topics"`
+		Trace           []any            `yaml:"trace"`
 	}
 
 	ys := fullYAMLSpec{
@@ -346,7 +347,7 @@ func generateYAMLFromSpecSummary(specText string) (string, error) {
 		typ := "service"
 		if ss.ServiceTypes != nil {
 			if t := strings.TrimSpace(ss.ServiceTypes[name]); t != "" {
-				typ = strings.ToLower(t)
+				typ = mapper.CanonicalServiceTypeForYAML(t)
 			}
 		}
 		ys.Services = append(ys.Services, yamlService{Name: name, Type: typ})

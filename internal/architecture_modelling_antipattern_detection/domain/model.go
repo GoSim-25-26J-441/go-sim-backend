@@ -7,6 +7,9 @@ type Node struct {
 	Name  string   `json:"name"`
 	Kind  NodeKind `json:"kind"`
 	Attrs Attrs    `json:"attrs,omitempty"`
+	// Optional canvas layout (persisted with version JSON for UI restore).
+	X *float64 `json:"x,omitempty"`
+	Y *float64 `json:"y,omitempty"`
 }
 
 type Edge struct {
