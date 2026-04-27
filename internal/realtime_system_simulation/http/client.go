@@ -126,6 +126,7 @@ var ErrScenarioValidationUnavailable = errors.New("scenario validation unavailab
 type ScenarioValidationIssue struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
+	Path      string `json:"path,omitempty"`
 	ServiceID string `json:"service_id,omitempty"`
 	Hint      string `json:"hint,omitempty"`
 }
@@ -160,9 +161,13 @@ func (e *ScenarioValidationError) Error() string {
 	return "invalid scenario_yaml"
 }
 
-// ValidateScenario calls simulation-core POST /v1/scenarios:validate (preflight: parse + resource init).
+// ValidateScenario calls simulation-core POST /v1/scenarios:validate (authoritative preflight).
+// Request JSON: {"scenario_yaml":"...","mode":"preflight"} — mode defaults to preflight when omitted by the engine.
 func (c *SimulationEngineClient) ValidateScenario(ctx context.Context, scenarioYAML string) (*ScenarioValidationResult, error) {
-	payload := map[string]string{"scenario_yaml": scenarioYAML}
+	payload := map[string]any{
+		"scenario_yaml": scenarioYAML,
+		"mode":          "preflight",
+	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrScenarioValidationUnavailable, err)
@@ -195,16 +200,21 @@ func (c *SimulationEngineClient) ValidateScenario(ctx context.Context, scenarioY
 			return &res, &ScenarioValidationError{Result: &res}
 		}
 		return &res, nil
-	case http.StatusBadRequest:
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		var res ScenarioValidationResult
 		if err := json.Unmarshal(body, &res); err != nil {
 			return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 		}
-		return &res, &ScenarioValidationError{Result: &res}
+		// Semantic / schema failures: engine returns structured body; surface as ScenarioValidationError (422 to clients).
+		if !res.Valid || len(res.Errors) > 0 {
+			return &res, &ScenarioValidationError{Result: &res}
+		}
+		return &res, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 	default:
 		if resp.StatusCode >= http.StatusInternalServerError {
 			return nil, fmt.Errorf("%w: engine returned status %d: %s", ErrScenarioValidationUnavailable, resp.StatusCode, strings.TrimSpace(string(body)))
 		}
+		// Non-validation 4xx (e.g. 404) — not user-fixable scenario shape; treat as gateway error for handlers.
 		return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 	}
 }
@@ -572,7 +582,7 @@ func (c *SimulationEngineClient) UpdateRunConfiguration(runID string, cfg *Updat
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("simulation engine returned status %d for configuration update: %s", resp.StatusCode, string(respBody))
+		return &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), respBody...)}
 	}
 
 	return nil
@@ -605,9 +615,32 @@ func (c *SimulationEngineClient) UpdateWorkloadRate(runID string, patternKey str
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+		return &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 	}
 	return nil
+}
+
+// GetRunConfiguration retrieves the current runtime configuration from simulation-core.
+// It proxies GET /v1/runs/{run_id}/configuration and returns raw JSON to avoid schema drift.
+func (c *SimulationEngineClient) GetRunConfiguration(runID string) (map[string]any, error) {
+	url := fmt.Sprintf("%s/v1/runs/%s/configuration", c.baseURL, runID)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal run configuration response: %w", err)
+	}
+	return out, nil
 }
 
 // StopRun stops a run in the simulation engine

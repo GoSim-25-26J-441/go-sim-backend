@@ -143,13 +143,23 @@ func TestCreateRunForProject_SaveScenarioTruePersistsEdited(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestCreateRunForProject_InvalidScenarioYAMLReturns400BeforeRun(t *testing.T) {
+func TestCreateRunForProject_InvalidScenarioYAMLRejectedByEngineBeforeRun(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var engineCalls int32
+	var validateCalls, runCalls int32
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&engineCalls, 1)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{}`))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			atomic.AddInt32(&validateCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"valid":false,"errors":[{"code":"PARSE","message":"invalid scenario"}],"warnings":[],"summary":{}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			atomic.AddInt32(&runCalls, 1)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-1"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer engine.Close()
 
@@ -168,13 +178,18 @@ func TestCreateRunForProject_InvalidScenarioYAMLReturns400BeforeRun(t *testing.T
 	router := gin.New()
 	router.POST("/projects/:project_id/runs", h.CreateRunForProject)
 
+	mock.ExpectQuery(`SELECT id FROM diagram_versions`).
+		WithArgs("dv-1", "project-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
+
 	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(`{"diagram_version_id":"dv-1","scenario_yaml":"hosts: []","duration_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-Id", "user-1")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, int32(0), atomic.LoadInt32(&engineCalls))
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	require.GreaterOrEqual(t, atomic.LoadInt32(&validateCalls), int32(1))
+	require.Equal(t, int32(0), atomic.LoadInt32(&runCalls))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

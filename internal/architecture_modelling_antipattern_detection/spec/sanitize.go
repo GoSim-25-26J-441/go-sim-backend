@@ -28,6 +28,30 @@ func cleanRef(s string) string {
 	return t
 }
 
+// canonicalServiceYAMLType normalizes services[].type for merge/sanitize (must stay in sync
+// with ingest/mapper normalizeType).
+func canonicalServiceYAMLType(t string) string {
+	t = strings.ToLower(strings.TrimSpace(t))
+	switch t {
+	case "", "svc", "microservice", "micro-service", "ms", "service":
+		return "service"
+	case "db", "datastore", "data_store", "data-store", "database":
+		return "database"
+	case "api_gateway", "api-gateway", "gateway", "bff":
+		return "api_gateway"
+	case "client":
+		return "client"
+	case "user_actor", "user-actor", "user", "actor":
+		return "user_actor"
+	case "event_topic", "event-topic", "topic":
+		return "event_topic"
+	case "external_system", "external-system", "external":
+		return "external_system"
+	default:
+		return "service"
+	}
+}
+
 func Sanitize(root map[string]any) {
 	if root == nil {
 		return
@@ -61,18 +85,12 @@ func Sanitize(root map[string]any) {
 				m["name"] = cleanRef(name)
 			}
 			if typ, ok := m["type"].(string); ok {
-				t := strings.ToLower(strings.TrimSpace(typ))
+				t := strings.TrimSpace(typ)
 				if t == "" {
-					t = "service"
+					m["type"] = "service"
+				} else {
+					m["type"] = canonicalServiceYAMLType(t)
 				}
-				if t == "db" || t == "datastore" || t == "database" {
-					t = "database"
-				} else if t != "api_gateway" && t != "api-gateway" && t != "gateway" && t != "bff" &&
-					t != "event_topic" && t != "event-topic" && t != "topic" &&
-					t != "external_system" && t != "client" && t != "user_actor" {
-					t = "service"
-				}
-				m["type"] = t
 			} else {
 				m["type"] = "service"
 			}

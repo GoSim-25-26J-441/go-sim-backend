@@ -368,3 +368,90 @@ func TestBuildSpecMetricsWorkloadFromScenarioAndMetrics_ServiceMetricsFallback(t
 	assert.InDelta(t, 3.6, mem, 0.01, "0.036 ratio should become 3.6%%")
 }
 
+func TestPersistRunMetrics_OrdinaryFallbackUsesParentRunIDCandidate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runID := "run-ordinary-1"
+	engineRunID := "engine-ordinary-1"
+	userID := "user-ordinary"
+
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/export":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "input": {
+    "scenario_yaml": "hosts:\n  - id: host-1\n    cores: 2\nservices:\n  - id: checkout\n    replicas: 1\n    model: cpu\n    endpoints:\n      - path: /read\n        mean_cpu_ms: 1\n        cpu_sigma_ms: 0\n        net_latency_ms: {mean: 1, sigma: 0.1}\n        downstream: []\nworkload:\n  - from: client\n    to: checkout:/read\n    arrival:\n      type: poisson\n      rate_rps: 10\n",
+    "duration_ms": 5000
+  },
+  "metrics": {
+    "throughput_rps": 10,
+    "cpu_utilization": 0.2,
+    "memory_utilization": 0.1
+  }
+}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/metrics/timeseries":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"run_id":"engine-ordinary-1","points":[]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/metrics":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"metrics":{"throughput_rps":10}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer engineServer.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value(int64(5000)),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectBegin()
+	mock.ExpectPrepare(`INSERT INTO simulation_candidates`).
+		ExpectExec().
+		WithArgs(
+			driver.Value(userID),
+			sqlmock.AnyArg(),
+			driver.Value(runID),
+			driver.Value(runID), // candidate_id must equal parent run_id for ordinary fallback
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value("scenario_yaml"),
+			driver.Value(""),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	h := &Handler{
+		engineClient: NewSimulationEngineClient(engineServer.URL),
+		db:           db,
+	}
+	run := &domain.SimulationRun{
+		RunID:          runID,
+		EngineRunID:    engineRunID,
+		UserID:         userID,
+		ProjectPublicID: "proj-ordinary",
+	}
+
+	h.persistRunMetrics(context.Background(), run, "", nil)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+

@@ -17,7 +17,7 @@ func (uiOrchestratorStrategy) Suggest(g *domain.Graph, det domain.Detection) sug
 		Bullets: []string{
 			"UI calls multiple backend services directly.",
 			"Fix: add a BFF (backend-for-frontend) or gateway so UI calls one endpoint.",
-			"Auto-fix: insert BFF node and reroute UI → targets through BFF.",
+			"Auto-fix: inserts a BFF node, adds UI → BFF, removes direct UI → backend edges, and adds BFF → each former target.",
 		},
 	}
 }

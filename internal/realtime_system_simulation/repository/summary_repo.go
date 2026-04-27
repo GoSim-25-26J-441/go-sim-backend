@@ -21,19 +21,36 @@ func NewSummaryRepository(db *sql.DB) *SummaryRepository {
 }
 
 // CreateOrUpdate creates or updates a simulation summary
-// Uses ON CONFLICT to upsert based on run_id
+// Uses ON CONFLICT to upsert based on run_id.
+// When summary.FinalConfig is nil, existing final_config in the DB is preserved on conflict;
+// new rows get final_config '{}' (column default semantics).
 func (r *SummaryRepository) CreateOrUpdate(summary *domain.SimulationSummary) error {
 	// Generate UUID if not provided
 	if summary.ID == "" {
 		summary.ID = uuid.New().String()
 	}
 
+	preserveFinal := summary.FinalConfig == nil
+	var finalJSON []byte
+	if !preserveFinal {
+		var err error
+		finalJSON, err = json.Marshal(summary.FinalConfig)
+		if err != nil {
+			return fmt.Errorf("marshal final_config: %w", err)
+		}
+	} else {
+		// Placeholder for SQL $10; not used when preserveFinal is true on conflict update.
+		finalJSON = []byte("{}")
+	}
+
 	query := `
 		INSERT INTO simulation_summaries (
-			id, run_id, engine_run_id, total_requests, total_errors, 
-			total_duration_ms, metrics, summary_data
+			id, run_id, engine_run_id, total_requests, total_errors,
+			total_duration_ms, metrics, summary_data, final_config
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+			CASE WHEN $9 THEN '{}'::jsonb ELSE $10::jsonb END
+		)
 		ON CONFLICT (run_id) DO UPDATE SET
 			engine_run_id = EXCLUDED.engine_run_id,
 			total_requests = EXCLUDED.total_requests,
@@ -41,6 +58,7 @@ func (r *SummaryRepository) CreateOrUpdate(summary *domain.SimulationSummary) er
 			total_duration_ms = EXCLUDED.total_duration_ms,
 			metrics = EXCLUDED.metrics,
 			summary_data = EXCLUDED.summary_data,
+			final_config = CASE WHEN $9 THEN simulation_summaries.final_config ELSE $10::jsonb END,
 			updated_at = NOW()
 		RETURNING created_at, updated_at
 	`
@@ -79,6 +97,8 @@ func (r *SummaryRepository) CreateOrUpdate(summary *domain.SimulationSummary) er
 		totalDuration,
 		metricsJSON,
 		summaryDataJSON,
+		preserveFinal,
+		finalJSON,
 	).Scan(&createdAt, &updatedAt)
 
 	if err != nil {
@@ -95,13 +115,14 @@ func (r *SummaryRepository) CreateOrUpdate(summary *domain.SimulationSummary) er
 func (r *SummaryRepository) GetByRunID(runID string) (*domain.SimulationSummary, error) {
 	query := `
 		SELECT id, run_id, engine_run_id, total_requests, total_errors,
-		       total_duration_ms, metrics, summary_data, created_at, updated_at
+		       total_duration_ms, metrics, summary_data,
+		       COALESCE(final_config, '{}'::jsonb), created_at, updated_at
 		FROM simulation_summaries
 		WHERE run_id = $1
 	`
 
 	var summary domain.SimulationSummary
-	var metricsJSON, summaryDataJSON []byte
+	var metricsJSON, summaryDataJSON, finalConfigJSON []byte
 	var totalRequests, totalErrors, totalDuration sql.NullInt64
 
 	err := r.db.QueryRow(query, runID).Scan(
@@ -113,6 +134,7 @@ func (r *SummaryRepository) GetByRunID(runID string) (*domain.SimulationSummary,
 		&totalDuration,
 		&metricsJSON,
 		&summaryDataJSON,
+		&finalConfigJSON,
 		&summary.CreatedAt,
 		&summary.UpdatedAt,
 	)
@@ -150,6 +172,16 @@ func (r *SummaryRepository) GetByRunID(runID string) (*domain.SimulationSummary,
 		}
 	} else {
 		summary.SummaryData = make(map[string]interface{})
+	}
+
+	summary.FinalConfig = nil
+	if len(finalConfigJSON) > 0 {
+		if err := json.Unmarshal(finalConfigJSON, &summary.FinalConfig); err != nil {
+			summary.FinalConfig = nil
+		}
+	}
+	if summary.FinalConfig == nil {
+		summary.FinalConfig = make(map[string]interface{})
 	}
 
 	return &summary, nil

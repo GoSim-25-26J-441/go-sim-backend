@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,11 +64,11 @@ type diagramDependency struct {
 // diagramEnvelope is the full JSON shape stored in diagram_versions.diagram_json.
 // It keeps the original graph/detections fields and adds the requested structure.
 type diagramEnvelope struct {
-	Graph        json.RawMessage   `json:"graph,omitempty"`
-	Detections   json.RawMessage   `json:"detections,omitempty"`
-	Services     []diagramService  `json:"services"`
-	Datastores   []diagramDatastore `json:"datastores"`
-	Topics       []diagramTopic    `json:"topics"`
+	Graph        json.RawMessage     `json:"graph,omitempty"`
+	Detections   json.RawMessage     `json:"detections,omitempty"`
+	Services     []diagramService    `json:"services"`
+	Datastores   []diagramDatastore  `json:"datastores"`
+	Topics       []diagramTopic      `json:"topics"`
 	Dependencies []diagramDependency `json:"dependencies"`
 }
 
@@ -114,6 +115,25 @@ func buildDiagramEnvelope(graphJSON, detectionsJSON []byte) (*diagramEnvelope, e
 			env.Services = append(env.Services, diagramService{
 				Name: n.Name,
 				Kind: "gateway",
+			})
+		case domain.NodeClient:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "client",
+			})
+		case domain.NodeUserActor:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "user_actor",
+			})
+		case domain.NodeExternalSystem:
+			env.Services = append(env.Services, diagramService{
+				Name: n.Name,
+				Kind: "external_system",
+			})
+		case domain.NodeEventTopic:
+			env.Topics = append(env.Topics, diagramTopic{
+				Name: n.Name,
 			})
 		case domain.NodeService:
 			env.Services = append(env.Services, diagramService{
@@ -211,6 +231,37 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 		return nil, err
 	}
 
+	// Carry over diagram metadata from the latest existing version (any source), same as when
+	// a diagram is saved from the canvas/chat flow — avoids empty image_object_key / spec_summary / created_by.
+	var prevImg sql.NullString
+	var prevSpec []byte
+	var prevCreatedBy sql.NullString
+	errPrev := r.db.QueryRow(`
+		SELECT image_object_key, spec_summary, created_by
+		FROM diagram_versions
+		WHERE user_firebase_uid = $1 AND project_public_id = $2
+		ORDER BY version_number DESC
+		LIMIT 1
+	`, userID, chatID).Scan(&prevImg, &prevSpec, &prevCreatedBy)
+	if errPrev != nil && errPrev != sql.ErrNoRows {
+		return nil, errPrev
+	}
+
+	createdBy := userID
+	if prevCreatedBy.Valid && strings.TrimSpace(prevCreatedBy.String) != "" {
+		createdBy = strings.TrimSpace(prevCreatedBy.String)
+	}
+
+	imgKey := ""
+	if prevImg.Valid {
+		imgKey = strings.TrimSpace(prevImg.String)
+	}
+
+	specJSON := ""
+	if len(prevSpec) > 0 {
+		specJSON = strings.TrimSpace(string(prevSpec))
+	}
+
 	id := uuid.New().String()
 	_, err = r.db.Exec(`
 		INSERT INTO diagram_versions (
@@ -222,10 +273,18 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 			title,
 			yaml_content,
 			diagram_json,
-			dot_content
+			dot_content,
+			image_object_key,
+			spec_summary,
+			created_by
 		)
-		VALUES ($1, $2, $3, $4, 'amg_apd', $5, $6, $7, $8)
-	`, id, userID, chatID, nextVersion, title, yamlContent, diagramJSON, dotContent)
+		VALUES (
+			$1, $2, $3, $4, 'amg_apd', $5, $6, $7, $8,
+			NULLIF(TRIM($9), ''),
+			CASE WHEN TRIM(COALESCE($10::text, '')) = '' THEN NULL ELSE $10::jsonb END,
+			$11
+		)
+	`, id, userID, chatID, nextVersion, title, yamlContent, diagramJSON, dotContent, imgKey, specJSON, createdBy)
 	if err != nil {
 		return nil, err
 	}

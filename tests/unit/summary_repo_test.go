@@ -52,6 +52,8 @@ func TestSummaryRepository_CreateOrUpdate(t *testing.T) {
 				sqlmock.AnyArg(), // total_duration_ms
 				sqlmock.AnyArg(), // metrics JSONB
 				sqlmock.AnyArg(), // summary_data JSONB
+				true,               // preserve final_config (nil FinalConfig)
+				[]byte("{}"),
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"created_at", "updated_at"}).
 				AddRow(time.Now(), time.Now()))
@@ -84,6 +86,8 @@ func TestSummaryRepository_CreateOrUpdate(t *testing.T) {
 				sqlmock.AnyArg(),
 				sqlmock.AnyArg(),
 				sqlmock.AnyArg(),
+				true,
+				[]byte("{}"),
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"created_at", "updated_at"}).
 				AddRow(time.Now(), time.Now()))
@@ -107,17 +111,18 @@ func TestSummaryRepository_GetByRunID(t *testing.T) {
 			WithArgs(runID).
 			WillReturnRows(sqlmock.NewRows([]string{
 				"id", "run_id", "engine_run_id", "total_requests", "total_errors",
-				"total_duration_ms", "metrics", "summary_data", "created_at", "updated_at",
+				"total_duration_ms", "metrics", "summary_data", "final_config", "created_at", "updated_at",
 			}).
 				AddRow(
 					"uuid-123",
 					"run-123",
 					"engine-123",
-					1000,
-					10,
-					120000,
-					metricsJSON,
-					summaryDataJSON,
+					sql.NullInt64{Int64: 1000, Valid: true},
+					sql.NullInt64{Int64: 10, Valid: true},
+					sql.NullInt64{Int64: 120000, Valid: true},
+					[]byte(metricsJSON),
+					[]byte(summaryDataJSON),
+					[]byte(`{}`),
 					time.Now(),
 					time.Now(),
 				))
