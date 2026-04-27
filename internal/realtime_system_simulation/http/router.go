@@ -9,6 +9,7 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	rg.GET("/projects/:project_id/runs", h.ListRunsForProject)
 	rg.GET("/projects/:project_id/diagram-versions/:diagram_version_id/scenario", h.GetDiagramVersionScenario)
 	rg.PUT("/projects/:project_id/diagram-versions/:diagram_version_id/scenario", h.PutDiagramVersionScenario)
+	rg.POST("/projects/:project_id/diagram-versions/:diagram_version_id/scenario/validate", h.PostValidateDiagramVersionScenario)
 	rg.POST("/projects/:project_id/diagram-versions/:diagram_version_id/scenario/regenerate", h.PostRegenerateDiagramVersionScenario)
 
 	// User-level routes
