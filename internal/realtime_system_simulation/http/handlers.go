@@ -76,6 +76,38 @@ func persistedTimeSeriesPointFlat(p simrepo.TimeSeriesPoint) gin.H {
 	return h
 }
 
+func buildOptimizationMetadata(opt OptimizationConfig, hasOpt, batchOpt, online bool) map[string]interface{} {
+	if !hasOpt {
+		return nil
+	}
+	out := map[string]interface{}{
+		"objective":                    opt.Objective,
+		"optimization_target_primary":  opt.OptimizationTargetPrimary,
+		"target_p95_latency_ms":        opt.TargetP95LatencyMs,
+		"target_util_high":             opt.TargetUtilHigh,
+		"target_util_low":              opt.TargetUtilLow,
+		"max_controller_steps":         opt.MaxControllerSteps,
+		"max_online_duration_ms":       opt.MaxOnlineDurationMs,
+		"max_noop_intervals":           opt.MaxNoopIntervals,
+		"lease_ttl_ms":                 opt.LeaseTTLMs,
+		"scale_down_cooldown_ms":       opt.ScaleDownCooldownMs,
+		"drain_timeout_ms":             opt.DrainTimeoutMs,
+		"memory_downsize_headroom_mb":  opt.MemoryDownsizeHeadroomMB,
+		"scale_down_cpu_util_max":      opt.ScaleDownCPUUtilMax,
+		"scale_down_mem_util_max":      opt.ScaleDownMemUtilMax,
+		"scale_down_host_cpu_util_max": opt.ScaleDownHostCPUUtilMax,
+	}
+	if opt.AllowUnboundedOnline != nil {
+		out["allow_unbounded_online"] = *opt.AllowUnboundedOnline
+	}
+	if batchOpt {
+		out["mode"] = "batch"
+	} else if online {
+		out["mode"] = "online"
+	}
+	return out
+}
+
 // CreateRunForProject creates a new simulation run for a project (project_id in path)
 func (h *Handler) CreateRunForProject(c *gin.Context) {
 	projectID := c.Param("project_id")
@@ -108,6 +140,12 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	normalizedOptPayload, hasOpt, err := NormalizeOptimizationPayload(body.Optimization)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
+		return
+	}
+	body.Optimization = normalizedOptPayload
 	opt, hasOpt, err := UnmarshalOptimizationConfig(body.Optimization)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
@@ -221,12 +259,20 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		return
 	}
 
+	online := hasOpt && opt.Online
+	batchOpt := hasOpt && batchOptimizationSet(opt.Batch)
 	meta := cloneMetadata(body.Metadata)
 	if resolvedDiagramVersionID != "" {
 		if meta == nil {
 			meta = make(map[string]interface{})
 		}
 		meta["diagram_version_id"] = resolvedDiagramVersionID
+	}
+	if hasOpt {
+		if meta == nil {
+			meta = make(map[string]interface{})
+		}
+		meta["optimization_config"] = buildOptimizationMetadata(opt, hasOpt, batchOpt, online)
 	}
 	req := &domain.CreateRunRequest{
 		UserID:          userID,
@@ -240,8 +286,6 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		return
 	}
 
-	online := hasOpt && opt.Online
-	batchOpt := hasOpt && batchOptimizationSet(opt.Batch)
 	var optimizationGuards []string
 
 	if effectiveScenarioYAML != "" {
@@ -401,6 +445,12 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	normalizedOptPayload, hasOpt, err := NormalizeOptimizationPayload(body.Optimization)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
+		return
+	}
+	body.Optimization = normalizedOptPayload
 	opt, hasOpt, err := UnmarshalOptimizationConfig(body.Optimization)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
@@ -437,6 +487,14 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		UserID:   userID,
 		Metadata: body.Metadata,
 	}
+	online := hasOpt && opt.Online
+	batchOpt := hasOpt && batchOptimizationSet(opt.Batch)
+	if hasOpt {
+		if req.Metadata == nil {
+			req.Metadata = make(map[string]interface{})
+		}
+		req.Metadata["optimization_config"] = buildOptimizationMetadata(opt, hasOpt, batchOpt, online)
+	}
 
 	run, err := h.simService.CreateRun(req)
 	if err != nil {
@@ -448,8 +506,6 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	// If scenario_yaml is provided, create run in simulation engine.
 	// For online optimization runs, duration_ms can be zero; the controller keeps the run alive.
 	// For batch optimization, duration may be zero when the engine drives evaluation via batch settings.
-	online := hasOpt && opt.Online
-	batchOpt := hasOpt && batchOptimizationSet(opt.Batch)
 	var optimizationGuards []string
 	if body.ScenarioYAML != "" {
 		// Generate unique callback URL per run (includes run_id in path for identification)
@@ -1109,6 +1165,14 @@ func (h *Handler) UpdateConfiguration(c *gin.Context) {
 
 	if err := h.engineClient.UpdateRunConfiguration(run.EngineRunID, &body); err != nil {
 		log.Printf("Failed to update configuration for run_id=%s: %v", runID, err)
+		var eng *EngineHTTPError
+		if errors.As(err, &eng) {
+			c.JSON(HTTPStatusForEngineRuntimeMutation(eng.StatusCode), gin.H{
+				"error":   ExtractEngineErrorMessage(eng.Body),
+				"details": string(eng.Body),
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to update configuration in simulation engine: " + err.Error(),
 		})
@@ -1119,6 +1183,53 @@ func (h *Handler) UpdateConfiguration(c *gin.Context) {
 		"message": "configuration updated successfully",
 		"run_id":  runID,
 	})
+}
+
+// GetConfiguration fetches the runtime configuration for a run from simulation-core.
+func (h *Handler) GetConfiguration(c *gin.Context) {
+	runID := c.Param("id")
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run ID is required"})
+		return
+	}
+	run, err := h.simService.GetRun(runID)
+	if err != nil {
+		if err == domain.ErrRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run"})
+		return
+	}
+	if run.EngineRunID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run has no engine association"})
+		return
+	}
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+	}
+	if userID == "" || run.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+	cfg, err := h.engineClient.GetRunConfiguration(run.EngineRunID)
+	if err != nil {
+		var eng *EngineHTTPError
+		if errors.As(err, &eng) {
+			c.JSON(HTTPStatusForEngineRuntimeMutation(eng.StatusCode), gin.H{
+				"error":   ExtractEngineErrorMessage(eng.Body),
+				"details": string(eng.Body),
+			})
+			return
+		}
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":   "failed to fetch configuration from simulation engine",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, cfg)
 }
 
 // RenewOnlineLease proxies POST /v1/runs/{id}/online/renew-lease to simulation-core to extend the wall-clock lease for long online runs.
@@ -1216,6 +1327,14 @@ func (h *Handler) UpdateWorkload(c *gin.Context) {
 
 	if err := h.engineClient.UpdateWorkloadRate(run.EngineRunID, body.PatternKey, body.RateRPS); err != nil {
 		log.Printf("Failed to update workload for run_id=%s: %v", runID, err)
+		var eng *EngineHTTPError
+		if errors.As(err, &eng) {
+			c.JSON(HTTPStatusForEngineRuntimeMutation(eng.StatusCode), gin.H{
+				"error":   ExtractEngineErrorMessage(eng.Body),
+				"details": string(eng.Body),
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to update workload in simulation engine: " + err.Error(),
 		})

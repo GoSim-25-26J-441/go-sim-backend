@@ -15,6 +15,7 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	rg.POST("/runs", h.CreateRun)
 	rg.GET("/runs", h.ListRuns)
 	rg.GET("/runs/:id", h.GetRun)
+	rg.GET("/runs/:id/configuration", h.GetConfiguration)
 	rg.GET("/runs/:id/candidates", h.GetRunCandidates)
 	rg.GET("/runs/:id/metrics/timeseries", h.GetRunPersistedMetricsTimeSeries)
 	rg.GET("/runs/:id/metrics", h.GetRunMetrics)

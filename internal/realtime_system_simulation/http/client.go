@@ -582,7 +582,7 @@ func (c *SimulationEngineClient) UpdateRunConfiguration(runID string, cfg *Updat
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("simulation engine returned status %d for configuration update: %s", resp.StatusCode, string(respBody))
+		return &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), respBody...)}
 	}
 
 	return nil
@@ -615,9 +615,32 @@ func (c *SimulationEngineClient) UpdateWorkloadRate(runID string, patternKey str
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("simulation engine returned status %d: %s", resp.StatusCode, string(body))
+		return &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
 	}
 	return nil
+}
+
+// GetRunConfiguration retrieves the current runtime configuration from simulation-core.
+// It proxies GET /v1/runs/{run_id}/configuration and returns raw JSON to avoid schema drift.
+func (c *SimulationEngineClient) GetRunConfiguration(runID string) (map[string]any, error) {
+	url := fmt.Sprintf("%s/v1/runs/%s/configuration", c.baseURL, runID)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call simulation engine: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &EngineHTTPError{StatusCode: resp.StatusCode, Body: append([]byte(nil), body...)}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal run configuration response: %w", err)
+	}
+	return out, nil
 }
 
 // StopRun stops a run in the simulation engine
