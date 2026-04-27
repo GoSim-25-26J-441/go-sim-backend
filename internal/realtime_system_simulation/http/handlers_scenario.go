@@ -280,6 +280,52 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 	})
 }
 
+// PostValidateDiagramVersionScenario validates provided scenario YAML for a diagram version without persisting any changes.
+func (h *Handler) PostValidateDiagramVersionScenario(c *gin.Context) {
+	projectID := c.Param("project_id")
+	diagramVersionID := c.Param("diagram_version_id")
+	if projectID == "" || diagramVersionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id and diagram_version_id are required"})
+		return
+	}
+	userID := c.GetString("firebase_uid")
+	if userID == "" {
+		userID = c.GetHeader("X-User-Id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+	}
+	var body struct {
+		ScenarioYAML string `json:"scenario_yaml"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(body.ScenarioYAML) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required"})
+		return
+	}
+	if h.scenarioCacheRepo == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "scenario cache not configured"})
+		return
+	}
+	if err := h.scenarioCacheRepo.VerifyDiagramVersionForProject(c.Request.Context(), userID, projectID, diagramVersionID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid diagram_version_id for project/user"})
+		return
+	}
+	valRes, err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML)
+	if err != nil {
+		if h.writeScenarioValidationError(c, err) {
+			return
+		}
+		serverScenarioError(c, "scenario validation failed", err)
+		return
+	}
+	c.JSON(http.StatusOK, valRes)
+}
+
 // PostRegenerateDiagramVersionScenario regenerates scenario YAML from stored AMG/APD YAML.
 func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 	projectID := c.Param("project_id")
