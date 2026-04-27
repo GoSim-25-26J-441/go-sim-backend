@@ -887,7 +887,8 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				Valid:  run.ProjectPublicID != "",
 			},
 			RunID:       run.RunID,
-			CandidateID: "scenario",
+			// Ordinary / online fallback: parent run itself is the single candidate.
+			CandidateID: run.RunID,
 			Spec:        spec,
 			Metrics:     metricsOut,
 			SimWorkload: simWorkload,
