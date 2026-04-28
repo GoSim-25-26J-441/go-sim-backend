@@ -183,7 +183,7 @@ func main() {
 	}
 
 	// Initialize simulation module (required for both user routes and callback routes)
-	simRunRepo := simrepo.NewRunRepository(redisClient)
+	simRunRepo := simrepo.NewRunRepositoryWithDB(redisClient, db)
 	simSvc := simservice.NewSimulationService(simRunRepo)
 	simHandler := simhttp.New(
 		simSvc,

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -20,9 +21,10 @@ const (
 	runTTL                = 7 * 24 * time.Hour // TTL for run data (7 days)
 )
 
-// RunRepository handles Redis operations for simulation runs
+// RunRepository handles durable simulation run metadata and Redis run events/cache.
 type RunRepository struct {
 	client *redis.Client
+	db     *sql.DB
 	ctx    context.Context
 }
 
@@ -30,6 +32,16 @@ type RunRepository struct {
 func NewRunRepository(client *redis.Client) *RunRepository {
 	return &RunRepository{
 		client: client,
+		ctx:    context.Background(),
+	}
+}
+
+// NewRunRepositoryWithDB creates a run repository that persists run metadata in
+// PostgreSQL while keeping Redis as a cache and Pub/Sub transport.
+func NewRunRepositoryWithDB(client *redis.Client, db *sql.DB) *RunRepository {
+	return &RunRepository{
+		client: client,
+		db:     db,
 		ctx:    context.Background(),
 	}
 }
@@ -46,6 +58,16 @@ func (r *RunRepository) Create(run *domain.SimulationRun) error {
 		run.UpdatedAt = time.Now()
 	}
 
+	if r.db != nil {
+		if err := r.upsertRunInPostgres(r.ctx, run); err != nil {
+			return err
+		}
+	}
+
+	return r.createRunInRedis(run)
+}
+
+func (r *RunRepository) createRunInRedis(run *domain.SimulationRun) error {
 	runKey := r.runKey(run.RunID)
 	userRunSetKey := r.userRunSetKey(run.UserID)
 
@@ -84,6 +106,16 @@ func (r *RunRepository) Create(run *domain.SimulationRun) error {
 
 // GetByRunID retrieves a run by its ID
 func (r *RunRepository) GetByRunID(runID string) (*domain.SimulationRun, error) {
+	if r.db != nil {
+		run, err := r.getRunFromPostgres(r.ctx, `WHERE run_id = $1`, runID)
+		if err == nil {
+			return run, nil
+		}
+		if err != domain.ErrRunNotFound {
+			return nil, err
+		}
+	}
+
 	runKey := r.runKey(runID)
 
 	data, err := r.client.Get(r.ctx, runKey).Result()
@@ -104,6 +136,16 @@ func (r *RunRepository) GetByRunID(runID string) (*domain.SimulationRun, error) 
 
 // GetByEngineRunID retrieves a run by the engine's run ID
 func (r *RunRepository) GetByEngineRunID(engineRunID string) (*domain.SimulationRun, error) {
+	if r.db != nil {
+		run, err := r.getRunFromPostgres(r.ctx, `WHERE engine_run_id = $1`, engineRunID)
+		if err == nil {
+			return run, nil
+		}
+		if err != domain.ErrRunNotFound {
+			return nil, err
+		}
+	}
+
 	engineKey := r.engineRunIDKey(engineRunID)
 
 	// Get our run ID from the engine run ID index
@@ -127,6 +169,12 @@ func (r *RunRepository) Update(run *domain.SimulationRun) error {
 	existing, err := r.GetByRunID(run.RunID)
 	if err != nil {
 		return err
+	}
+
+	if r.db != nil {
+		if err := r.upsertRunInPostgres(r.ctx, run); err != nil {
+			return err
+		}
 	}
 
 	runKey := r.runKey(run.RunID)
@@ -171,6 +219,10 @@ func (r *RunRepository) Update(run *domain.SimulationRun) error {
 
 // ListByUserID retrieves all run IDs for a user
 func (r *RunRepository) ListByUserID(userID string) ([]string, error) {
+	if r.db != nil {
+		return r.listRunIDsFromPostgres(r.ctx, `WHERE user_id = $1`, userID)
+	}
+
 	userRunSetKey := r.userRunSetKey(userID)
 
 	runIDs, err := r.client.SMembers(r.ctx, userRunSetKey).Result()
@@ -183,6 +235,10 @@ func (r *RunRepository) ListByUserID(userID string) ([]string, error) {
 
 // ListByProjectID retrieves all run IDs for a project
 func (r *RunRepository) ListByProjectID(projectPublicID string) ([]string, error) {
+	if r.db != nil {
+		return r.listRunIDsFromPostgres(r.ctx, `WHERE project_public_id = $1`, projectPublicID)
+	}
+
 	projectRunSetKey := r.projectRunSetKey(projectPublicID)
 
 	runIDs, err := r.client.SMembers(r.ctx, projectRunSetKey).Result()
@@ -224,7 +280,137 @@ func (r *RunRepository) Delete(runID string) error {
 		return fmt.Errorf("failed to delete run: %w", err)
 	}
 
+	if r.db != nil {
+		if _, err := r.db.ExecContext(r.ctx, `DELETE FROM simulation_runs WHERE run_id = $1`, runID); err != nil {
+			return fmt.Errorf("failed to delete run from postgres: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func (r *RunRepository) upsertRunInPostgres(ctx context.Context, run *domain.SimulationRun) error {
+	if r.db == nil {
+		return nil
+	}
+
+	metadata := run.Metadata
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal run metadata: %w", err)
+	}
+
+	_, err = r.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_runs (
+			run_id, user_id, project_public_id, engine_run_id, status,
+			created_at, updated_at, completed_at, metadata
+		)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, $8, $9::jsonb)
+		ON CONFLICT (run_id) DO UPDATE SET
+			user_id = COALESCE(EXCLUDED.user_id, simulation_runs.user_id),
+			project_public_id = EXCLUDED.project_public_id,
+			engine_run_id = COALESCE(EXCLUDED.engine_run_id, simulation_runs.engine_run_id),
+			status = EXCLUDED.status,
+			updated_at = EXCLUDED.updated_at,
+			completed_at = EXCLUDED.completed_at,
+			metadata = EXCLUDED.metadata`,
+		run.RunID,
+		run.UserID,
+		run.ProjectPublicID,
+		run.EngineRunID,
+		run.Status,
+		run.CreatedAt,
+		run.UpdatedAt,
+		run.CompletedAt,
+		string(metadataJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert run in postgres: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RunRepository) getRunFromPostgres(ctx context.Context, where string, arg interface{}) (*domain.SimulationRun, error) {
+	query := fmt.Sprintf(
+		`SELECT run_id,
+			COALESCE(user_id, ''),
+			COALESCE(project_public_id, ''),
+			COALESCE(engine_run_id, ''),
+			COALESCE(status, $2),
+			created_at,
+			COALESCE(updated_at, created_at),
+			completed_at,
+			COALESCE(metadata, '{}'::jsonb)
+		FROM simulation_runs
+		%s`,
+		where,
+	)
+
+	var run domain.SimulationRun
+	var metadataJSON []byte
+	err := r.db.QueryRowContext(ctx, query, arg, domain.StatusPending).Scan(
+		&run.RunID,
+		&run.UserID,
+		&run.ProjectPublicID,
+		&run.EngineRunID,
+		&run.Status,
+		&run.CreatedAt,
+		&run.UpdatedAt,
+		&run.CompletedAt,
+		&metadataJSON,
+	)
+	if err == sql.ErrNoRows {
+		return nil, domain.ErrRunNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get run from postgres: %w", err)
+	}
+
+	if len(metadataJSON) > 0 {
+		if err := json.Unmarshal(metadataJSON, &run.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal run metadata: %w", err)
+		}
+	}
+	if run.Metadata == nil {
+		run.Metadata = map[string]interface{}{}
+	}
+
+	return &run, nil
+}
+
+func (r *RunRepository) listRunIDsFromPostgres(ctx context.Context, where string, arg interface{}) ([]string, error) {
+	query := fmt.Sprintf(
+		`SELECT run_id
+		FROM simulation_runs
+		%s
+		ORDER BY created_at DESC`,
+		where,
+	)
+
+	rows, err := r.db.QueryContext(ctx, query, arg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runs from postgres: %w", err)
+	}
+	defer rows.Close()
+
+	var runIDs []string
+	for rows.Next() {
+		var runID string
+		if err := rows.Scan(&runID); err != nil {
+			return nil, fmt.Errorf("failed to scan run ID from postgres: %w", err)
+		}
+		runIDs = append(runIDs, runID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate postgres run IDs: %w", err)
+	}
+
+	return runIDs, nil
 }
 
 // Helper methods for key generation
