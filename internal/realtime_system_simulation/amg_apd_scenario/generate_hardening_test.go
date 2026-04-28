@@ -224,6 +224,86 @@ configs:
 	}
 }
 
+func TestGenerate_IgnoresExternalClientDependencies(t *testing.T) {
+	amg := []byte(`services:
+  - name: gateway-1
+    type: gateway
+  - name: service-1
+    type: service
+  - name: service-2
+    type: service
+  - name: client-1
+    type: client
+  - name: db-1
+    type: database
+  - name: db-2
+    type: database
+dependencies:
+  - from: client-1
+    to: gateway-1
+    kind: rest
+    sync: true
+  - from: gateway-1
+    to: service-1
+    kind: rest
+    sync: true
+  - from: service-1
+    to: db-1
+    kind: rest
+    sync: true
+  - from: gateway-1
+    to: service-2
+    kind: rest
+    sync: true
+  - from: service-2
+    to: db-2
+    kind: rest
+    sync: true
+configs:
+  slo:
+    target_rps: 180
+`)
+	sc, _, err := GenerateFromAMGAPDYAML(amg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.Workload[0].To != "gateway-1:/ingress" {
+		t.Fatalf("expected workload to gateway-1:/ingress, got %q", sc.Workload[0].To)
+	}
+
+	byID := map[string]ServiceDoc{}
+	for _, s := range sc.Services {
+		byID[s.ID] = s
+	}
+	if _, ok := byID["client-1"]; ok {
+		t.Fatal("external client must not be generated as a simulated service")
+	}
+	gw, ok := byID["gateway-1"]
+	if !ok {
+		t.Fatal("missing gateway-1")
+	}
+	if gw.Kind != "api_gateway" {
+		t.Fatalf("expected gateway-1 to be api_gateway, got %q", gw.Kind)
+	}
+	if len(gw.Endpoints) != 1 || gw.Endpoints[0].Path != "/ingress" {
+		t.Fatalf("expected gateway-1 to expose only /ingress, got %#v", gw.Endpoints)
+	}
+
+	var downstreams []string
+	for _, ep := range gw.Endpoints {
+		for _, d := range ep.Downstream {
+			downstreams = append(downstreams, d.To)
+		}
+	}
+	got := strings.Join(downstreams, ",")
+	if !strings.Contains(got, "service-1:/read") || !strings.Contains(got, "service-2:/read") {
+		t.Fatalf("expected gateway downstreams to service reads, got %q", got)
+	}
+	if strings.Contains(got, "gateway-1:/read") {
+		t.Fatalf("must not generate gateway self/downstream read target, got %q", got)
+	}
+}
+
 func TestDatabaseVsAPIGateway_ModelAndEndpoints(t *testing.T) {
 	amg := []byte(`services:
   - id: db

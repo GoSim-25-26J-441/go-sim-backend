@@ -63,6 +63,7 @@ func GenerateFromAMGAPDYAML(amgYAML []byte) (*ScenarioDoc, []string, error) {
 	}
 
 	byID := make(map[string]svcInfo)
+	externalClients := make(map[string]struct{})
 	order := make([]string, 0, len(servicesRaw))
 	seen := make(map[string]struct{})
 	for i, s := range servicesRaw {
@@ -81,6 +82,10 @@ func GenerateFromAMGAPDYAML(amgYAML []byte) (*ScenarioDoc, []string, error) {
 		seen[id] = struct{}{}
 		typ := strings.ToLower(firstStringField(sm, "type", "kind"))
 		role := strings.ToLower(firstStringField(sm, "role"))
+		if isExternalClient(typ, role) {
+			externalClients[id] = struct{}{}
+			continue
+		}
 		isDB := strings.Contains(typ, "database") || strings.Contains(typ, "datastore") ||
 			strings.Contains(typ, "postgres") || strings.Contains(typ, "mysql") ||
 			strings.Contains(typ, "db")
@@ -164,6 +169,9 @@ func GenerateFromAMGAPDYAML(amgYAML []byte) (*ScenarioDoc, []string, error) {
 			from := normalizeID(firstStringField(dm, "from"))
 			to := normalizeID(firstStringField(dm, "to"))
 			if from == "" || to == "" {
+				continue
+			}
+			if _, isClient := externalClients[from]; isClient {
 				continue
 			}
 			_, fromOK := byID[from]
@@ -296,6 +304,10 @@ func classifyService(typ, role, id string, isDB, isQueue, isTopic, gwShape, name
 	default:
 		return "service", "", false
 	}
+}
+
+func isExternalClient(typ, role string) bool {
+	return typ == "client" || typ == "external_client" || role == "client"
 }
 
 func defaultScaling(simKind string) *ScalingDoc {
