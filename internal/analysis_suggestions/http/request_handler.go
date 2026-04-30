@@ -143,6 +143,9 @@ type CreateDesignRequestBody struct {
 	ProjectID string          `json:"project_id,omitempty"`
 	RunID     string          `json:"run_id,omitempty"`
 	Design    json.RawMessage `json:"design"`
+	Simulation struct {
+		Nodes int `json:"nodes"`
+	} `json:"simulation,omitempty"`
 }
 
 func (h *RequestHandler) CreateDesignRequest(c *gin.Context) {
@@ -156,9 +159,14 @@ func (h *RequestHandler) CreateDesignRequest(c *gin.Context) {
 		return
 	}
 
+	simulationNodes := 0
+	if body.Simulation.Nodes >= 1 {
+		simulationNodes = body.Simulation.Nodes
+	}
+
 	reqEnvelope := map[string]any{
 		"design":     json.RawMessage(body.Design),
-		"simulation": map[string]any{"nodes": 0},
+		"simulation": map[string]any{"nodes": simulationNodes},
 		"candidates": []any{},
 	}
 	reqJSON, err := json.Marshal(reqEnvelope)
@@ -262,11 +270,15 @@ LIMIT 1;
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		response := gin.H{
 			"user_id":    r.UserID,
 			"project_id": r.ProjectID,
 			"design":     json.RawMessage(design),
-		})
+		}
+		if simulation, ok := reqEnvelope["simulation"]; ok {
+			response["simulation"] = json.RawMessage(simulation)
+		}
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
