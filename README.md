@@ -6,6 +6,7 @@ A Go-based simulation backend service.
 
 ### Prerequisites
 
+
 - Go 1.25.1 or higher
 
 ### Running the Application
