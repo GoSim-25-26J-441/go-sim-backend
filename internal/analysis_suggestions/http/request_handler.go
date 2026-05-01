@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/rules"
 	"github.com/gin-gonic/gin"
 )
 
@@ -143,6 +144,21 @@ type CreateDesignRequestBody struct {
 	ProjectID string          `json:"project_id,omitempty"`
 	RunID     string          `json:"run_id,omitempty"`
 	Design    json.RawMessage `json:"design"`
+	// Simulation mirrors rules.SimulationInput (cluster node count for sizing hints).
+	Simulation *rules.SimulationInput `json:"simulation,omitempty"`
+}
+
+func marshalDesignRequestEnvelope(body CreateDesignRequestBody) ([]byte, error) {
+	simNodes := 0
+	if body.Simulation != nil && body.Simulation.Nodes > 0 {
+		simNodes = body.Simulation.Nodes
+	}
+	reqEnvelope := map[string]any{
+		"design":     json.RawMessage(body.Design),
+		"simulation": map[string]any{"nodes": simNodes},
+		"candidates": []any{},
+	}
+	return json.Marshal(reqEnvelope)
 }
 
 func (h *RequestHandler) CreateDesignRequest(c *gin.Context) {
@@ -156,12 +172,7 @@ func (h *RequestHandler) CreateDesignRequest(c *gin.Context) {
 		return
 	}
 
-	reqEnvelope := map[string]any{
-		"design":     json.RawMessage(body.Design),
-		"simulation": map[string]any{"nodes": 0},
-		"candidates": []any{},
-	}
-	reqJSON, err := json.Marshal(reqEnvelope)
+	reqJSON, err := marshalDesignRequestEnvelope(body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to marshal request: " + err.Error()})
 		return
