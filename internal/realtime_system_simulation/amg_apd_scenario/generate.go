@@ -50,6 +50,11 @@ type svcInfo struct {
 // GenerateFromAMGAPDYAML parses AMG/APD diagram YAML and produces a scenario draft.
 // The returned warnings describe skipped dependencies (unknown endpoints); they are not errors.
 func GenerateFromAMGAPDYAML(amgYAML []byte) (*ScenarioDoc, []string, error) {
+	return GenerateFromAMGAPDYAMLWithOptions(amgYAML, GenerationOptions{})
+}
+
+// GenerateFromAMGAPDYAMLWithOptions is like GenerateFromAMGAPDYAML but allows overriding placement hosts.
+func GenerateFromAMGAPDYAMLWithOptions(amgYAML []byte, opts GenerationOptions) (*ScenarioDoc, []string, error) {
 	var root map[string]any
 	if err := yaml.Unmarshal(amgYAML, &root); err != nil {
 		return nil, nil, fmt.Errorf("parse AMG/APD YAML: %w", err)
@@ -203,11 +208,7 @@ func GenerateFromAMGAPDYAML(amgYAML []byte) (*ScenarioDoc, []string, error) {
 		entry = order[0]
 	}
 
-	hosts := []HostDoc{
-		{ID: "host-1", Cores: 8, MemoryGB: 32},
-		{ID: "host-2", Cores: 8, MemoryGB: 32},
-		{ID: "host-3", Cores: 8, MemoryGB: 32},
-	}
+	hosts := effectiveHosts(opts)
 
 	outgoing := make(map[string][]depEdge)
 	for _, d := range deps {
@@ -678,7 +679,12 @@ func buildDownstreamsForIngress(from string, deps []depEdge, byID map[string]svc
 // GenerateScenarioYAML returns scenario-v2 draft YAML from AMG/APD input.
 // Callers must validate the result with simulation-core HTTP POST /v1/scenarios:validate before persisting or running.
 func GenerateScenarioYAML(amgYAML []byte) (string, error) {
-	doc, _, err := GenerateFromAMGAPDYAML(amgYAML)
+	return GenerateScenarioYAMLWithOptions(amgYAML, GenerationOptions{})
+}
+
+// GenerateScenarioYAMLWithOptions returns scenario-v2 draft YAML using optional host placement metadata.
+func GenerateScenarioYAMLWithOptions(amgYAML []byte, opts GenerationOptions) (string, error) {
+	doc, _, err := GenerateFromAMGAPDYAMLWithOptions(amgYAML, opts)
 	if err != nil {
 		return "", err
 	}
