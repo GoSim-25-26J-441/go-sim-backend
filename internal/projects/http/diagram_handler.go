@@ -193,6 +193,7 @@ func (h *Handler) listDiagramImages(c *gin.Context) {
 		ID             string    `json:"id"`
 		Title          string    `json:"title"`
 		ImageObjectKey string    `json:"image_object_key"`
+		ImageURL       string    `json:"image_url,omitempty"`
 		CreatedAt      time.Time `json:"created_at"`
 	}
 
@@ -201,10 +202,17 @@ func (h *Handler) listDiagramImages(c *gin.Context) {
 		if strings.TrimSpace(v.ImageObjectKey) == "" {
 			continue
 		}
+		imageURL := ""
+		if h.s3Client != nil {
+			if u, err := h.s3Client.PresignGetObjectURL(c.Request.Context(), v.ImageObjectKey, 15*time.Minute); err == nil {
+				imageURL = u
+			}
+		}
 		images = append(images, imageSummary{
 			ID:             v.ID,
 			Title:          v.Title,
 			ImageObjectKey: v.ImageObjectKey,
+			ImageURL:       imageURL,
 			CreatedAt:      v.CreatedAt,
 		})
 	}

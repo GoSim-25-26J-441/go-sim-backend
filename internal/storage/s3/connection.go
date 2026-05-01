@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -90,6 +91,26 @@ func (c *Client) PutObject(ctx context.Context, key string, data []byte) error {
 		return fmt.Errorf("failed to put object to S3 (bucket=%s, key=%s): %w", c.Bucket, key, err)
 	}
 	return nil
+}
+
+// PresignGetObjectURL returns a temporary signed URL for reading an object.
+func (c *Client) PresignGetObjectURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if c == nil || c.Client == nil {
+		return "", fmt.Errorf("s3 client is not initialized")
+	}
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+
+	presigner := s3.NewPresignClient(c.Client)
+	out, err := presigner.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.Bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("failed to presign get object (bucket=%s, key=%s): %w", c.Bucket, key, err)
+	}
+	return out.URL, nil
 }
 
 // GetObject downloads the object for the given key from this client's bucket.
