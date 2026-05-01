@@ -9,6 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHashScenarioGenerationSource_backwardCompatible(t *testing.T) {
+	amg := `services:\n  - id: x\n    type: api_gateway\n`
+	h1 := HashAMGAPDSource(amg)
+	h2 := HashScenarioGenerationSource(amg, "")
+	require.Equal(t, h1, h2)
+}
+
+func TestHashScenarioGenerationSource_differsWithHostConfig(t *testing.T) {
+	amg := `same`
+	a := HashScenarioGenerationSource(amg, `{"nodes":3,"cores":4,"memory_gb":16}`)
+	b := HashScenarioGenerationSource(amg, `{"nodes":4,"cores":4,"memory_gb":16}`)
+	require.NotEqual(t, a, b)
+	require.NotEqual(t, HashAMGAPDSource(amg), a)
+}
+
 func TestScenarioCacheRepository_UpsertAndGet(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

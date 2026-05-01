@@ -23,7 +23,7 @@ type CachedScenario struct {
 	ScenarioHash     string
 	S3Path           string
 	Source           string
-	SourceHash       string // SHA-256 hex of AMG/APD YAML when scenario was generated or last aligned
+	SourceHash       string // SHA-256 hex of generation source (AMG/APD YAML, optionally combined with host config)
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -44,6 +44,16 @@ func hashScenarioYAML(s string) string {
 // HashAMGAPDSource returns SHA-256 hex of the AMG/APD diagram YAML bytes.
 func HashAMGAPDSource(amgYAML string) string {
 	return hashScenarioYAML(amgYAML)
+}
+
+// HashScenarioGenerationSource hashes diagram YAML plus optional canonical host-config JSON.
+// When hostConfigCanonicalJSON is empty, the result equals HashAMGAPDSource(amgYAML) for backward compatibility.
+func HashScenarioGenerationSource(amgYAML, hostConfigCanonicalJSON string) string {
+	if strings.TrimSpace(hostConfigCanonicalJSON) == "" {
+		return HashAMGAPDSource(amgYAML)
+	}
+	h := sha256.Sum256([]byte(amgYAML + "\n---host-config---\n" + hostConfigCanonicalJSON))
+	return hex.EncodeToString(h[:])
 }
 
 func (r *ScenarioCacheRepository) ResolveCurrentDiagramVersionID(ctx context.Context, userID, projectID string) (string, error) {

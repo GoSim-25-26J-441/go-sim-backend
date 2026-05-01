@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/hostconfig"
+	asrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/analysis_suggestions/repository"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/amg_apd_scenario"
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/gin-gonic/gin"
@@ -42,17 +44,47 @@ func (h *Handler) putScenarioToS3(ctx context.Context, diagramVersionID, scenari
 }
 
 // useCachedGeneratedScenario returns true when cached row should be used without regenerating from AMG/APD.
-func useCachedGeneratedScenario(cached *simrepo.CachedScenario, diagramSourceHash string) bool {
+func useCachedGeneratedScenario(cached *simrepo.CachedScenario, generationSourceHash string) bool {
 	if cached == nil || strings.TrimSpace(cached.ScenarioYAML) == "" {
 		return false
 	}
 	if cached.Source == "edited" {
 		return true
 	}
-	if diagramSourceHash != "" && cached.SourceHash != "" && cached.SourceHash != diagramSourceHash {
+	if generationSourceHash != "" && cached.SourceHash != "" && cached.SourceHash != generationSourceHash {
 		return false
 	}
 	return true
+}
+
+// scenarioGenerationOptsAndHash loads optional host sizing from analysis-suggestions request_responses,
+// builds placement hosts for scenario generation, and returns hashes for diagram-only vs combined generation source.
+// A non-nil error indicates a database failure while loading request_responses (not “no config”); callers must fail the request.
+func (h *Handler) scenarioGenerationOptsAndHash(ctx context.Context, userID, projectID, amgYAML string) (
+	opts amg_apd_scenario.GenerationOptions,
+	diagramHash string,
+	generationHash string,
+	err error,
+) {
+	diagramHash = simrepo.HashAMGAPDSource(amgYAML)
+	generationHash = diagramHash
+	if h.db == nil || strings.TrimSpace(projectID) == "" {
+		return amg_apd_scenario.GenerationOptions{}, diagramHash, generationHash, nil
+	}
+	cfg, ok, loadErr := asrepo.LoadLatestScenarioHostConfig(ctx, h.db, userID, projectID)
+	if loadErr != nil {
+		return amg_apd_scenario.GenerationOptions{}, diagramHash, diagramHash, loadErr
+	}
+	if !ok {
+		return amg_apd_scenario.GenerationOptions{}, diagramHash, generationHash, nil
+	}
+	hosts := amg_apd_scenario.HostDocsFromCounts(cfg.Nodes, cfg.Cores, cfg.MemoryGB)
+	if len(hosts) == 0 {
+		return amg_apd_scenario.GenerationOptions{}, diagramHash, generationHash, nil
+	}
+	opts = amg_apd_scenario.GenerationOptions{Hosts: hosts}
+	generationHash = simrepo.HashScenarioGenerationSource(amgYAML, hostconfig.CanonicalJSON(cfg))
+	return opts, diagramHash, generationHash, nil
 }
 
 // resolveScenarioYAMLForDiagramVersion loads or generates scenario YAML for a diagram version.
@@ -65,32 +97,36 @@ func (h *Handler) resolveScenarioYAMLForDiagramVersion(ctx context.Context, user
 	if err != nil {
 		return "", "", nil, err
 	}
-	diagramSourceHash = simrepo.HashAMGAPDSource(amgYAML)
+	diagramHash := simrepo.HashAMGAPDSource(amgYAML)
 	cached, err = h.scenarioCacheRepo.GetScenarioForDiagramVersion(ctx, userID, projectID, diagramVersionID)
 	if err != nil {
-		return "", diagramSourceHash, nil, err
+		return "", diagramHash, nil, err
 	}
 	if cached != nil && cached.Source == "edited" {
-		return cached.ScenarioYAML, diagramSourceHash, cached, nil
+		return cached.ScenarioYAML, diagramHash, cached, nil
 	}
-	if useCachedGeneratedScenario(cached, diagramSourceHash) {
-		return cached.ScenarioYAML, diagramSourceHash, cached, nil
+	opts, _, generationHash, genOptErr := h.scenarioGenerationOptsAndHash(ctx, userID, projectID, amgYAML)
+	if genOptErr != nil {
+		return "", diagramHash, nil, genOptErr
 	}
-	genYAML, err := amg_apd_scenario.GenerateScenarioYAML([]byte(amgYAML))
+	if useCachedGeneratedScenario(cached, generationHash) {
+		return cached.ScenarioYAML, generationHash, cached, nil
+	}
+	genYAML, err := amg_apd_scenario.GenerateScenarioYAMLWithOptions([]byte(amgYAML), opts)
 	if err != nil {
-		return "", diagramSourceHash, cached, err
+		return "", diagramHash, cached, err
 	}
 	if _, err := h.validateScenarioPreflight(ctx, genYAML); err != nil {
-		return "", diagramSourceHash, cached, err
+		return "", diagramHash, cached, err
 	}
-	sh := diagramSourceHash
+	sh := generationHash
 	s3Path := h.putScenarioToS3(ctx, diagramVersionID, genYAML)
 	overwrite := cached != nil
 	out, err := h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(ctx, diagramVersionID, genYAML, "generated", s3Path, &sh, overwrite)
 	if err != nil {
-		return "", diagramSourceHash, cached, err
+		return "", diagramHash, cached, err
 	}
-	return genYAML, diagramSourceHash, out, nil
+	return genYAML, generationHash, out, nil
 }
 
 // GetDiagramVersionScenario returns cached or freshly generated scenario YAML for editing/runs.
@@ -130,13 +166,13 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 		serverScenarioError(c, "failed to load diagram YAML", err)
 		return
 	}
-	sourceHash := simrepo.HashAMGAPDSource(amgYAML)
+	diagramHash := simrepo.HashAMGAPDSource(amgYAML)
 	cached, err := h.scenarioCacheRepo.GetScenarioForDiagramVersion(c.Request.Context(), userID, projectID, diagramVersionID)
 	if err != nil {
 		serverScenarioError(c, "failed to load cached scenario", err)
 		return
 	}
-	if cached != nil && cached.Source == "edited" && cached.SourceHash != "" && cached.SourceHash != sourceHash {
+	if cached != nil && cached.Source == "edited" && cached.SourceHash != "" && cached.SourceHash != diagramHash {
 		c.JSON(http.StatusConflict, gin.H{
 			"error": "diagram AMG/APD content changed since the scenario was last saved; use PUT with the updated scenario or POST .../regenerate with overwrite=true",
 		})
@@ -149,26 +185,31 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 			"scenario_hash":       hex.EncodeToString(sum[:]),
 			"source":              cached.Source,
 			"source_hash":         cached.SourceHash,
-			"diagram_source_hash": sourceHash,
+			"diagram_source_hash": diagramHash,
 			"s3_path":             cached.S3Path,
 			"updated_at":          cached.UpdatedAt,
 		})
 		return
 	}
-	if useCachedGeneratedScenario(cached, sourceHash) && cached != nil {
+	opts, _, generationHash, genOptErr := h.scenarioGenerationOptsAndHash(c.Request.Context(), userID, projectID, amgYAML)
+	if genOptErr != nil {
+		serverScenarioError(c, "failed to load analysis host configuration", genOptErr)
+		return
+	}
+	if useCachedGeneratedScenario(cached, generationHash) && cached != nil {
 		sum := sha256.Sum256([]byte(cached.ScenarioYAML))
 		c.JSON(http.StatusOK, gin.H{
 			"scenario_yaml":       cached.ScenarioYAML,
 			"scenario_hash":       hex.EncodeToString(sum[:]),
 			"source":              cached.Source,
 			"source_hash":         cached.SourceHash,
-			"diagram_source_hash": sourceHash,
+			"diagram_source_hash": generationHash,
 			"s3_path":             cached.S3Path,
 			"updated_at":          cached.UpdatedAt,
 		})
 		return
 	}
-	genYAML, genErr := amg_apd_scenario.GenerateScenarioYAML([]byte(amgYAML))
+	genYAML, genErr := amg_apd_scenario.GenerateScenarioYAMLWithOptions([]byte(amgYAML), opts)
 	if genErr != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
 		return
@@ -178,7 +219,7 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 		h.writeScenarioValidationError(c, err, genYAML)
 		return
 	}
-	sh := sourceHash
+	sh := generationHash
 	s3Path := h.putScenarioToS3(c.Request.Context(), diagramVersionID, genYAML)
 	overwrite := cached != nil
 	saved, upErr := h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(c.Request.Context(), diagramVersionID, genYAML, "generated", s3Path, &sh, overwrite)
@@ -196,7 +237,7 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 		"scenario_hash":       hex.EncodeToString(sum[:]),
 		"source":              saved.Source,
 		"source_hash":         saved.SourceHash,
-		"diagram_source_hash": sourceHash,
+		"diagram_source_hash": generationHash,
 		"s3_path":             saved.S3Path,
 		"updated_at":          saved.UpdatedAt,
 		"validation":          valRes,
@@ -368,7 +409,6 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 		serverScenarioError(c, "failed to load diagram YAML", err)
 		return
 	}
-	sourceHash := simrepo.HashAMGAPDSource(amgYAML)
 	cached, err := h.scenarioCacheRepo.GetScenarioForDiagramVersion(c.Request.Context(), userID, projectID, diagramVersionID)
 	if err != nil {
 		serverScenarioError(c, "failed to load cached scenario", err)
@@ -378,7 +418,12 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "an edited scenario exists; pass overwrite=true to replace it with a generated draft"})
 		return
 	}
-	genYAML, genErr := amg_apd_scenario.GenerateScenarioYAML([]byte(amgYAML))
+	opts, _, generationHash, genOptErr := h.scenarioGenerationOptsAndHash(c.Request.Context(), userID, projectID, amgYAML)
+	if genOptErr != nil {
+		serverScenarioError(c, "failed to load analysis host configuration", genOptErr)
+		return
+	}
+	genYAML, genErr := amg_apd_scenario.GenerateScenarioYAMLWithOptions([]byte(amgYAML), opts)
 	if genErr != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
 		return
@@ -388,7 +433,7 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 		h.writeScenarioValidationError(c, err, genYAML)
 		return
 	}
-	sh := sourceHash
+	sh := generationHash
 	s3Path := h.putScenarioToS3(c.Request.Context(), diagramVersionID, genYAML)
 	saved, upErr := h.scenarioCacheRepo.UpsertScenarioForDiagramVersion(c.Request.Context(), diagramVersionID, genYAML, "generated", s3Path, &sh, true)
 	if upErr != nil {
@@ -401,7 +446,7 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 		"scenario_hash":       hex.EncodeToString(sum[:]),
 		"source":              saved.Source,
 		"source_hash":         saved.SourceHash,
-		"diagram_source_hash": sourceHash,
+		"diagram_source_hash": generationHash,
 		"s3_path":             saved.S3Path,
 		"updated_at":          saved.UpdatedAt,
 		"validation":          valRes,
