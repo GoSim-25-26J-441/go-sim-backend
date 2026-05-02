@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -82,6 +83,58 @@ func (h *CostHandler) persistGlobalCostRecommendation(ctx context.Context, reque
 type CostHandler struct {
 	db          *sql.DB
 	redisClient *redis.Client
+}
+
+func nearlyWholeDivision(v float64, divisor int) bool {
+	if divisor <= 0 {
+		return false
+	}
+	q := v / float64(divisor)
+	return math.Abs(q-math.Round(q)) < 1e-6
+}
+
+// normalizeBestCandidatePerNode converts cluster-total specs to per-node specs
+// when historical rows stored totals instead of instance sizing.
+func normalizeBestCandidatePerNode(best rules.CandidateScore, nodes, preferredVCPU int, preferredMemoryGB float64) rules.CandidateScore {
+	if nodes <= 1 {
+		return best
+	}
+
+	spec := best.Candidate.Spec
+	if spec.VCPU <= 0 && spec.MemoryGB <= 0 {
+		return best
+	}
+
+	cpuLooksClusterTotal := false
+	memLooksClusterTotal := false
+
+	if spec.VCPU > 0 && spec.VCPU%nodes == 0 {
+		perNodeCPU := spec.VCPU / nodes
+		if preferredVCPU > 0 {
+			cpuLooksClusterTotal = perNodeCPU == preferredVCPU || spec.VCPU == preferredVCPU*nodes
+		}
+	}
+
+	if spec.MemoryGB > 0 && nearlyWholeDivision(spec.MemoryGB, nodes) {
+		perNodeMem := spec.MemoryGB / float64(nodes)
+		if preferredMemoryGB > 0 {
+			memLooksClusterTotal = math.Abs(perNodeMem-preferredMemoryGB) < 1e-6 ||
+				math.Abs(spec.MemoryGB-(preferredMemoryGB*float64(nodes))) < 1e-6
+		}
+	}
+
+	// Require at least one strong signal from design context before converting.
+	if !cpuLooksClusterTotal && !memLooksClusterTotal {
+		return best
+	}
+
+	if spec.VCPU > 0 && spec.VCPU%nodes == 0 {
+		best.Candidate.Spec.VCPU = spec.VCPU / nodes
+	}
+	if spec.MemoryGB > 0 {
+		best.Candidate.Spec.MemoryGB = spec.MemoryGB / float64(nodes)
+	}
+	return best
 }
 
 func NewCostHandler(db *sql.DB, redisClient *redis.Client) *CostHandler {
@@ -235,8 +288,8 @@ func (h *CostHandler) GetRegionsForRequest(c *gin.Context) {
 	defer cancel()
 	db := h.db
 
-	var bestJSON []byte
-	if err := db.QueryRowContext(ctx, `SELECT best_candidate::text FROM request_responses WHERE id = $1`, id).Scan(&bestJSON); err != nil {
+	var bestJSON, reqJSON []byte
+	if err := db.QueryRowContext(ctx, `SELECT best_candidate::text, request::text FROM request_responses WHERE id = $1`, id).Scan(&bestJSON, &reqJSON); err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Request not found"})
 			return
@@ -249,6 +302,26 @@ func (h *CostHandler) GetRegionsForRequest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse best candidate"})
 		return
 	}
+
+	var req struct {
+		Design struct {
+			PreferredVCPU     int     `json:"preferred_vcpu"`
+			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
+		} `json:"design"`
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
+	}
+	if err := json.Unmarshal(reqJSON, &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
+		return
+	}
+	bestCS = normalizeBestCandidatePerNode(
+		bestCS,
+		req.Simulation.Nodes,
+		req.Design.PreferredVCPU,
+		req.Design.PreferredMemoryGB,
+	)
 	vcpu := bestCS.Candidate.Spec.VCPU
 	mem := bestCS.Candidate.Spec.MemoryGB
 
@@ -298,7 +371,9 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 
 	var req struct {
 		Design struct {
-			Budget float64 `json:"budget"`
+			Budget            float64 `json:"budget"`
+			PreferredVCPU     int     `json:"preferred_vcpu"`
+			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
 		} `json:"design"`
 		Simulation struct {
 			Nodes int `json:"nodes"`
@@ -308,6 +383,12 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
 		return
 	}
+	bestCS = normalizeBestCandidatePerNode(
+		bestCS,
+		req.Simulation.Nodes,
+		req.Design.PreferredVCPU,
+		req.Design.PreferredMemoryGB,
+	)
 
 	clusterCosts, err := cc.CalculateClusterCosts(
 		ctx,
@@ -368,7 +449,9 @@ func (h *CostHandler) HandleGlobalRecommend(c *gin.Context) {
 
 	var req struct {
 		Design struct {
-			Budget float64 `json:"budget"`
+			Budget            float64 `json:"budget"`
+			PreferredVCPU     int     `json:"preferred_vcpu"`
+			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
 		} `json:"design"`
 		Simulation struct {
 			Nodes int `json:"nodes"`
@@ -378,6 +461,12 @@ func (h *CostHandler) HandleGlobalRecommend(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
 		return
 	}
+	bestCS = normalizeBestCandidatePerNode(
+		bestCS,
+		req.Simulation.Nodes,
+		req.Design.PreferredVCPU,
+		req.Design.PreferredMemoryGB,
+	)
 
 	rec, err := cc.BuildGlobalRecommendation(ctx, db, bestCS, req.Simulation.Nodes, req.Design.Budget)
 	if err != nil {
@@ -440,7 +529,9 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 
 	var req struct {
 		Design struct {
-			Budget float64 `json:"budget"`
+			Budget            float64 `json:"budget"`
+			PreferredVCPU     int     `json:"preferred_vcpu"`
+			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
 		} `json:"design"`
 		Simulation struct {
 			Nodes int `json:"nodes"`
@@ -450,6 +541,12 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
 		return
 	}
+	bestCS = normalizeBestCandidatePerNode(
+		bestCS,
+		req.Simulation.Nodes,
+		req.Design.PreferredVCPU,
+		req.Design.PreferredMemoryGB,
+	)
 
 	clusterCosts, err := cc.CalculateClusterCostsForProvider(
 		ctx,
