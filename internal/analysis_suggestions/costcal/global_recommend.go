@@ -104,7 +104,7 @@ func BuildGlobalRecommendation(
 	if len(out) == 0 {
 		return &GlobalRecommendation{
 			Rationale: []string{
-				"No compute prices were found for this workload across AWS, Azure, and GCP regions in the catalog.",
+				"No compute prices were found for this workload across AWS and Azure regions in the catalog.",
 			},
 			RegionJobsEvaluated: len(jobs),
 		}, nil
