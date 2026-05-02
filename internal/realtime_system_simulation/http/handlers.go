@@ -299,7 +299,7 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		optPayload := body.Optimization
 		if batchOpt {
 			var err error
-			optPayload, optimizationGuards, err = applyBatchOptimizationGuards(body.Optimization)
+			optPayload, optimizationGuards, err = applyBatchOptimizationGuards(body.Optimization, effectiveScenarioYAML)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
 				return
@@ -520,7 +520,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		optPayload := body.Optimization
 		if batchOpt {
 			var err error
-			optPayload, optimizationGuards, err = applyBatchOptimizationGuards(body.Optimization)
+			optPayload, optimizationGuards, err = applyBatchOptimizationGuards(body.Optimization, body.ScenarioYAML)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
 				return
