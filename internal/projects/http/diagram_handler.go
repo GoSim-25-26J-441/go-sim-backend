@@ -134,7 +134,7 @@ func (h *Handler) uploadDiagramImage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"ok":              true,
+		"ok":               true,
 		"image_object_key": key,
 	})
 }

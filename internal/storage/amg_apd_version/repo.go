@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/projects/utils"
 )
 
 const (
@@ -17,13 +17,14 @@ const (
 	DefaultChatID = "TestChat123"
 )
 
-// VersionRow represents one row in diagram_versions with source = 'amg_apd'.
+// VersionRow is a diagram_versions row loaded for AMG-APD APIs (any source).
 type VersionRow struct {
 	ID             string
 	UserID         string
 	ChatID         string
 	VersionNumber  int
 	Title          string
+	Source         string
 	YAMLContent    string
 	GraphJSON      []byte
 	DOTContent     string
@@ -70,6 +71,40 @@ type diagramEnvelope struct {
 	Datastores   []diagramDatastore  `json:"datastores"`
 	Topics       []diagramTopic      `json:"topics"`
 	Dependencies []diagramDependency `json:"dependencies"`
+}
+
+// extractGraphAndDetectionsFromDiagramJSON supports both:
+// 1) envelope: { graph, detections, ... }
+// 2) legacy/raw graph: { nodes, edges }
+func extractGraphAndDetectionsFromDiagramJSON(diagramJSON []byte) (graphJSON, detectionsJSON []byte) {
+	if len(diagramJSON) == 0 {
+		return nil, nil
+	}
+
+	var payload struct {
+		Graph      json.RawMessage `json:"graph,omitempty"`
+		Detections json.RawMessage `json:"detections,omitempty"`
+		Nodes      json.RawMessage `json:"nodes,omitempty"`
+		Edges      json.RawMessage `json:"edges,omitempty"`
+	}
+	if err := json.Unmarshal(diagramJSON, &payload); err != nil {
+		return nil, nil
+	}
+
+	// Preferred shape: envelope
+	if len(payload.Graph) > 0 {
+		graphJSON = payload.Graph
+		if len(payload.Detections) > 0 {
+			detectionsJSON = payload.Detections
+		}
+		return graphJSON, detectionsJSON
+	}
+
+	// Fallback shape: raw graph object
+	if len(payload.Nodes) > 0 && len(payload.Edges) > 0 {
+		return diagramJSON, nil
+	}
+	return nil, nil
 }
 
 // buildDiagramEnvelope converts the analyzed graph JSON plus detections JSON into the
@@ -197,6 +232,29 @@ func NewRepo(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
+// alignDiagramVAutoTitle keeps default names in sync with the assigned version_number.
+// Callers (e.g. the AMG-APD UI) may send "diagramV1" while the DB next row is v2 because
+// version 1 is a canvas_json row not included in their AMG-only version list.
+func alignDiagramVAutoTitle(title string, nextVersion int) string {
+	t := strings.TrimSpace(title)
+	if t == "" {
+		return fmt.Sprintf("diagramV%d", nextVersion)
+	}
+	const pfx = "diagramV"
+	if !strings.HasPrefix(t, pfx) {
+		return t
+	}
+	numStr := strings.TrimPrefix(t, pfx)
+	n, err := strconv.Atoi(numStr)
+	if err != nil {
+		return t
+	}
+	if n != nextVersion {
+		return fmt.Sprintf("diagramV%d", nextVersion)
+	}
+	return t
+}
+
 // Save stores a new version for the given user_id and chat_id. version_number is auto-incremented per (user_id, chat_id).
 func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detectionsJSON []byte, dotContent string) (*VersionRow, error) {
 	if userID == "" {
@@ -216,9 +274,7 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 		return nil, err
 	}
 
-	if title == "" {
-		title = fmt.Sprintf("diagramV%d", nextVersion)
-	}
+	title = alignDiagramVAutoTitle(title, nextVersion)
 
 	// Build full diagram_json payload: graph, detections, and the structured
 	// services/datastores/topics/dependencies JSON used by the simulator.
@@ -262,7 +318,10 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 		specJSON = strings.TrimSpace(string(prevSpec))
 	}
 
-	id := uuid.New().String()
+	id, err := utils.NewTextID("dver")
+	if err != nil {
+		return nil, err
+	}
 	_, err = r.db.Exec(`
 		INSERT INTO diagram_versions (
 			id,
@@ -304,6 +363,7 @@ func (r *Repo) Save(userID, chatID, title, yamlContent string, graphJSON, detect
 		ChatID:         chatID,
 		VersionNumber:  nextVersion,
 		Title:          title,
+		Source:         "amg_apd",
 		YAMLContent:    yamlContent,
 		GraphJSON:      graphJSON,
 		DOTContent:     dotContent,
@@ -325,7 +385,7 @@ func (r *Repo) ListByUserChat(userID, chatID string) ([]VersionRow, error) {
 	rows, err := r.db.Query(`
 		SELECT id, user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
 		FROM diagram_versions
-		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
+		WHERE user_firebase_uid = $1 AND project_public_id = $2
 		ORDER BY version_number DESC
 	`, userID, chatID)
 	if err != nil {
@@ -343,21 +403,7 @@ func (r *Repo) ListByUserChat(userID, chatID string) ([]VersionRow, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Unpack graph and detections from diagram_json
-		if len(diagramJSON) > 0 {
-			var payload struct {
-				Graph      json.RawMessage `json:"graph,omitempty"`
-				Detections json.RawMessage `json:"detections,omitempty"`
-			}
-			if err := json.Unmarshal(diagramJSON, &payload); err == nil {
-				if len(payload.Graph) > 0 {
-					row.GraphJSON = payload.Graph
-				}
-				if len(payload.Detections) > 0 {
-					row.DetectionsJSON = payload.Detections
-				}
-			}
-		}
+		row.GraphJSON, row.DetectionsJSON = extractGraphAndDetectionsFromDiagramJSON(diagramJSON)
 		if dotContent.Valid {
 			row.DOTContent = dotContent.String
 		}
@@ -372,31 +418,18 @@ func (r *Repo) GetByID(id string) (*VersionRow, error) {
 	var diagramJSON []byte
 	var dotContent sql.NullString
 	err := r.db.QueryRow(`
-		SELECT user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		SELECT user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at, source
 		FROM diagram_versions
-		WHERE id = $1 AND source = 'amg_apd'
+		WHERE id = $1
 	`, id).Scan(&row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
-		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt)
+		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt, &row.Source)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(diagramJSON) > 0 {
-		var payload struct {
-			Graph      json.RawMessage `json:"graph,omitempty"`
-			Detections json.RawMessage `json:"detections,omitempty"`
-		}
-		if err := json.Unmarshal(diagramJSON, &payload); err == nil {
-			if len(payload.Graph) > 0 {
-				row.GraphJSON = payload.Graph
-			}
-			if len(payload.Detections) > 0 {
-				row.DetectionsJSON = payload.Detections
-			}
-		}
-	}
+	row.GraphJSON, row.DetectionsJSON = extractGraphAndDetectionsFromDiagramJSON(diagramJSON)
 	if dotContent.Valid {
 		row.DOTContent = dotContent.String
 	}
@@ -470,10 +503,12 @@ type VersionSummary struct {
 	ID            string    `json:"id"`
 	VersionNumber int       `json:"version_number"`
 	Title         string    `json:"title"`
+	Source        string    `json:"source,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-// ListSummariesByUserChat returns lightweight summaries for user/chat.
+// ListSummariesByUserChat returns lightweight summaries for user/chat (all diagram_versions
+// for the project, not only source = amg_apd, so the main canvas row appears alongside AMG saves).
 func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary, error) {
 	if userID == "" {
 		userID = DefaultUserID
@@ -482,9 +517,9 @@ func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary,
 		chatID = DefaultChatID
 	}
 	rows, err := r.db.Query(`
-		SELECT id, version_number, title, created_at
+		SELECT id, version_number, title, source, created_at
 		FROM diagram_versions
-		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
+		WHERE user_firebase_uid = $1 AND project_public_id = $2
 		ORDER BY version_number DESC
 	`, userID, chatID)
 	if err != nil {
@@ -494,7 +529,7 @@ func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary,
 	var list []VersionSummary
 	for rows.Next() {
 		var s VersionSummary
-		if err := rows.Scan(&s.ID, &s.VersionNumber, &s.Title, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.VersionNumber, &s.Title, &s.Source, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, s)
@@ -515,14 +550,14 @@ func (r *Repo) GetLatestByUserProject(userID, projectPublicID string) (*VersionR
 	var diagramJSON []byte
 	var dotContent sql.NullString
 	err := r.db.QueryRow(`
-		SELECT id, user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		SELECT id, user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at, source
 		FROM diagram_versions
 		WHERE user_firebase_uid = $1 AND project_public_id = $2 AND source = 'amg_apd'
 		ORDER BY version_number DESC
 		LIMIT 1
 	`, userID, projectPublicID).Scan(
 		&row.ID, &row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
-		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt,
+		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt, &row.Source,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -530,20 +565,7 @@ func (r *Repo) GetLatestByUserProject(userID, projectPublicID string) (*VersionR
 	if err != nil {
 		return nil, err
 	}
-	if len(diagramJSON) > 0 {
-		var payload struct {
-			Graph      json.RawMessage `json:"graph,omitempty"`
-			Detections json.RawMessage `json:"detections,omitempty"`
-		}
-		if err := json.Unmarshal(diagramJSON, &payload); err == nil {
-			if len(payload.Graph) > 0 {
-				row.GraphJSON = payload.Graph
-			}
-			if len(payload.Detections) > 0 {
-				row.DetectionsJSON = payload.Detections
-			}
-		}
-	}
+	row.GraphJSON, row.DetectionsJSON = extractGraphAndDetectionsFromDiagramJSON(diagramJSON)
 	if dotContent.Valid {
 		row.DOTContent = dotContent.String
 	}
@@ -645,9 +667,10 @@ func (r *Repo) UpdateAnalysisByID(id, userID, projectPublicID string, graphJSON,
 	return nil
 }
 
-// UpdateDiagramVersionAnalysisByID updates diagram_json, dot_content, and source to 'amg_apd'
-// for the given diagram_versions row (any source). Used when "Check Anti-Patterns" from chat
-// updates the current version in place instead of creating a new one.
+// UpdateDiagramVersionAnalysisByID updates diagram_json and dot_content for the given
+// diagram_versions row (any source). Version 1 keeps its existing source (e.g. canvas_json
+// from the main canvas); version 2+ are marked source = 'amg_apd' when analysis is written
+// from the AMG-APD flow.
 func (r *Repo) UpdateDiagramVersionAnalysisByID(id, userID, projectPublicID string, graphJSON, detectionsJSON []byte, dotContent string) error {
 	if userID == "" {
 		userID = DefaultUserID
@@ -665,7 +688,9 @@ func (r *Repo) UpdateDiagramVersionAnalysisByID(id, userID, projectPublicID stri
 	}
 	res, err := r.db.Exec(`
 		UPDATE diagram_versions
-		SET diagram_json = $1, dot_content = $2, source = 'amg_apd'
+		SET diagram_json = $1,
+		    dot_content = $2,
+		    source = CASE WHEN version_number = 1 THEN source ELSE 'amg_apd' END
 		WHERE id = $3 AND user_firebase_uid = $4 AND project_public_id = $5
 	`, diagramJSON, dotContent, id, userID, projectPublicID)
 	if err != nil {
@@ -691,31 +716,18 @@ func (r *Repo) GetByIDForUserProject(id, userID, projectPublicID string) (*Versi
 	var diagramJSON []byte
 	var dotContent sql.NullString
 	err := r.db.QueryRow(`
-		SELECT user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at
+		SELECT user_firebase_uid, project_public_id, version_number, title, yaml_content, diagram_json, dot_content, created_at, source
 		FROM diagram_versions
 		WHERE id = $1 AND user_firebase_uid = $2 AND project_public_id = $3
 	`, id, userID, projectPublicID).Scan(&row.UserID, &row.ChatID, &row.VersionNumber, &row.Title,
-		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt)
+		&row.YAMLContent, &diagramJSON, &dotContent, &row.CreatedAt, &row.Source)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(diagramJSON) > 0 {
-		var payload struct {
-			Graph      json.RawMessage `json:"graph,omitempty"`
-			Detections json.RawMessage `json:"detections,omitempty"`
-		}
-		if err := json.Unmarshal(diagramJSON, &payload); err == nil {
-			if len(payload.Graph) > 0 {
-				row.GraphJSON = payload.Graph
-			}
-			if len(payload.Detections) > 0 {
-				row.DetectionsJSON = payload.Detections
-			}
-		}
-	}
+	row.GraphJSON, row.DetectionsJSON = extractGraphAndDetectionsFromDiagramJSON(diagramJSON)
 	if dotContent.Valid {
 		row.DOTContent = dotContent.String
 	}
@@ -723,10 +735,17 @@ func (r *Repo) GetByIDForUserProject(id, userID, projectPublicID string) (*Versi
 }
 
 // ParseGraphAndDetections deserializes graph and detections from diagram_json (envelope) into the given pointers.
+// For *domain.Graph, canvas_json-style payloads (nodes as JSON array) are normalized before decode.
 func ParseGraphAndDetections(row *VersionRow, graphPtr interface{}, detectionsPtr interface{}) error {
 	if len(row.GraphJSON) > 0 {
-		if err := json.Unmarshal(row.GraphJSON, graphPtr); err != nil {
-			return err
+		if g, ok := graphPtr.(*domain.Graph); ok {
+			if err := decodeGraphJSONFlexible(row.GraphJSON, g); err != nil {
+				return err
+			}
+		} else {
+			if err := json.Unmarshal(row.GraphJSON, graphPtr); err != nil {
+				return err
+			}
 		}
 	}
 	if len(row.DetectionsJSON) > 0 {
