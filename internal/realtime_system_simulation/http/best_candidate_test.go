@@ -73,7 +73,8 @@ func TestHandler_GetRunCandidates_Unified(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	// Candidates list query (ListByRunID)
+	// Candidates list query (ListByRunID); nodes come from spec.hosts (2 hosts), not candidate count.
+	specJSON := []byte(`{"hosts":[{"id":"host-1"},{"id":"host-2"}]}`)
 	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -81,7 +82,7 @@ func TestHandler_GetRunCandidates_Unified(t *testing.T) {
 			"spec", "metrics", "sim_workload", "source", "s3_path",
 		}).AddRow(
 			"uuid-1", userID, "proj-1", runID, bestCandidateID,
-			[]byte("{}"), []byte("{}"), []byte("{}"), "export", s3Key,
+			specJSON, []byte("{}"), []byte("{}"), "export", s3Key,
 		))
 
 	// Best candidate path query
@@ -126,6 +127,9 @@ services:
 		UserID          string          `json:"user_id"`
 		ProjectID       string          `json:"project_id"`
 		RunID           string          `json:"run_id"`
+		Simulation      struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
 		BestCandidateID string          `json:"best_candidate_id"`
 		BestCandidate   json.RawMessage `json:"best_candidate"`
 		Candidates      []struct {
@@ -138,6 +142,7 @@ services:
 
 	assert.Equal(t, userID, resp.UserID)
 	assert.Equal(t, runID, resp.RunID)
+	assert.Equal(t, 2, resp.Simulation.Nodes, "simulation.nodes should count spec.hosts, not candidates")
 	assert.Equal(t, bestCandidateID, resp.BestCandidateID)
 	require.Len(t, resp.Candidates, 1)
 	assert.Equal(t, bestCandidateID, resp.Candidates[0].ID)
@@ -166,6 +171,169 @@ services:
 	require.Len(t, bc.Services, 1)
 	assert.Equal(t, "svc1", bc.Services[0].ServiceID)
 	assert.Equal(t, 3, bc.Services[0].Replicas)
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestHandler_GetRunCandidates_SimulationNodesUsesBestCandidateHosts verifies simulation.nodes
+// comes from the best candidate's spec.hosts length when five candidates exist.
+func TestHandler_GetRunCandidates_SimulationNodesUsesBestCandidateHosts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runID := "run-nodes-1"
+	userID := "user-nodes"
+	s3Best := "simulation/run-nodes-1/best.yaml"
+	specThreeHosts := []byte(`{"hosts":[{"id":"h1"},{"id":"h2"},{"id":"h3"}]}`)
+	specEmpty := []byte(`{}`)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	run := &domain.SimulationRun{
+		RunID:           runID,
+		UserID:          userID,
+		ProjectPublicID: "proj-nodes",
+		Status:          domain.StatusCompleted,
+		EngineRunID:     "engine-nodes",
+	}
+	runData, err := json.Marshal(run)
+	require.NoError(t, err)
+	require.NoError(t, rdb.Set(context.Background(), "sim:run:"+runID, runData, 0).Err())
+
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	rows := sqlmock.NewRows([]string{
+		"id", "user_id", "project_public_id", "run_id", "candidate_id",
+		"spec", "metrics", "sim_workload", "source", "s3_path",
+	})
+	for i := range 5 {
+		cid := []string{"cand-0", "cand-1", "cand-2", "cand-3", "cand-4"}[i]
+		spec := specEmpty
+		path := ""
+		if i == 4 {
+			spec = specThreeHosts
+			path = s3Best
+		}
+		rows.AddRow(
+			"uuid-"+cid, userID, "proj-nodes", runID, cid,
+			spec, []byte("{}"), []byte("{}"), "export", path,
+		)
+	}
+	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(rows)
+
+	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Best))
+
+	h := &Handler{
+		simService: simSvc,
+		db:         db,
+		s3Client:   &fakeObjectStorage{objects: map[string][]byte{}},
+	}
+
+	router := gin.New()
+	router.GET("/runs/:id/candidates", h.GetRunCandidates)
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/candidates", nil)
+	req.Header.Set("X-User-Id", userID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
+		BestCandidateID string `json:"best_candidate_id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 3, resp.Simulation.Nodes)
+	assert.Equal(t, "cand-4", resp.BestCandidateID)
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestHandler_GetRunCandidates_SimulationNodesZeroWithoutHosts verifies simulation.nodes is 0
+// when no candidate spec contains a valid hosts array.
+func TestHandler_GetRunCandidates_SimulationNodesZeroWithoutHosts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runID := "run-no-hosts"
+	userID := "user-no-hosts"
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	run := &domain.SimulationRun{
+		RunID:           runID,
+		UserID:          userID,
+		ProjectPublicID: "proj-nh",
+		Status:          domain.StatusCompleted,
+		EngineRunID:     "engine-nh",
+	}
+	runData, err := json.Marshal(run)
+	require.NoError(t, err)
+	require.NoError(t, rdb.Set(context.Background(), "sim:run:"+runID, runData, 0).Err())
+
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	specEmpty := []byte(`{}`)
+	rows := sqlmock.NewRows([]string{
+		"id", "user_id", "project_public_id", "run_id", "candidate_id",
+		"spec", "metrics", "sim_workload", "source", "s3_path",
+	})
+	for i := range 5 {
+		cid := []string{"cand-0", "cand-1", "cand-2", "cand-3", "cand-4"}[i]
+		rows.AddRow(
+			"uuid-"+cid, userID, "proj-nh", runID, cid,
+			specEmpty, []byte("{}"), []byte("{}"), "export", "",
+		)
+	}
+	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(rows)
+
+	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(nil))
+
+	h := &Handler{
+		simService: simSvc,
+		db:         db,
+	}
+
+	router := gin.New()
+	router.GET("/runs/:id/candidates", h.GetRunCandidates)
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/candidates", nil)
+	req.Header.Set("X-User-Id", userID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 0, resp.Simulation.Nodes)
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
