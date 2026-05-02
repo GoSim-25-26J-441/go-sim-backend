@@ -119,6 +119,14 @@ func (c *SimulationEngineClient) CreateRunWithInput(runID string, input *RunInpu
 	return createResp.Run.ID, nil
 }
 
+// Scenario validation modes for POST /v1/scenarios:validate (simulation-core).
+const (
+	// ScenarioValidateModePreflight runs full checks including host placement and resource feasibility.
+	ScenarioValidateModePreflight = "preflight"
+	// ScenarioValidateModeDraft checks structure and references only (no placement/resource preflight).
+	ScenarioValidateModeDraft = "draft"
+)
+
 // ErrScenarioValidationUnavailable indicates the simulation engine could not run preflight validation (transport or 5xx).
 var ErrScenarioValidationUnavailable = errors.New("scenario validation unavailable")
 
@@ -161,12 +169,17 @@ func (e *ScenarioValidationError) Error() string {
 	return "invalid scenario_yaml"
 }
 
-// ValidateScenario calls simulation-core POST /v1/scenarios:validate (authoritative preflight).
-// Request JSON: {"scenario_yaml":"...","mode":"preflight"} — mode defaults to preflight when omitted by the engine.
-func (c *SimulationEngineClient) ValidateScenario(ctx context.Context, scenarioYAML string) (*ScenarioValidationResult, error) {
+// ValidateScenario calls simulation-core POST /v1/scenarios:validate.
+// mode should be ScenarioValidateModePreflight or ScenarioValidateModeDraft (see simulation-core contract).
+// If mode is empty, ScenarioValidateModePreflight is used (legacy default).
+func (c *SimulationEngineClient) ValidateScenario(ctx context.Context, scenarioYAML string, mode string) (*ScenarioValidationResult, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = ScenarioValidateModePreflight
+	}
 	payload := map[string]any{
 		"scenario_yaml": scenarioYAML,
-		"mode":          "preflight",
+		"mode":          mode,
 	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -263,6 +276,8 @@ type GetRunResponse struct {
 		BatchEfficiencyScore        *float64             `json:"batch_efficiency_score,omitempty"`
 		BatchRecommendationSummary  string               `json:"batch_recommendation_summary,omitempty"`
 		BatchScoreBreakdown         *BatchScoreBreakdown `json:"batch_score_breakdown,omitempty"`
+		CandidateRunIDs             []string             `json:"candidate_run_ids,omitempty"`
+		OptimizationReplay          map[string]any       `json:"optimization_replay,omitempty"`
 	} `json:"run"`
 }
 
@@ -293,16 +308,15 @@ type ExportRunRun struct {
 	BatchEfficiencyScore        *float64             `json:"batch_efficiency_score,omitempty"`
 	BatchRecommendationSummary  string               `json:"batch_recommendation_summary,omitempty"`
 	BatchScoreBreakdown         *BatchScoreBreakdown `json:"batch_score_breakdown,omitempty"`
+	CandidateRunIDs             []string             `json:"candidate_run_ids,omitempty"`
+	OptimizationReplay          map[string]any       `json:"optimization_replay,omitempty"`
 }
 
 // ExportRunResponse represents the export data from the simulator.
 // It contains the original input, aggregated metrics, and optional time-series data.
 type ExportRunResponse struct {
-	Run   *ExportRunRun `json:"run,omitempty"`
-	Input struct {
-		ScenarioYAML string `json:"scenario_yaml"`
-		DurationMs   int64  `json:"duration_ms,omitempty"`
-	} `json:"input"`
+	Run                 *ExportRunRun      `json:"run,omitempty"`
+	Input               RunInput           `json:"input"`
 	Metrics             map[string]any     `json:"metrics,omitempty"`
 	OptimizationHistory []OptimizationStep `json:"optimization_history,omitempty"`
 	FinalConfig         map[string]any     `json:"final_config,omitempty"`

@@ -607,6 +607,121 @@ func uniqueCandidateIDs(bestRunID string, topCandidates []string) []string {
 	return ids
 }
 
+func runJSONMap(v any) map[string]any {
+	if v == nil {
+		return nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func exportReplaySnapshot(exp *ExportRunResponse) map[string]any {
+	if exp == nil {
+		return nil
+	}
+	out := map[string]any{
+		"input": exp.Input,
+	}
+	if exp.Run != nil {
+		out["run"] = exp.Run
+	}
+	if exp.Metrics != nil {
+		out["metrics"] = exp.Metrics
+	}
+	if exp.FinalConfig != nil {
+		out["final_config"] = exp.FinalConfig
+	}
+	return runJSONMap(out)
+}
+
+func buildOptimizationReplayBundle(run *domain.SimulationRun, parentRun *GetRunResponse, parentExport *ExportRunResponse, bestRunID string, topCandidates []string, candidateExports map[string]*ExportRunResponse) map[string]any {
+	if run == nil {
+		return nil
+	}
+	candidateIDs := uniqueCandidateIDs(bestRunID, topCandidates)
+	if parentRun == nil && parentExport == nil && len(candidateIDs) == 0 {
+		return nil
+	}
+
+	bundle := map[string]any{
+		"schema_version":         1,
+		"backend_run_id":         run.RunID,
+		"engine_run_id":          run.EngineRunID,
+		"captured_at_unix_ms":    time.Now().UnixMilli(),
+		"best_run_id":            bestRunID,
+		"top_candidates":         topCandidates,
+		"candidate_run_ids":      candidateIDs,
+		"candidate_export_count": len(candidateExports),
+	}
+	if parentRun != nil {
+		parentRunJSON := runJSONMap(parentRun.Run)
+		if len(parentRunJSON) > 0 {
+			bundle["parent_run"] = parentRunJSON
+		}
+		if len(parentRun.Run.OptimizationReplay) > 0 {
+			bundle["optimization_replay"] = parentRun.Run.OptimizationReplay
+		}
+		if bestRunID == "" && parentRun.Run.BestRunID != "" {
+			bundle["best_run_id"] = parentRun.Run.BestRunID
+		}
+		if len(parentRun.Run.CandidateRunIDs) > 0 {
+			bundle["parent_candidate_run_ids"] = parentRun.Run.CandidateRunIDs
+		}
+	}
+	if snap := exportReplaySnapshot(parentExport); len(snap) > 0 {
+		bundle["parent_export"] = snap
+		if _, ok := bundle["optimization_replay"]; !ok && parentExport.Run != nil && len(parentExport.Run.OptimizationReplay) > 0 {
+			bundle["optimization_replay"] = parentExport.Run.OptimizationReplay
+		}
+	}
+
+	candidates := make([]map[string]any, 0, len(candidateIDs))
+	for _, id := range candidateIDs {
+		exp := candidateExports[id]
+		if exp == nil {
+			continue
+		}
+		row := exportReplaySnapshot(exp)
+		if row == nil {
+			row = map[string]any{}
+		}
+		row["candidate_id"] = id
+		row["is_best"] = id == bestRunID
+		candidates = append(candidates, row)
+	}
+	if len(candidates) > 0 {
+		bundle["candidates"] = candidates
+	}
+	return bundle
+}
+
+func applyOptimizationReplaySummaryData(dst map[string]any, parentRun *GetRunResponse, bestRunID string, topCandidates []string) {
+	if dst == nil || parentRun == nil {
+		return
+	}
+	if bestRunID != "" {
+		dst["best_run_id"] = bestRunID
+	} else if parentRun.Run.BestRunID != "" {
+		dst["best_run_id"] = parentRun.Run.BestRunID
+	}
+	if len(topCandidates) > 0 {
+		dst["top_candidates"] = topCandidates
+	}
+	if len(parentRun.Run.CandidateRunIDs) > 0 {
+		dst["candidate_run_ids"] = parentRun.Run.CandidateRunIDs
+	}
+	if len(parentRun.Run.OptimizationReplay) > 0 {
+		dst["optimization_replay"] = parentRun.Run.OptimizationReplay
+	}
+}
+
 // persistRunMetrics fetches export data from the simulator and writes summaries and
 // time-series metrics into Postgres. The engine does not send scenario YAML in the callback;
 // batch candidates are built by calling GET /v1/runs/{id}/export for each ID in best_run_id
@@ -622,9 +737,21 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 
 	// Parent export for run-level metrics, time-series, and optimization history.
 	// For normal/online we use it for candidates too; for batch we only use it for summary/TS.
+	var parentRunResp *GetRunResponse
 	var exportResp *ExportRunResponse
 	var exportErr error
 	if run.EngineRunID != "" {
+		if got, err := h.engineClient.GetRun(run.EngineRunID); err == nil {
+			parentRunResp = got
+			if bestRunID == "" {
+				bestRunID = got.Run.BestRunID
+			}
+			if len(topCandidates) == 0 && len(got.Run.CandidateRunIDs) > 0 {
+				topCandidates = append([]string(nil), got.Run.CandidateRunIDs...)
+			}
+		} else {
+			log.Printf("Failed to get parent run metadata for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, err)
+		}
 		exportResp, exportErr = h.engineClient.ExportRun(run.EngineRunID)
 		if exportErr != nil {
 			log.Printf("Failed to export metrics for run_id=%s, engine_run_id=%s: %v", run.RunID, run.EngineRunID, exportErr)
@@ -727,6 +854,7 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 					summaryData["simulation_duration_ms"] = exportResp.Run.SimulationDurationMs
 				}
 			}
+			applyOptimizationReplaySummaryData(summaryData, parentRunResp, bestRunID, topCandidates)
 			var finalCfg map[string]any
 			if exportResp.FinalConfig != nil {
 				finalCfg = exportResp.FinalConfig
@@ -774,6 +902,7 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 	if isBatch {
 		ids := uniqueCandidateIDs(bestRunID, topCandidates)
 		records := make([]*repository.CandidateRecord, 0, len(ids))
+		candidateExports := make(map[string]*ExportRunResponse, len(ids))
 		bestScenarioKey := "simulation/" + run.RunID + "/best_scenario.yaml"
 		for _, id := range ids {
 			exp, err := h.engineClient.ExportRun(id)
@@ -781,6 +910,7 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				log.Printf("Failed to export candidate for run_id=%s candidate_id=%s: %v", run.RunID, id, err)
 				continue
 			}
+			candidateExports[id] = exp
 			spec, metricsOut, simWorkload := buildSpecMetricsWorkloadFromScenarioAndMetrics(exp.Input.ScenarioYAML, exp.Metrics)
 			rec := &repository.CandidateRecord{
 				UserID: run.UserID,
@@ -832,6 +962,13 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			}
 		} else if len(ids) > 0 {
 			log.Printf("Warning: no candidates persisted for run_id=%s despite %d candidate IDs (all exports may have failed or returned empty scenario_yaml)", run.RunID, len(ids))
+		}
+		if bundle := buildOptimizationReplayBundle(run, parentRunResp, exportResp, bestRunID, topCandidates, candidateExports); bundle != nil {
+			if h.simService == nil {
+				log.Printf("Cannot persist optimization replay bundle for run_id=%s: simulation service is not configured", run.RunID)
+			} else if _, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{Metadata: map[string]interface{}{"optimization_replay_bundle": bundle}}); err != nil {
+				log.Printf("Failed to persist optimization replay bundle for run_id=%s: %v", run.RunID, err)
+			}
 		}
 		return
 	}
@@ -886,7 +1023,7 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				String: run.ProjectPublicID,
 				Valid:  run.ProjectPublicID != "",
 			},
-			RunID:       run.RunID,
+			RunID: run.RunID,
 			// Ordinary / online fallback: parent run itself is the single candidate.
 			CandidateID: run.RunID,
 			Spec:        spec,

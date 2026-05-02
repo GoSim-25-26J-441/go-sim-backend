@@ -55,11 +55,11 @@ func TestHandler_GetRunCandidates_Unified(t *testing.T) {
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	run := &domain.SimulationRun{
-		RunID:            runID,
-		UserID:           userID,
-		ProjectPublicID:  "proj-1",
-		Status:           domain.StatusCompleted,
-		EngineRunID:      "engine-123",
+		RunID:           runID,
+		UserID:          userID,
+		ProjectPublicID: "proj-1",
+		Status:          domain.StatusCompleted,
+		EngineRunID:     "engine-123",
 	}
 	runData, err := json.Marshal(run)
 	require.NoError(t, err)
@@ -123,13 +123,13 @@ services:
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var resp struct {
-		UserID           string          `json:"user_id"`
-		ProjectID        string          `json:"project_id"`
-		RunID            string          `json:"run_id"`
-		BestCandidateID  string          `json:"best_candidate_id"`
-		BestCandidate    json.RawMessage `json:"best_candidate"`
-		Candidates       []struct {
-			ID   string `json:"id"`
+		UserID          string          `json:"user_id"`
+		ProjectID       string          `json:"project_id"`
+		RunID           string          `json:"run_id"`
+		BestCandidateID string          `json:"best_candidate_id"`
+		BestCandidate   json.RawMessage `json:"best_candidate"`
+		Candidates      []struct {
+			ID   string                 `json:"id"`
 			Spec map[string]interface{} `json:"spec"`
 		} `json:"candidates"`
 	}
@@ -144,8 +144,8 @@ services:
 
 	require.True(t, len(resp.BestCandidate) > 0, "best_candidate should be present")
 	var bc struct {
-		S3Path   string `json:"s3_path"`
-		Hosts    []struct {
+		S3Path string `json:"s3_path"`
+		Hosts  []struct {
 			HostID   string  `json:"host_id"`
 			CPUCores int     `json:"cpu_cores"`
 			MemoryGB float64 `json:"memory_gb"`
@@ -290,9 +290,9 @@ hosts:
     cores: 4
 `
 	metrics := map[string]any{
-		"cpu_utilization":  0.72,
+		"cpu_utilization":    0.72,
 		"memory_utilization": 0.61,
-		"throughput_rps":   1400,
+		"throughput_rps":     1400,
 	}
 	spec, metricsOut, simWorkload := buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML, metrics)
 
@@ -333,7 +333,7 @@ workload:
       rate_rps: 10
 `
 	metrics := map[string]any{
-		"throughput_rps": 6033.31,
+		"throughput_rps":  6033.31,
 		"cpu_utilization": 0.056,
 	}
 	spec, _, simWorkload := buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML, metrics)
@@ -377,6 +377,9 @@ func TestPersistRunMetrics_OrdinaryFallbackUsesParentRunIDCandidate(t *testing.T
 
 	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-ordinary-1","status":"RUN_STATUS_COMPLETED"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/export":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -445,9 +448,9 @@ func TestPersistRunMetrics_OrdinaryFallbackUsesParentRunIDCandidate(t *testing.T
 		db:           db,
 	}
 	run := &domain.SimulationRun{
-		RunID:          runID,
-		EngineRunID:    engineRunID,
-		UserID:         userID,
+		RunID:           runID,
+		EngineRunID:     engineRunID,
+		UserID:          userID,
 		ProjectPublicID: "proj-ordinary",
 	}
 
@@ -455,3 +458,144 @@ func TestPersistRunMetrics_OrdinaryFallbackUsesParentRunIDCandidate(t *testing.T
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPersistRunMetrics_BatchPersistsOptimizationReplayBundle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runID := "run-batch-1"
+	engineRunID := "engine-batch-1"
+	bestRunID := "opt-best"
+	candidateRunID := "opt-cand-2"
+	userID := "user-batch"
+
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID:
+			_, _ = w.Write([]byte(`{
+  "run": {
+    "id": "engine-batch-1",
+    "status": "RUN_STATUS_COMPLETED",
+    "best_run_id": "opt-best",
+    "candidate_run_ids": ["opt-best", "opt-cand-2"],
+    "optimization_replay": {
+      "scenario_yaml_sha256": "sha-parent",
+      "scenario_config_hash": "cfg-parent",
+      "normalized_create_run_request": {"input": {"duration_ms": 2000}}
+    }
+  }
+}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/export":
+			_, _ = w.Write([]byte(`{
+  "run": {"best_run_id": "opt-best"},
+  "input": {"scenario_yaml": "hosts:\n  - id: parent\n    cores: 2\n", "duration_ms": 2000},
+  "metrics": {"throughput_rps": 180}
+}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/metrics/timeseries":
+			_, _ = w.Write([]byte(`{"run_id":"engine-batch-1","points":[]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/metrics":
+			_, _ = w.Write([]byte(`{"metrics":{"throughput_rps":180,"latency_p95_ms":20}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+bestRunID+"/export":
+			_, _ = w.Write([]byte(`{
+  "run": {"id": "opt-best"},
+  "input": {"scenario_yaml": "hosts:\n  - id: best\n    cores: 4\n", "duration_ms": 2000, "seed": 11},
+  "final_config": {"services": [{"service_id": "gateway-1", "replicas": 2}]},
+  "metrics": {"throughput_rps": 180, "latency_p95_ms": 20}
+}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+candidateRunID+"/export":
+			_, _ = w.Write([]byte(`{
+  "run": {"id": "opt-cand-2"},
+  "input": {"scenario_yaml": "hosts:\n  - id: cand\n    cores: 3\n", "duration_ms": 2000, "seed": 12},
+  "metrics": {"throughput_rps": 175, "latency_p95_ms": 25}
+}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}
+	}))
+	defer engineServer.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value(int64(2000)),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectBegin()
+	prep := mock.ExpectPrepare(`INSERT INTO simulation_candidates`)
+	for _, tc := range []struct {
+		id     string
+		s3Path string
+	}{
+		{id: bestRunID, s3Path: "simulation/" + runID + "/best_scenario.yaml"},
+		{id: candidateRunID, s3Path: ""},
+	} {
+		prep.ExpectExec().
+			WithArgs(
+				driver.Value(userID),
+				sqlmock.AnyArg(),
+				driver.Value(runID),
+				driver.Value(tc.id),
+				sqlmock.AnyArg(),
+				sqlmock.AnyArg(),
+				sqlmock.AnyArg(),
+				driver.Value("export"),
+				driver.Value(tc.s3Path),
+			).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+	}
+	mock.ExpectCommit()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	svc := service.NewSimulationService(runRepo)
+	run := &domain.SimulationRun{
+		RunID:           runID,
+		EngineRunID:     engineRunID,
+		UserID:          userID,
+		ProjectPublicID: "proj-batch",
+		Status:          domain.StatusCompleted,
+	}
+	require.NoError(t, runRepo.Create(run))
+
+	h := &Handler{
+		simService:   svc,
+		engineClient: NewSimulationEngineClient(engineServer.URL),
+		db:           db,
+	}
+
+	h.persistRunMetrics(context.Background(), run, bestRunID, []string{bestRunID, candidateRunID})
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	updated, err := svc.GetRun(runID)
+	require.NoError(t, err)
+	rawBundle, ok := updated.Metadata["optimization_replay_bundle"].(map[string]any)
+	require.True(t, ok, "optimization_replay_bundle should be persisted in run metadata: %#v", updated.Metadata)
+	assert.Equal(t, bestRunID, rawBundle["best_run_id"])
+	assert.Equal(t, "cfg-parent", rawBundle["optimization_replay"].(map[string]any)["scenario_config_hash"])
+	candidates, ok := rawBundle["candidates"].([]any)
+	require.True(t, ok)
+	require.Len(t, candidates, 2)
+	first := candidates[0].(map[string]any)
+	assert.Equal(t, bestRunID, first["candidate_id"])
+	assert.Equal(t, true, first["is_best"])
+	input := first["input"].(map[string]any)
+	assert.Contains(t, input["scenario_yaml"], "best")
+}

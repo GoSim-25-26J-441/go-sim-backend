@@ -56,6 +56,7 @@ func TestPreflightValidation_CreateRunForProject_ValidProceeds(t *testing.T) {
 			var payload map[string]any
 			require.NoError(t, json.Unmarshal(b, &payload))
 			assert.Contains(t, payload, "scenario_yaml")
+			require.Equal(t, "preflight", payload["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))

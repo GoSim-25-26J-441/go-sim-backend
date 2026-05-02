@@ -87,6 +87,11 @@ func TestSimulationEngineClient_GetRun(t *testing.T) {
 				"ended_at_unix_ms":       0,
 				"real_duration_ms":       5000,
 				"simulation_duration_ms": 5000,
+				"best_run_id":            "opt-best",
+				"candidate_run_ids":      []string{"opt-best", "opt-2"},
+				"optimization_replay": map[string]any{
+					"scenario_config_hash": "cfg-1",
+				},
 			},
 		})
 	}))
@@ -101,6 +106,9 @@ func TestSimulationEngineClient_GetRun(t *testing.T) {
 	assert.Equal(t, int64(1705312201000), resp.Run.StartedAt)
 	assert.Equal(t, int64(5000), resp.Run.RealDurationMs)
 	assert.Equal(t, int64(5000), resp.Run.SimulationDurationMs)
+	assert.Equal(t, "opt-best", resp.Run.BestRunID)
+	assert.Equal(t, []string{"opt-best", "opt-2"}, resp.Run.CandidateRunIDs)
+	assert.Equal(t, "cfg-1", resp.Run.OptimizationReplay["scenario_config_hash"])
 }
 
 func TestSimulationEngineClient_ValidateScenario_SendsPreflightMode(t *testing.T) {
@@ -116,9 +124,42 @@ func TestSimulationEngineClient_ValidateScenario_SendsPreflightMode(t *testing.T
 	defer server.Close()
 
 	client := simhttp.NewSimulationEngineClient(server.URL)
-	_, err := client.ValidateScenario(context.Background(), "scenario: yaml")
+	_, err := client.ValidateScenario(context.Background(), "scenario: yaml", simhttp.ScenarioValidateModePreflight)
 	require.NoError(t, err)
 	require.Equal(t, "preflight", gotBody["mode"])
+	require.Equal(t, "scenario: yaml", gotBody["scenario_yaml"])
+}
+
+func TestSimulationEngineClient_ValidateScenario_EmptyModeDefaultsToPreflight(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"valid": true, "errors": []any{}, "warnings": []any{}, "summary": map[string]any{}})
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	_, err := client.ValidateScenario(context.Background(), "scenario: yaml", "")
+	require.NoError(t, err)
+	require.Equal(t, "preflight", gotBody["mode"])
+}
+
+func TestSimulationEngineClient_ValidateScenario_SendsDraftMode(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"valid": true, "errors": []any{}, "warnings": []any{}, "summary": map[string]any{}})
+	}))
+	defer server.Close()
+
+	client := simhttp.NewSimulationEngineClient(server.URL)
+	_, err := client.ValidateScenario(context.Background(), "scenario: yaml", simhttp.ScenarioValidateModeDraft)
+	require.NoError(t, err)
+	require.Equal(t, "draft", gotBody["mode"])
 	require.Equal(t, "scenario: yaml", gotBody["scenario_yaml"])
 }
 
@@ -136,7 +177,7 @@ func TestSimulationEngineClient_ValidateScenario_OK(t *testing.T) {
 	defer server.Close()
 
 	client := simhttp.NewSimulationEngineClient(server.URL)
-	res, err := client.ValidateScenario(context.Background(), "x")
+	res, err := client.ValidateScenario(context.Background(), "x", simhttp.ScenarioValidateModePreflight)
 	require.NoError(t, err)
 	require.True(t, res.Valid)
 }
@@ -158,7 +199,7 @@ func TestSimulationEngineClient_ValidateScenario_UnprocessableEntity_StructuredE
 	defer server.Close()
 
 	client := simhttp.NewSimulationEngineClient(server.URL)
-	_, err := client.ValidateScenario(context.Background(), "workload: []")
+	_, err := client.ValidateScenario(context.Background(), "workload: []", simhttp.ScenarioValidateModePreflight)
 	var sve *simhttp.ScenarioValidationError
 	require.Error(t, err)
 	require.ErrorAs(t, err, &sve)
@@ -177,7 +218,7 @@ func TestSimulationEngineClient_ValidateScenario_InternalServerError_Unavailable
 	defer server.Close()
 
 	client := simhttp.NewSimulationEngineClient(server.URL)
-	_, err := client.ValidateScenario(context.Background(), "x")
+	_, err := client.ValidateScenario(context.Background(), "x", simhttp.ScenarioValidateModePreflight)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, simhttp.ErrScenarioValidationUnavailable))
 }
@@ -192,10 +233,15 @@ func TestSimulationEngineClient_ExportRun_WithRunDurations(t *testing.T) {
 			"run": map[string]interface{}{
 				"real_duration_ms":       5000,
 				"simulation_duration_ms": 5000,
+				"candidate_run_ids":      []string{"opt-best"},
+				"optimization_replay": map[string]any{
+					"scenario_yaml_sha256": "sha-1",
+				},
 			},
 			"input": map[string]interface{}{
 				"scenario_yaml": "hosts: []",
 				"duration_ms":   5000,
+				"seed":          123,
 			},
 			"metrics": map[string]interface{}{"total_requests": float64(100)},
 		})
@@ -209,8 +255,11 @@ func TestSimulationEngineClient_ExportRun_WithRunDurations(t *testing.T) {
 	require.NotNil(t, resp.Run, "export run object should be set")
 	assert.Equal(t, int64(5000), resp.Run.RealDurationMs)
 	assert.Equal(t, int64(5000), resp.Run.SimulationDurationMs)
+	assert.Equal(t, []string{"opt-best"}, resp.Run.CandidateRunIDs)
+	assert.Equal(t, "sha-1", resp.Run.OptimizationReplay["scenario_yaml_sha256"])
 	assert.Equal(t, "hosts: []", resp.Input.ScenarioYAML)
 	assert.Equal(t, int64(5000), resp.Input.DurationMs)
+	assert.Equal(t, int64(123), resp.Input.Seed)
 }
 
 func TestSimulationEngineClient_CreateRunWithInput_BatchOptimizationConfig(t *testing.T) {
