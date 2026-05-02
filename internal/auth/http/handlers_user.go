@@ -105,6 +105,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		DisplayName  *string                `json:"display_name,omitempty"`
 		PhotoURL     *string                `json:"photo_url,omitempty"`
 		Organization *string                `json:"organization,omitempty"`
+		NewDesigner  *string                `json:"new_designer,omitempty"`
 		Preferences  map[string]interface{} `json:"preferences,omitempty"`
 	}
 
@@ -117,6 +118,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		DisplayName:  req.DisplayName,
 		PhotoURL:     req.PhotoURL,
 		Organization: req.Organization,
+		NewDesigner:  req.NewDesigner,
 		Preferences:  req.Preferences,
 	}
 
@@ -124,6 +126,10 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 	if err != nil {
 		if err == domain.ErrUserNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			return
+		}
+		if err == domain.ErrInvalidInput {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid new_designer (use Yes or No)"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update user"})

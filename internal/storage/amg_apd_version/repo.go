@@ -438,6 +438,8 @@ func (r *Repo) GetByID(id string) (*VersionRow, error) {
 
 // GetByIDForUserChat returns a version by id only if it belongs to the given user_id and chat_id.
 func (r *Repo) GetByIDForUserChat(id, userID, chatID string) (*VersionRow, error) {
+	userID = strings.TrimSpace(userID)
+	chatID = strings.TrimSpace(chatID)
 	if userID == "" {
 		userID = DefaultUserID
 	}
@@ -448,10 +450,42 @@ func (r *Repo) GetByIDForUserChat(id, userID, chatID string) (*VersionRow, error
 	if err != nil || row == nil {
 		return row, err
 	}
-	if row.UserID != userID || row.ChatID != chatID {
+	if strings.TrimSpace(row.UserID) != userID || strings.TrimSpace(row.ChatID) != chatID {
 		return nil, nil
 	}
 	return row, nil
+}
+
+// UpdateTitleForUserChat sets the display title for a version owned by the user/project (any source).
+func (r *Repo) UpdateTitleForUserChat(id, userID, chatID, title string) (*VersionRow, error) {
+	userID = strings.TrimSpace(userID)
+	chatID = strings.TrimSpace(chatID)
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if chatID == "" {
+		chatID = DefaultChatID
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil, fmt.Errorf("title is required")
+	}
+	res, err := r.db.Exec(`
+		UPDATE diagram_versions
+		SET title = $1
+		WHERE id = $2 AND user_firebase_uid = $3 AND project_public_id = $4
+	`, title, id, userID, chatID)
+	if err != nil {
+		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	return r.GetByIDForUserChat(id, userID, chatID)
 }
 
 // DeleteByID deletes a version by id. Returns whether a row was deleted.
@@ -466,6 +500,8 @@ func (r *Repo) DeleteByID(id string) (bool, error) {
 
 // DeleteByIDForUserChat deletes a version by id only if it belongs to user_id and chat_id.
 func (r *Repo) DeleteByIDForUserChat(id, userID, chatID string) (bool, error) {
+	userID = strings.TrimSpace(userID)
+	chatID = strings.TrimSpace(chatID)
 	if userID == "" {
 		userID = DefaultUserID
 	}
@@ -510,6 +546,8 @@ type VersionSummary struct {
 // ListSummariesByUserChat returns lightweight summaries for user/chat (all diagram_versions
 // for the project, not only source = amg_apd, so the main canvas row appears alongside AMG saves).
 func (r *Repo) ListSummariesByUserChat(userID, chatID string) ([]VersionSummary, error) {
+	userID = strings.TrimSpace(userID)
+	chatID = strings.TrimSpace(chatID)
 	if userID == "" {
 		userID = DefaultUserID
 	}

@@ -19,8 +19,8 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 // GetByFirebaseUID retrieves a user by their Firebase UID
 func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 	query := `
-		SELECT firebase_uid, email, display_name, photo_url, role, organization, 
-		       preferences, created_at, updated_at, last_login_at
+		SELECT firebase_uid, email, display_name, photo_url, role, organization,
+		       new_designer, preferences, created_at, updated_at, last_login_at
 		FROM users
 		WHERE firebase_uid = $1
 	`
@@ -37,6 +37,7 @@ func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 		&photoURL,
 		&user.Role,
 		&organization,
+		&user.NewDesigner,
 		&preferencesJSON,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -79,8 +80,8 @@ func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 // GetByEmail retrieves a user by email address.
 func (r *UserRepository) GetByEmail(email string) (*domain.User, error) {
 	query := `
-		SELECT firebase_uid, email, display_name, photo_url, role, organization, 
-		       preferences, created_at, updated_at, last_login_at
+		SELECT firebase_uid, email, display_name, photo_url, role, organization,
+		       new_designer, preferences, created_at, updated_at, last_login_at
 		FROM users
 		WHERE email = $1
 	`
@@ -97,6 +98,7 @@ func (r *UserRepository) GetByEmail(email string) (*domain.User, error) {
 		&photoURL,
 		&user.Role,
 		&organization,
+		&user.NewDesigner,
 		&preferencesJSON,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -171,7 +173,8 @@ func (r *UserRepository) Create(user *domain.User) error {
 func (r *UserRepository) Update(user *domain.User) error {
 	query := `
 		UPDATE users
-		SET display_name = $2, photo_url = $3, organization = $4, preferences = $5, updated_at = NOW()
+		SET display_name = $2, photo_url = $3, organization = $4, preferences = $5,
+		    new_designer = $6, updated_at = NOW()
 		WHERE firebase_uid = $1
 		RETURNING updated_at
 	`
@@ -188,6 +191,7 @@ func (r *UserRepository) Update(user *domain.User) error {
 		user.PhotoURL,
 		user.Organization,
 		preferencesJSON,
+		user.NewDesigner,
 	).Scan(&user.UpdatedAt)
 
 	if err == sql.ErrNoRows {

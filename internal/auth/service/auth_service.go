@@ -5,6 +5,10 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/auth/repository"
 )
 
+func validNewDesigner(v string) bool {
+	return v == "Yes" || v == "No"
+}
+
 type AuthService struct {
 	userRepo *repository.UserRepository
 }
@@ -82,6 +86,9 @@ func (s *AuthService) SyncUser(req *domain.CreateUserRequest) (*domain.User, err
 	if err := s.userRepo.Create(user); err != nil {
 		return nil, err
 	}
+	if user.NewDesigner == "" {
+		user.NewDesigner = "Yes"
+	}
 
 	return user, nil
 }
@@ -102,6 +109,12 @@ func (s *AuthService) UpdateUser(uid string, req *domain.UpdateUserRequest) (*do
 	}
 	if req.Organization != nil {
 		user.Organization = req.Organization
+	}
+	if req.NewDesigner != nil {
+		if !validNewDesigner(*req.NewDesigner) {
+			return nil, domain.ErrInvalidInput
+		}
+		user.NewDesigner = *req.NewDesigner
 	}
 	
 	// Merge preferences if provided (don't overwrite existing ones)

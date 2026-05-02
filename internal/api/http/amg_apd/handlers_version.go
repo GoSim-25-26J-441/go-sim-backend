@@ -2,6 +2,7 @@ package amg_apd
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,14 +15,14 @@ const defaultUserID = "TestUser123"
 const defaultChatID = "TestChat123"
 
 func getUserID(c *gin.Context) string {
-	if v := c.GetHeader("X-User-Id"); v != "" {
+	if v := strings.TrimSpace(c.GetHeader("X-User-Id")); v != "" {
 		return v
 	}
 	return defaultUserID
 }
 
 func getChatID(c *gin.Context) string {
-	if v := c.GetHeader("X-Chat-Id"); v != "" {
+	if v := strings.TrimSpace(c.GetHeader("X-Chat-Id")); v != "" {
 		return v
 	}
 	return defaultChatID
@@ -74,6 +75,44 @@ func (h *Handlers) GetVersion(c *gin.Context) {
 		"dot_content":    row.DOTContent,
 		"detections":     detections,
 		"created_at":     row.CreatedAt,
+	})
+}
+
+// PatchVersion updates mutable fields on a version (e.g. title). Any source row for this user/project.
+func (h *Handlers) PatchVersion(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "version id is required"})
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON body"})
+		return
+	}
+	if strings.TrimSpace(body.Title) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+		return
+	}
+	userID := getUserID(c)
+	chatID := getChatID(c)
+	updated, err := h.versionRepo.UpdateTitleForUserChat(id, userID, chatID, body.Title)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if updated == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "version not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":             updated.ID,
+		"version_number": updated.VersionNumber,
+		"title":          updated.Title,
+		"source":         updated.Source,
+		"created_at":     updated.CreatedAt,
 	})
 }
 
