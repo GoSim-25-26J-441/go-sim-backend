@@ -52,6 +52,7 @@ When S3 is configured (see `.env.example`), the realtime simulation module will:
 
 - On simulation completion, the backend receives a callback and (for **batch optimization** runs) the payload may include `best_run_id` and `top_candidates`.
 - **Batch optimization:** When `best_run_id` or `top_candidates` are present, the backend fetches the best scenario from `GET /v1/runs/{best_run_id}/export` and builds the candidates list by calling `GET /v1/runs/{id}/export` for each unique id in `{best_run_id} ∪ top_candidates`. Each candidate is persisted; the best candidate’s S3 path is stored as `best_scenario.yaml`.
+- The backend also fetches the parent run from `GET /v1/runs/{engine_run_id}` and persists an `optimization_replay_bundle` in run metadata. The bundle includes the simulator replay hashes/payload, ordered candidate IDs, parent export summary, and retained top-candidate exports for audit/replay.
 - **Normal / online runs:** When no optimization IDs are present, the backend calls `GET /v1/runs/{engine_run_id}/export` once and uses that response for the single best scenario and (if present) the export’s `candidates` array or a single synthesized candidate.
 - The best scenario is uploaded to object storage under:
   - `simulation/{run_id}/best_scenario.yaml` (within the configured `S3_BUCKET`).

@@ -3,11 +3,16 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
@@ -54,6 +59,10 @@ func TestPostValidateDiagramVersionScenario_Valid_ReturnsRawValidation_NoPersist
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
 			atomic.AddInt32(&validateCalls, 1)
+			b, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(b, &payload))
+			require.Equal(t, "draft", payload["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":2,"workloads":1}}`))
@@ -173,6 +182,225 @@ func TestPostValidateDiagramVersionScenario_EmptyScenarioYAML_Returns400(t *test
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostValidateDiagramVersionScenario_ModePreflight_ForwardsPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var gotMode string
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
+			b, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(b, &payload))
+			gotMode = payload["mode"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer engine.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	h := &Handler{
+		simService:        service.NewSimulationService(simrepo.NewRunRepository(rdb)),
+		engineClient:      NewSimulationEngineClient(engine.URL),
+		scenarioCacheRepo: simrepo.NewScenarioCacheRepository(db),
+	}
+	router := gin.New()
+	router.POST("/projects/:project_id/diagram-versions/:diagram_version_id/scenario/validate", h.PostValidateDiagramVersionScenario)
+
+	mock.ExpectQuery(`SELECT id FROM diagram_versions`).
+		WithArgs("dv-1", "p-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
+
+	yaml := minimalValidCoreScenarioYAML("svc-validate-preflight")
+	req := httptest.NewRequest(http.MethodPost, "/projects/p-1/diagram-versions/dv-1/scenario/validate", bytes.NewBufferString(`{"scenario_yaml":`+jsonEscape(yaml)+`,"mode":"preflight"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "preflight", gotMode)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostValidateDiagramVersionScenario_InvalidMode_Returns400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
+			t.Fatal("engine should not be called")
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer engine.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	h := &Handler{
+		simService:        service.NewSimulationService(simrepo.NewRunRepository(rdb)),
+		engineClient:      NewSimulationEngineClient(engine.URL),
+		scenarioCacheRepo: simrepo.NewScenarioCacheRepository(db),
+	}
+	router := gin.New()
+	router.POST("/projects/:project_id/diagram-versions/:diagram_version_id/scenario/validate", h.PostValidateDiagramVersionScenario)
+
+	req := httptest.NewRequest(http.MethodPost, "/projects/p-1/diagram-versions/dv-1/scenario/validate", bytes.NewBufferString(`{"scenario_yaml":"hosts: []","mode":"full"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(t, resp["error"], `validation mode must be "draft" or "preflight"`)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPutDiagramVersionScenario_ModePreflight_ForwardsPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var gotMode string
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
+			b, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(b, &payload))
+			gotMode = payload["mode"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer engine.Close()
+
+	yaml := minimalValidCoreScenarioYAML("svc-put-preflight")
+	now := time.Now()
+	hashBytes := sha256.Sum256([]byte(yaml))
+	hashHex := hex.EncodeToString(hashBytes[:])
+	diagramYAML := "services:\n  - id: g\n    type: api_gateway\n"
+	srcHash := simrepo.HashAMGAPDSource(diagramYAML)
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	h := &Handler{
+		simService:        service.NewSimulationService(simrepo.NewRunRepository(rdb)),
+		engineClient:      NewSimulationEngineClient(engine.URL),
+		scenarioCacheRepo: simrepo.NewScenarioCacheRepository(db),
+	}
+	router := gin.New()
+	router.PUT("/projects/:project_id/diagram-versions/:diagram_version_id/scenario", h.PutDiagramVersionScenario)
+
+	mock.ExpectQuery(`SELECT id FROM diagram_versions`).
+		WithArgs("dv-1", "p-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
+	mock.ExpectQuery(`SELECT yaml_content FROM diagram_versions`).
+		WithArgs("dv-1", "p-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"yaml_content"}).AddRow(diagramYAML))
+	mock.ExpectQuery(`SELECT diagram_version_id, scenario_yaml, scenario_hash`).
+		WithArgs("dv-1").
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}))
+	mock.ExpectQuery(`INSERT INTO simulation_scenario_cache`).
+		WithArgs("dv-1", yaml, sqlmock.AnyArg(), "", "edited", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}).
+			AddRow("dv-1", yaml, hashHex, nil, "edited", srcHash, now, now))
+
+	putBody := fmt.Sprintf(`{"scenario_yaml":%q,"overwrite":false,"mode":"preflight"}`, yaml)
+	req := httptest.NewRequest(http.MethodPut, "/projects/p-1/diagram-versions/dv-1/scenario", bytes.NewBufferString(putBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "preflight", gotMode)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPutDiagramVersionScenario_InvalidMode_Returns400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
+			t.Fatal("engine should not be called")
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer engine.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	h := &Handler{
+		simService:        service.NewSimulationService(simrepo.NewRunRepository(rdb)),
+		engineClient:      NewSimulationEngineClient(engine.URL),
+		scenarioCacheRepo: simrepo.NewScenarioCacheRepository(db),
+	}
+	router := gin.New()
+	router.PUT("/projects/:project_id/diagram-versions/:diagram_version_id/scenario", h.PutDiagramVersionScenario)
+
+	req := httptest.NewRequest(http.MethodPut, "/projects/p-1/diagram-versions/dv-1/scenario", bytes.NewBufferString(`{"scenario_yaml":"hosts: []","overwrite":false,"mode":"staging"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(t, resp["error"], `validation mode must be "draft" or "preflight"`)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestParseScenarioValidationEditorMode(t *testing.T) {
+	m, err := ParseScenarioValidationEditorMode("", ScenarioValidateModeDraft)
+	require.NoError(t, err)
+	require.Equal(t, ScenarioValidateModeDraft, m)
+
+	m, err = ParseScenarioValidationEditorMode("  ", ScenarioValidateModeDraft)
+	require.NoError(t, err)
+	require.Equal(t, ScenarioValidateModeDraft, m)
+
+	m, err = ParseScenarioValidationEditorMode("draft", ScenarioValidateModeDraft)
+	require.NoError(t, err)
+	require.Equal(t, ScenarioValidateModeDraft, m)
+
+	m, err = ParseScenarioValidationEditorMode("preflight", ScenarioValidateModeDraft)
+	require.NoError(t, err)
+	require.Equal(t, ScenarioValidateModePreflight, m)
+
+	_, err = ParseScenarioValidationEditorMode("full", ScenarioValidateModeDraft)
+	require.Error(t, err)
+
+	_, err = ParseScenarioValidationEditorMode("FULL", ScenarioValidateModeDraft)
+	require.Error(t, err)
 }
 
 func TestPostValidateDiagramVersionScenario_InvalidOwnership_Returns400(t *testing.T) {

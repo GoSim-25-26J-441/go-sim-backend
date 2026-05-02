@@ -116,7 +116,7 @@ func (h *Handler) resolveScenarioYAMLForDiagramVersion(ctx context.Context, user
 	if err != nil {
 		return "", diagramHash, cached, err
 	}
-	if _, err := h.validateScenarioPreflight(ctx, genYAML); err != nil {
+	if _, err := h.validateScenarioDraft(ctx, genYAML); err != nil {
 		return "", diagramHash, cached, err
 	}
 	sh := generationHash
@@ -214,7 +214,7 @@ func (h *Handler) GetDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
 		return
 	}
-	valRes, err := h.validateScenarioPreflight(c.Request.Context(), genYAML)
+	valRes, err := h.validateScenarioDraft(c.Request.Context(), genYAML)
 	if err != nil {
 		h.writeScenarioValidationError(c, err, genYAML)
 		return
@@ -263,6 +263,7 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 	var body struct {
 		ScenarioYAML string `json:"scenario_yaml"`
 		Overwrite    bool   `json:"overwrite"`
+		Mode         string `json:"mode"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -272,7 +273,18 @@ func (h *Handler) PutDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required"})
 		return
 	}
-	valRes, err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML)
+	validationMode, modeErr := ParseScenarioValidationEditorMode(body.Mode, ScenarioValidateModeDraft)
+	if modeErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": modeErr.Error()})
+		return
+	}
+	var valRes *ScenarioValidationResult
+	var err error
+	if validationMode == ScenarioValidateModePreflight {
+		valRes, err = h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML)
+	} else {
+		valRes, err = h.validateScenarioDraft(c.Request.Context(), body.ScenarioYAML)
+	}
 	if err != nil {
 		h.writeScenarioValidationError(c, err)
 		return
@@ -339,6 +351,7 @@ func (h *Handler) PostValidateDiagramVersionScenario(c *gin.Context) {
 	}
 	var body struct {
 		ScenarioYAML string `json:"scenario_yaml"`
+		Mode         string `json:"mode"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -346,6 +359,11 @@ func (h *Handler) PostValidateDiagramVersionScenario(c *gin.Context) {
 	}
 	if strings.TrimSpace(body.ScenarioYAML) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario_yaml is required"})
+		return
+	}
+	validationMode, modeErr := ParseScenarioValidationEditorMode(body.Mode, ScenarioValidateModeDraft)
+	if modeErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": modeErr.Error()})
 		return
 	}
 	if h.scenarioCacheRepo == nil {
@@ -356,7 +374,13 @@ func (h *Handler) PostValidateDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid diagram_version_id for project/user"})
 		return
 	}
-	valRes, err := h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML)
+	var valRes *ScenarioValidationResult
+	var err error
+	if validationMode == ScenarioValidateModePreflight {
+		valRes, err = h.validateScenarioPreflight(c.Request.Context(), body.ScenarioYAML)
+	} else {
+		valRes, err = h.validateScenarioDraft(c.Request.Context(), body.ScenarioYAML)
+	}
 	if err != nil {
 		if h.writeScenarioValidationError(c, err) {
 			return
@@ -428,7 +452,7 @@ func (h *Handler) PostRegenerateDiagramVersionScenario(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "failed to generate valid scenario from AMG/APD YAML", "details": genErr.Error()})
 		return
 	}
-	valRes, err := h.validateScenarioPreflight(c.Request.Context(), genYAML)
+	valRes, err := h.validateScenarioDraft(c.Request.Context(), genYAML)
 	if err != nil {
 		h.writeScenarioValidationError(c, err, genYAML)
 		return

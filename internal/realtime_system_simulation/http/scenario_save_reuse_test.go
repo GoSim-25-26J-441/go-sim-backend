@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -29,6 +30,10 @@ func TestCreateRunForProject_InlineScenarioWithoutSaveDoesNotTouchCache(t *testi
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
 			atomic.AddInt32(&validateCalls, 1)
+			b, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(b, &payload))
+			require.Equal(t, "preflight", payload["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
@@ -80,9 +85,14 @@ func TestCreateRunForProject_InlineScenarioWithoutSaveDoesNotTouchCache(t *testi
 
 func TestCreateRunForProject_SaveScenarioTruePersistsEdited(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	var validateModes []string
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			b, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(b, &payload))
+			validateModes = append(validateModes, payload["mode"].(string))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
@@ -140,6 +150,7 @@ func TestCreateRunForProject_SaveScenarioTruePersistsEdited(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, []string{"draft", "preflight"}, validateModes)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -243,6 +254,10 @@ func TestPutDiagramVersionScenario_ThenGetReturnsSavedYAML(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
+			b, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(b, &payload))
+			require.Equal(t, "draft", payload["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
