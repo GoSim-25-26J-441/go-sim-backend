@@ -273,11 +273,15 @@ LIMIT 1;
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		response := gin.H{
 			"user_id":    r.UserID,
 			"project_id": r.ProjectID,
 			"design":     json.RawMessage(design),
-		})
+		}
+		if simulation, ok := reqEnvelope["simulation"]; ok {
+			response["simulation"] = json.RawMessage(simulation)
+		}
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
