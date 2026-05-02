@@ -91,6 +91,17 @@ func NormalizeOptimizationPayload(optJSON json.RawMessage) (json.RawMessage, boo
 	}
 	delete(raw, "host_drain_timeout_ms")
 	delete(raw, "memory_headroom_mb")
+
+	// BFF-only hint: merge mode:"batch" into batch:{} and strip mode so simulation-core JSON matches engine protos.
+	if modeVal, ok := raw["mode"]; ok {
+		delete(raw, "mode")
+		if s, ok := modeVal.(string); ok && strings.EqualFold(strings.TrimSpace(s), "batch") {
+			if raw["batch"] == nil {
+				raw["batch"] = map[string]interface{}{}
+			}
+		}
+	}
+
 	out, err := json.Marshal(raw)
 	if err != nil {
 		return nil, true, fmt.Errorf("marshal normalized optimization: %w", err)

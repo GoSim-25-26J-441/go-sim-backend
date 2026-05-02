@@ -19,7 +19,8 @@ const (
 
 // applyBatchOptimizationGuards adjusts optimization JSON before forwarding to simulation-core when optimization.batch
 // is a non-null object. Unknown top-level keys are preserved via map round-trip.
-func applyBatchOptimizationGuards(raw json.RawMessage) (json.RawMessage, []string, error) {
+// scenarioYAML is used to fill missing fleet bounds in batch when safe; empty yaml returns a validation error for incomplete batch.
+func applyBatchOptimizationGuards(raw json.RawMessage, scenarioYAML string) (json.RawMessage, []string, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil, nil
 	}
@@ -35,6 +36,9 @@ func applyBatchOptimizationGuards(raw json.RawMessage) (json.RawMessage, []strin
 		return raw, nil, nil
 	}
 	normalizeBatchJSONForEngine(batchMap)
+	if err := populateBatchFleetDefaults(batchMap, scenarioYAML); err != nil {
+		return nil, nil, err
+	}
 
 	var warnings []string
 	meKey := "max_evaluations"
