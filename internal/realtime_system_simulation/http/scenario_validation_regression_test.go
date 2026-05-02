@@ -29,7 +29,7 @@ func TestGetDiagramVersionScenario_InvalidWorkloadEndpoint_NoCacheInsert_Structu
 			b, _ := io.ReadAll(r.Body)
 			var req map[string]any
 			require.NoError(t, json.Unmarshal(b, &req))
-			require.Equal(t, "preflight", req["mode"])
+			require.Equal(t, ScenarioValidateModeDraft, req["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{
@@ -103,6 +103,10 @@ func TestCreateRunForProject_SemanticInvalid_NoBackendRun_NoEngineRuns(t *testin
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
 			atomic.AddInt32(&validateCalls, 1)
+			b, _ := io.ReadAll(r.Body)
+			var req map[string]any
+			require.NoError(t, json.Unmarshal(b, &req))
+			require.Equal(t, ScenarioValidateModePreflight, req["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{

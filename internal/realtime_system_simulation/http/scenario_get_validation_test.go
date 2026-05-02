@@ -39,6 +39,7 @@ func TestGetDiagramVersionScenario_ValidateBeforeCacheSave_IncludesValidation(t 
 			var payload map[string]any
 			require.NoError(t, json.Unmarshal(b, &payload))
 			require.Contains(t, payload, "scenario_yaml")
+			require.Equal(t, "draft", payload["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":3,"services":1,"workloads":1}}`))
@@ -99,6 +100,10 @@ func TestGetDiagramVersionScenario_ValidationFails_NoCache_IncludesDraft(t *test
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate" {
 			atomic.AddInt32(&validateCalls, 1)
+			b, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(b, &payload))
+			require.Equal(t, "draft", payload["mode"])
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"valid":false,"errors":[{"code":"X","message":"reject"}],"warnings":[],"summary":{}}`))
