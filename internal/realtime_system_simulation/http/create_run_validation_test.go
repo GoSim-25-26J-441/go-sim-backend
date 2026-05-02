@@ -427,6 +427,17 @@ func TestCreateRun_BatchOptimization_DefaultMaxEvaluationsForwarded(t *testing.T
 	input := outer["input"].(map[string]interface{})
 	opt := input["optimization"].(map[string]interface{})
 	assert.Equal(t, float64(DefaultBatchMaxEvaluations), opt["max_evaluations"])
+	batch := opt["batch"].(map[string]interface{})
+	assert.Equal(t, float64(1), batch["min_hosts"])
+	assert.Equal(t, float64(1), batch["max_hosts"])
+	assert.Equal(t, float64(4), batch["min_host_cpu_cores"])
+	assert.Equal(t, float64(16), batch["min_host_memory_gb"])
+	act := batch["allowed_actions"].([]interface{})
+	require.GreaterOrEqual(t, len(act), 2)
+	assert.Contains(t, act, "BATCH_SCALING_ACTION_SCALE_REPLICAS")
+	assert.Contains(t, act, BatchScalingActionScaleHosts)
+	_, hasMode := opt["mode"]
+	assert.False(t, hasMode, "engine optimization payload must not include BFF-only mode")
 }
 
 func TestCreateRun_RecommendedConfig_RejectedWithoutBatch(t *testing.T) {
@@ -526,6 +537,139 @@ func TestCreateRun_Batch_RecommendedConfig_StartsAndForwardsP95Placeholder(t *te
 	input := outer["input"].(map[string]interface{})
 	opt := input["optimization"].(map[string]interface{})
 	assert.Equal(t, RecommendedConfigEngineObjective, opt["objective"])
+	batch := opt["batch"].(map[string]interface{})
+	assert.Equal(t, float64(4), batch["min_host_cpu_cores"])
+	assert.Contains(t, batch["allowed_actions"].([]interface{}), BatchScalingActionScaleHosts)
+}
+
+func TestCreateRun_Batch_ModeBatchWithoutBatchKey_FillsFleetAndOmitsMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured []byte
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			var err error
+			captured, err = io.ReadAll(r.Body)
+			require.NoError(t, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-mode-batch","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer engineServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+	h := &Handler{
+		simService:   simSvc,
+		engineClient: NewSimulationEngineClient(engineServer.URL),
+		callbackURL:  "http://localhost/callback",
+	}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-mode-batch"),
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"mode":      "batch",
+			"objective": "cpu_utilization",
+			"online":    false,
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var outer map[string]interface{}
+	require.NoError(t, json.Unmarshal(captured, &outer))
+	input := outer["input"].(map[string]interface{})
+	opt := input["optimization"].(map[string]interface{})
+	_, hasMode := opt["mode"]
+	assert.False(t, hasMode)
+	assert.Equal(t, "cpu_utilization", opt["objective"])
+	batch := opt["batch"].(map[string]interface{})
+	assert.NotEmpty(t, batch)
+	assert.Equal(t, float64(1), batch["max_hosts"])
+}
+
+func TestCreateRun_BatchOptimization_CpuObjective_EmptyBatch_ForwardedFleetBounds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured []byte
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/scenarios:validate":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"errors":[],"warnings":[],"summary":{"hosts":1,"services":1,"workloads":1}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			var err error
+			captured, err = io.ReadAll(r.Body)
+			require.NoError(t, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-cpu-batch","status":"RUN_STATUS_PENDING","created_at_unix_ms":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer engineServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+	h := &Handler{
+		simService:   simSvc,
+		engineClient: NewSimulationEngineClient(engineServer.URL),
+		callbackURL:  "http://localhost/callback",
+	}
+	router := gin.New()
+	router.POST("/runs", h.CreateRun)
+
+	body := map[string]interface{}{
+		"scenario_yaml": minimalValidCoreScenarioYAML("svc-cpu-empty-batch"),
+		"duration_ms":   5000,
+		"optimization": map[string]interface{}{
+			"objective": "cpu_utilization",
+			"online":    false,
+			"batch":     map[string]interface{}{},
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", "user-1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var outer map[string]interface{}
+	require.NoError(t, json.Unmarshal(captured, &outer))
+	input := outer["input"].(map[string]interface{})
+	opt := input["optimization"].(map[string]interface{})
+	assert.Equal(t, "cpu_utilization", opt["objective"])
+	batch := opt["batch"].(map[string]interface{})
+	assert.Equal(t, float64(1), batch["min_hosts"])
+	assert.Equal(t, float64(1), batch["max_hosts"])
 }
 
 func TestCreateRun_OptimizationObjective_AcceptsCpuAndMemoryUtilization(t *testing.T) {
