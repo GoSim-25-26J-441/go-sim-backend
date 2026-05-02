@@ -836,6 +836,43 @@ func parseScenarioYAMLHostsServices(data []byte) (hosts []gin.H, services []gin.
 	return hosts, services
 }
 
+// hostCountFromSpec returns the length of spec["hosts"] when it is a JSON array ([]any after decode).
+func hostCountFromSpec(spec map[string]any) (int, bool) {
+	if spec == nil {
+		return 0, false
+	}
+	v, ok := spec["hosts"]
+	if !ok || v == nil {
+		return 0, false
+	}
+	hosts, ok := v.([]any)
+	if !ok {
+		return 0, false
+	}
+	return len(hosts), true
+}
+
+// simulationNodesFromCandidates sets simulation.nodes from candidate specs: prefer the best
+// candidate's host list, then the first candidate with a valid hosts array, otherwise 0.
+func simulationNodesFromCandidates(records []*simrepo.CandidateRecord, bestCandidateID string) int {
+	if bestCandidateID != "" {
+		for _, rec := range records {
+			if rec.CandidateID == bestCandidateID {
+				if n, ok := hostCountFromSpec(rec.Spec); ok {
+					return n
+				}
+				break
+			}
+		}
+	}
+	for _, rec := range records {
+		if n, ok := hostCountFromSpec(rec.Spec); ok {
+			return n
+		}
+	}
+	return 0
+}
+
 // GetRunCandidates returns parsed candidate records for a given simulation run.
 // Response includes candidates array plus optional best_candidate_id and best_candidate (s3_path, hosts, services) when available.
 func (h *Handler) GetRunCandidates(c *gin.Context) {
@@ -883,10 +920,21 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 		return
 	}
 
-	// Derive simulation summary section. For now, we expose node count as the
-	// number of distinct labels across candidates' specs (can be refined later).
-	// If no candidates, nodes is 0.
-	nodes := len(records)
+	var bestCandidateID string
+	var bestPath sql.NullString
+	if err := h.db.QueryRowContext(
+		c.Request.Context(),
+		`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = $1`,
+		runID,
+	).Scan(&bestPath); err == nil && bestPath.Valid && bestPath.String != "" {
+		for _, rec := range records {
+			if rec.S3Path == bestPath.String {
+				bestCandidateID = rec.CandidateID
+				break
+			}
+		}
+	}
+	nodes := simulationNodesFromCandidates(records, bestCandidateID)
 
 	type candidateDTO struct {
 		ID          string                 `json:"id"`
@@ -909,30 +957,15 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 		})
 	}
 
-	// Optional: include best-candidate info (s3_path + parsed hosts/services) from simulation_summaries
-	var bestCandidateID string
 	var bestCandidateObj interface{}
-	var bestPath sql.NullString
-	if err := h.db.QueryRowContext(
-		c.Request.Context(),
-		`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = $1`,
-		runID,
-	).Scan(&bestPath); err == nil && bestPath.Valid && bestPath.String != "" {
-		for _, rec := range records {
-			if rec.S3Path == bestPath.String {
-				bestCandidateID = rec.CandidateID
-				break
-			}
-		}
-		if h.s3Client != nil {
-			if data, err := h.s3Client.GetObject(c.Request.Context(), bestPath.String); err == nil {
-				hosts, services := parseScenarioYAMLHostsServices(data)
-				if hosts != nil || services != nil {
-					bestCandidateObj = gin.H{
-						"s3_path":  bestPath.String,
-						"hosts":    hosts,
-						"services": services,
-					}
+	if bestPath.Valid && bestPath.String != "" && h.s3Client != nil {
+		if data, err := h.s3Client.GetObject(c.Request.Context(), bestPath.String); err == nil {
+			hosts, services := parseScenarioYAMLHostsServices(data)
+			if hosts != nil || services != nil {
+				bestCandidateObj = gin.H{
+					"s3_path":  bestPath.String,
+					"hosts":    hosts,
+					"services": services,
 				}
 			}
 		}
