@@ -68,6 +68,7 @@ func (s *AuthService) SyncUser(req *domain.CreateUserRequest) (*domain.User, err
 		Organization: req.Organization,
 		Role:         req.Role,
 		Preferences:  make(map[string]interface{}),
+		NewDesigner:  "Yes",
 	}
 
 	if user.Role == "" {
@@ -112,6 +113,12 @@ func (s *AuthService) UpdateUser(uid string, req *domain.UpdateUserRequest) (*do
 		// Merge new preferences with existing ones
 		for k, v := range req.Preferences {
 			user.Preferences[k] = v
+		}
+	}
+
+	if req.NewDesigner != nil {
+		if *req.NewDesigner == "Yes" || *req.NewDesigner == "No" {
+			user.NewDesigner = *req.NewDesigner
 		}
 	}
 

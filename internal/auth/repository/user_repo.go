@@ -20,7 +20,7 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 	query := `
 		SELECT firebase_uid, email, display_name, photo_url, role, organization, 
-		       preferences, created_at, updated_at, last_login_at
+		       preferences, new_designer, created_at, updated_at, last_login_at
 		FROM users
 		WHERE firebase_uid = $1
 	`
@@ -38,6 +38,7 @@ func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 		&user.Role,
 		&organization,
 		&preferencesJSON,
+		&user.NewDesigner,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 		&lastLoginAt,
@@ -73,6 +74,10 @@ func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 		user.Preferences = make(map[string]interface{})
 	}
 
+	if user.NewDesigner != "Yes" && user.NewDesigner != "No" {
+		user.NewDesigner = "Yes"
+	}
+
 	return &user, nil
 }
 
@@ -80,7 +85,7 @@ func (r *UserRepository) GetByFirebaseUID(uid string) (*domain.User, error) {
 func (r *UserRepository) GetByEmail(email string) (*domain.User, error) {
 	query := `
 		SELECT firebase_uid, email, display_name, photo_url, role, organization, 
-		       preferences, created_at, updated_at, last_login_at
+		       preferences, new_designer, created_at, updated_at, last_login_at
 		FROM users
 		WHERE email = $1
 	`
@@ -98,6 +103,7 @@ func (r *UserRepository) GetByEmail(email string) (*domain.User, error) {
 		&user.Role,
 		&organization,
 		&preferencesJSON,
+		&user.NewDesigner,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 		&lastLoginAt,
@@ -133,14 +139,24 @@ func (r *UserRepository) GetByEmail(email string) (*domain.User, error) {
 		user.Preferences = make(map[string]interface{})
 	}
 
+	if user.NewDesigner != "Yes" && user.NewDesigner != "No" {
+		user.NewDesigner = "Yes"
+	}
+
 	return &user, nil
 }
 
 // Create creates a new user
 func (r *UserRepository) Create(user *domain.User) error {
+	nd := user.NewDesigner
+	if nd != "Yes" && nd != "No" {
+		nd = "Yes"
+	}
+	user.NewDesigner = nd
+
 	query := `
-		INSERT INTO users (firebase_uid, email, display_name, photo_url, role, organization, preferences)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO users (firebase_uid, email, display_name, photo_url, role, organization, preferences, new_designer)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at, updated_at
 	`
 
@@ -158,6 +174,7 @@ func (r *UserRepository) Create(user *domain.User) error {
 		user.Role,
 		user.Organization,
 		preferencesJSON,
+		user.NewDesigner,
 	).Scan(&user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
@@ -169,9 +186,15 @@ func (r *UserRepository) Create(user *domain.User) error {
 
 // Update updates user information
 func (r *UserRepository) Update(user *domain.User) error {
+	nd := user.NewDesigner
+	if nd != "Yes" && nd != "No" {
+		nd = "Yes"
+	}
+	user.NewDesigner = nd
+
 	query := `
 		UPDATE users
-		SET display_name = $2, photo_url = $3, organization = $4, preferences = $5, updated_at = NOW()
+		SET display_name = $2, photo_url = $3, organization = $4, preferences = $5, new_designer = $6, updated_at = NOW()
 		WHERE firebase_uid = $1
 		RETURNING updated_at
 	`
@@ -188,6 +211,7 @@ func (r *UserRepository) Update(user *domain.User) error {
 		user.PhotoURL,
 		user.Organization,
 		preferencesJSON,
+		user.NewDesigner,
 	).Scan(&user.UpdatedAt)
 
 	if err == sql.ErrNoRows {
@@ -227,9 +251,15 @@ func (r *UserRepository) UpdateLastLogin(uid string) error {
 
 // Upsert creates or updates a user (useful for syncing from Firebase)
 func (r *UserRepository) Upsert(user *domain.User) error {
+	nd := user.NewDesigner
+	if nd != "Yes" && nd != "No" {
+		nd = "Yes"
+	}
+	user.NewDesigner = nd
+
 	query := `
-		INSERT INTO users (firebase_uid, email, display_name, photo_url, role, organization, preferences)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO users (firebase_uid, email, display_name, photo_url, role, organization, preferences, new_designer)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (firebase_uid) DO UPDATE
 		SET email = EXCLUDED.email,
 		    display_name = EXCLUDED.display_name,
@@ -253,6 +283,7 @@ func (r *UserRepository) Upsert(user *domain.User) error {
 		user.Role,
 		user.Organization,
 		preferencesJSON,
+		user.NewDesigner,
 	).Scan(&createdAt, &updatedAt)
 
 	if err != nil {
