@@ -17,30 +17,51 @@ const (
 	maxInteractiveEvaluationDurationMs int64 = 120_000
 )
 
+// batchMetadataNormalizedAllowedActionsKey is nested under run metadata as metadata.batch.normalized_allowed_actions (replay/export debugging).
+const batchMetadataNormalizedAllowedActionsKey = "normalized_allowed_actions"
+
 // applyBatchOptimizationGuards adjusts optimization JSON before forwarding to simulation-core when optimization.batch
 // is a non-null object. Unknown top-level keys are preserved via map round-trip.
 // scenarioYAML is used to fill missing fleet bounds in batch when safe; empty yaml returns a validation error for incomplete batch.
-func applyBatchOptimizationGuards(raw json.RawMessage, scenarioYAML string) (json.RawMessage, []string, error) {
+// When allowed_actions is omitted, it is not synthesized for the engine payload; batchMeta carries normalized_allowed_actions for metadata only.
+func applyBatchOptimizationGuards(raw json.RawMessage, scenarioYAML string) (json.RawMessage, []string, map[string]interface{}, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return raw, nil, nil
+		return raw, nil, nil, nil
 	}
 	var m map[string]interface{}
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, nil, fmt.Errorf("optimization: %w", err)
+		return nil, nil, nil, fmt.Errorf("optimization: %w", err)
 	}
 	batchMap, err := coerceBatchToMapInPlace(m)
 	if err != nil {
-		return nil, nil, fmt.Errorf("optimization: %w", err)
+		return nil, nil, nil, fmt.Errorf("optimization: %w", err)
 	}
 	if batchMap == nil {
-		return raw, nil, nil
+		return raw, nil, nil, nil
 	}
 	normalizeBatchJSONForEngine(batchMap)
-	if err := populateBatchFleetDefaults(batchMap, scenarioYAML); err != nil {
-		return nil, nil, err
+	if arr, ok := batchMap["allowed_actions"].([]interface{}); ok && len(arr) == 0 {
+		delete(batchMap, "allowed_actions")
+	}
+
+	if err = populateBatchFleetDefaults(batchMap, scenarioYAML); err != nil {
+		return nil, nil, nil, err
+	}
+
+	allowedActionsOmitted := batchAllowedActionsAbsentOrEmpty(batchMap)
+	var explicitNumerics []int32
+	if !allowedActionsOmitted {
+		explicitNumerics, err = parseAllowedActionsToNumerics(batchMap)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("optimization: %w", err)
+		}
 	}
 
 	var warnings []string
+	if w := batchHostScalingWithoutHostActionsWarning(batchMap, scenarioYAML, allowedActionsOmitted, explicitNumerics); w != "" {
+		warnings = append(warnings, w)
+	}
+
 	meKey := "max_evaluations"
 	cur, present := jsonNumberToInt64(m[meKey])
 	if !present || cur <= 0 {
@@ -71,11 +92,31 @@ func applyBatchOptimizationGuards(raw json.RawMessage, scenarioYAML string) (jso
 		m["objective"] = RecommendedConfigEngineObjective
 	}
 
+	debug, err := buildNormalizedAllowedActionsDebug(batchMap, allowedActionsOmitted)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("optimization: %w", err)
+	}
+	batchMeta := map[string]interface{}{
+		batchMetadataNormalizedAllowedActionsKey: debug,
+	}
+
 	out, err := json.Marshal(m)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return out, warnings, nil
+	return json.RawMessage(out), warnings, batchMeta, nil
+}
+
+func batchAllowedActionsAbsentOrEmpty(batch map[string]interface{}) bool {
+	v, ok := batch["allowed_actions"]
+	if !ok || v == nil {
+		return true
+	}
+	arr, ok := v.([]interface{})
+	if !ok {
+		return false
+	}
+	return len(arr) == 0
 }
 
 // coerceBatchToMapInPlace ensures m["batch"] is a map[string]interface{}.

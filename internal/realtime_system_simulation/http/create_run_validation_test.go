@@ -432,12 +432,33 @@ func TestCreateRun_BatchOptimization_DefaultMaxEvaluationsForwarded(t *testing.T
 	assert.Equal(t, float64(1), batch["max_hosts"])
 	assert.Equal(t, float64(4), batch["min_host_cpu_cores"])
 	assert.Equal(t, float64(16), batch["min_host_memory_gb"])
-	act := batch["allowed_actions"].([]interface{})
-	require.GreaterOrEqual(t, len(act), 2)
-	assert.Contains(t, act, "BATCH_SCALING_ACTION_SCALE_REPLICAS")
-	assert.Contains(t, act, BatchScalingActionScaleHosts)
+	_, hasAA := batch["allowed_actions"]
+	assert.False(t, hasAA, "engine batch must omit allowed_actions when not sent by client")
 	_, hasMode := opt["mode"]
 	assert.False(t, hasMode, "engine optimization payload must not include BFF-only mode")
+
+	runObj := createResp["run"].(map[string]interface{})
+	meta := runObj["metadata"].(map[string]interface{})
+	batchStored := meta["batch"].(map[string]interface{})
+	dbg := batchStored["normalized_allowed_actions"].(map[string]interface{})
+	nums := dbg["numeric"].([]interface{})
+	names := dbg["names"].([]interface{})
+	require.Len(t, nums, 12)
+	require.Len(t, names, 12)
+	assert.Equal(t, true, dbg["omitted_in_request"])
+	hostActionSeen := false
+	for _, n := range nums {
+		if fv, ok := n.(float64); ok && fv >= 7 && fv <= 12 {
+			hostActionSeen = true
+			break
+		}
+	}
+	assert.True(t, hostActionSeen)
+	nameJoined := ""
+	for _, nm := range names {
+		nameJoined += nm.(string) + " "
+	}
+	assert.Contains(t, nameJoined, "HOST_SCALE_OUT")
 }
 
 func TestCreateRun_RecommendedConfig_RejectedWithoutBatch(t *testing.T) {
@@ -539,7 +560,8 @@ func TestCreateRun_Batch_RecommendedConfig_StartsAndForwardsP95Placeholder(t *te
 	assert.Equal(t, RecommendedConfigEngineObjective, opt["objective"])
 	batch := opt["batch"].(map[string]interface{})
 	assert.Equal(t, float64(4), batch["min_host_cpu_cores"])
-	assert.Contains(t, batch["allowed_actions"].([]interface{}), BatchScalingActionScaleHosts)
+	_, hasAA := batch["allowed_actions"]
+	assert.False(t, hasAA)
 }
 
 func TestCreateRun_Batch_ModeBatchWithoutBatchKey_FillsFleetAndOmitsMode(t *testing.T) {
@@ -670,6 +692,8 @@ func TestCreateRun_BatchOptimization_CpuObjective_EmptyBatch_ForwardedFleetBound
 	batch := opt["batch"].(map[string]interface{})
 	assert.Equal(t, float64(1), batch["min_hosts"])
 	assert.Equal(t, float64(1), batch["max_hosts"])
+	_, hasAA := batch["allowed_actions"]
+	assert.False(t, hasAA)
 }
 
 func TestCreateRun_OptimizationObjective_AcceptsCpuAndMemoryUtilization(t *testing.T) {

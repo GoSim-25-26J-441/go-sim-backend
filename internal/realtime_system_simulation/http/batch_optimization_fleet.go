@@ -8,12 +8,6 @@ import (
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/scenario"
 )
 
-// Simulation-core batch scaling action enum names (JSON / proto).
-const (
-	BatchScalingActionScaleReplicas = "BATCH_SCALING_ACTION_SCALE_REPLICAS"
-	BatchScalingActionScaleHosts    = "BATCH_SCALING_ACTION_SCALE_HOSTS"
-)
-
 // populateBatchFleetDefaults fills missing optimization.batch fleet fields from scenario_yaml.
 // Caller must run normalizeBatchJSONForEngine first. Preserves explicit client values; returns an error
 // when required fields cannot be inferred safely.
@@ -62,12 +56,6 @@ func populateBatchFleetDefaults(batch map[string]interface{}, scenarioYAML strin
 		return err
 	}
 
-	if batchAllowedActionsUnsetOrEmpty(batch) {
-		batch["allowed_actions"] = []interface{}{
-			BatchScalingActionScaleReplicas,
-			BatchScalingActionScaleHosts,
-		}
-	}
 	return nil
 }
 
@@ -95,19 +83,6 @@ func minHostResourcesFromScenario(s scenario.Scenario) (minCores float64, minMem
 		return 0, 0, fmt.Errorf("cannot infer min_host_memory_gb from scenario hosts")
 	}
 	return minCoresF, minMemF, nil
-}
-
-func batchAllowedActionsUnsetOrEmpty(batch map[string]interface{}) bool {
-	v, ok := batch["allowed_actions"]
-	if !ok || v == nil {
-		return true
-	}
-	switch x := v.(type) {
-	case []interface{}:
-		return len(x) == 0
-	default:
-		return false
-	}
 }
 
 func validateBatchHostsRange(batch map[string]interface{}) error {
