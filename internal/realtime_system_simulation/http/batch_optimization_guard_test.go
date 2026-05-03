@@ -12,7 +12,7 @@ import (
 func TestApplyBatchOptimizationGuards_DefaultMaxEvaluations(t *testing.T) {
 	raw := json.RawMessage(`{"online":false,"batch":{},"future_field":42}`)
 	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-default")
-	out, warns, err := applyBatchOptimizationGuards(raw, yaml)
+	out, warns, meta, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	require.Len(t, warns, 1)
 	assert.Contains(t, warns[0], "default 64")
@@ -26,16 +26,21 @@ func TestApplyBatchOptimizationGuards_DefaultMaxEvaluations(t *testing.T) {
 	assert.Equal(t, float64(1), batch["max_hosts"])
 	assert.Equal(t, float64(4), batch["min_host_cpu_cores"])
 	assert.Equal(t, float64(16), batch["min_host_memory_gb"])
-	act := batch["allowed_actions"].([]interface{})
-	require.Len(t, act, 2)
-	assert.Equal(t, BatchScalingActionScaleReplicas, act[0])
-	assert.Equal(t, BatchScalingActionScaleHosts, act[1])
+	_, hasAA := batch["allowed_actions"]
+	assert.False(t, hasAA, "engine payload must omit allowed_actions when not requested")
+
+	require.NotNil(t, meta)
+	dbg := meta["normalized_allowed_actions"].(*NormalizedAllowedActionsDebug)
+	require.Len(t, dbg.Numeric, 12)
+	assert.True(t, dbg.OmittedInRequest)
+	assert.Contains(t, dbg.Names, "HOST_SCALE_OUT")
+	assert.Equal(t, int32(7), dbg.Numeric[6])
 }
 
 func TestApplyBatchOptimizationGuards_CapMaxEvaluations(t *testing.T) {
 	raw := json.RawMessage(`{"batch":{},"max_evaluations":999}`)
 	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-cap")
-	out, warns, err := applyBatchOptimizationGuards(raw, yaml)
+	out, warns, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	require.Len(t, warns, 1)
 	assert.Contains(t, warns[0], "capped from 999 to 256")
@@ -47,7 +52,7 @@ func TestApplyBatchOptimizationGuards_CapMaxEvaluations(t *testing.T) {
 
 func TestApplyBatchOptimizationGuards_NoBatchUnchanged(t *testing.T) {
 	raw := json.RawMessage(`{"online":false,"max_evaluations":0}`)
-	out, warns, err := applyBatchOptimizationGuards(raw, "")
+	out, warns, _, err := applyBatchOptimizationGuards(raw, "")
 	require.NoError(t, err)
 	assert.Empty(t, warns)
 	assert.JSONEq(t, string(raw), string(out))
@@ -56,7 +61,7 @@ func TestApplyBatchOptimizationGuards_NoBatchUnchanged(t *testing.T) {
 func TestApplyBatchOptimizationGuards_AllowedActionsStringBecomesArray(t *testing.T) {
 	raw := json.RawMessage(`{"batch":{"allowed_actions":"BATCH_SCALING_ACTION_SCALE_REPLICAS"},"max_evaluations":3}`)
 	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-actions-str")
-	out, _, err := applyBatchOptimizationGuards(raw, yaml)
+	out, _, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(out, &m))
@@ -70,7 +75,7 @@ func TestApplyBatchOptimizationGuards_BatchAsJSONString_NormalizesAllowedActions
 	// batch is sometimes double-encoded as a string; coercion must run normalization inside it.
 	raw := json.RawMessage(`{"batch":"{\"allowed_actions\":\"BATCH_SCALING_ACTION_SCALE_REPLICAS\"}","max_evaluations":2}`)
 	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-actions-json-str")
-	out, _, err := applyBatchOptimizationGuards(raw, yaml)
+	out, _, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(out, &m))
@@ -83,7 +88,7 @@ func TestApplyBatchOptimizationGuards_BatchAsJSONString_NormalizesAllowedActions
 func TestApplyBatchOptimizationGuards_AllowedActionsCamelCase(t *testing.T) {
 	raw := json.RawMessage(`{"batch":{"allowedActions":"BATCH_SCALING_ACTION_SCALE_REPLICAS"},"max_evaluations":1}`)
 	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-camel")
-	out, _, err := applyBatchOptimizationGuards(raw, yaml)
+	out, _, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(out, &m))
@@ -98,7 +103,7 @@ func TestApplyBatchOptimizationGuards_AllowedActionsCamelCase(t *testing.T) {
 func TestApplyBatchOptimizationGuards_RecommendedConfigObjectiveRewritten(t *testing.T) {
 	raw := json.RawMessage(`{"batch":{},"objective":"recommended_config","max_evaluations":5}`)
 	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-rc")
-	out, _, err := applyBatchOptimizationGuards(raw, yaml)
+	out, _, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(out, &m))
@@ -108,7 +113,7 @@ func TestApplyBatchOptimizationGuards_RecommendedConfigObjectiveRewritten(t *tes
 func TestApplyBatchOptimizationGuards_EvaluationDurationWarning(t *testing.T) {
 	raw := json.RawMessage(`{"batch":{},"max_evaluations":10,"evaluation_duration_ms":200000}`)
 	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-evaldur")
-	out, warns, err := applyBatchOptimizationGuards(raw, yaml)
+	out, warns, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	var found bool
 	for _, w := range warns {
@@ -125,7 +130,7 @@ func TestApplyBatchOptimizationGuards_EvaluationDurationWarning(t *testing.T) {
 
 func TestApplyBatchOptimizationGuards_EmptyScenarioYAML(t *testing.T) {
 	raw := json.RawMessage(`{"batch":{}}`)
-	_, _, err := applyBatchOptimizationGuards(raw, "")
+	_, _, _, err := applyBatchOptimizationGuards(raw, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hosts")
 }
@@ -151,7 +156,7 @@ workload:
       type: poisson
       rate_rps: 10
 `
-	_, _, err := applyBatchOptimizationGuards(raw, yaml)
+	_, _, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "min_host_cpu_cores")
 }
@@ -177,7 +182,7 @@ workload:
       type: poisson
       rate_rps: 10
 `
-	out, _, err := applyBatchOptimizationGuards(raw, yaml)
+	out, _, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(out, &m))
@@ -213,7 +218,7 @@ workload:
       type: poisson
       rate_rps: 10
 `
-	out, _, err := applyBatchOptimizationGuards(raw, yaml)
+	out, _, _, err := applyBatchOptimizationGuards(raw, yaml)
 	require.NoError(t, err)
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(out, &m))
@@ -221,4 +226,25 @@ workload:
 	assert.Equal(t, float64(4), batch["min_host_cpu_cores"])
 	assert.Equal(t, float64(16), batch["min_host_memory_gb"])
 	assert.Equal(t, float64(2), batch["max_hosts"])
+}
+
+func TestApplyBatchOptimizationGuards_HostScalingWithoutHostActionsWarns(t *testing.T) {
+	raw := json.RawMessage(`{"batch":{"allowed_actions":[1],"max_hosts":4,"max_evaluations":10}}`)
+	yaml := minimalValidCoreScenarioYAML("svc-batch-guard-hostwarn")
+	out, warns, _, err := applyBatchOptimizationGuards(raw, yaml)
+	require.NoError(t, err)
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &m))
+	batch := m["batch"].(map[string]interface{})
+	act := batch["allowed_actions"].([]interface{})
+	require.Len(t, act, 1)
+	assert.Equal(t, float64(1), act[0])
+	found := false
+	for _, w := range warns {
+		if strings.Contains(w, "host scaling configured but host actions are not enabled") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "warns=%v", warns)
 }

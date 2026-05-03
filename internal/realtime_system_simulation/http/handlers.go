@@ -287,6 +287,7 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 	}
 
 	var optimizationGuards []string
+	var batchOptMeta map[string]interface{}
 
 	if effectiveScenarioYAML != "" {
 		var callbackURL string
@@ -299,7 +300,7 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 		optPayload := body.Optimization
 		if batchOpt {
 			var err error
-			optPayload, optimizationGuards, err = applyBatchOptimizationGuards(body.Optimization, effectiveScenarioYAML)
+			optPayload, optimizationGuards, batchOptMeta, err = applyBatchOptimizationGuards(body.Optimization, effectiveScenarioYAML)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
 				return
@@ -338,7 +339,7 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			return
 		}
 		updateReq := &domain.UpdateRunRequest{EngineRunID: &engineRunID}
-		if hasOpt && (batchOpt || online || opt.Objective != "") {
+		if hasOpt && (batchOpt || online || opt.Objective != "" || batchOptMeta != nil) {
 			meta := make(map[string]interface{})
 			if batchOpt {
 				meta["mode"] = "batch"
@@ -347,6 +348,9 @@ func (h *Handler) CreateRunForProject(c *gin.Context) {
 			}
 			if opt.Objective != "" {
 				meta["objective"] = opt.Objective
+			}
+			if batchOptMeta != nil {
+				meta["batch"] = batchOptMeta
 			}
 			updateReq.Metadata = meta
 		}
@@ -507,6 +511,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 	// For online optimization runs, duration_ms can be zero; the controller keeps the run alive.
 	// For batch optimization, duration may be zero when the engine drives evaluation via batch settings.
 	var optimizationGuards []string
+	var batchOptMeta map[string]interface{}
 	if body.ScenarioYAML != "" {
 		// Generate unique callback URL per run (includes run_id in path for identification)
 		var callbackURL string
@@ -520,7 +525,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		optPayload := body.Optimization
 		if batchOpt {
 			var err error
-			optPayload, optimizationGuards, err = applyBatchOptimizationGuards(body.Optimization, body.ScenarioYAML)
+			optPayload, optimizationGuards, batchOptMeta, err = applyBatchOptimizationGuards(body.Optimization, body.ScenarioYAML)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid optimization", "details": err.Error()})
 				return
@@ -562,7 +567,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		// Update run with engine run ID (and metadata.mode for online so frontend can show online panel)
 		engineRunIDPtr := &engineRunID
 		updateReq := &domain.UpdateRunRequest{EngineRunID: engineRunIDPtr}
-		if hasOpt && (batchOpt || online || opt.Objective != "") {
+		if hasOpt && (batchOpt || online || opt.Objective != "" || batchOptMeta != nil) {
 			meta := make(map[string]interface{})
 			if batchOpt {
 				meta["mode"] = "batch"
@@ -571,6 +576,9 @@ func (h *Handler) CreateRun(c *gin.Context) {
 			}
 			if opt.Objective != "" {
 				meta["objective"] = opt.Objective
+			}
+			if batchOptMeta != nil {
+				meta["batch"] = batchOptMeta
 			}
 			updateReq.Metadata = meta
 		}
