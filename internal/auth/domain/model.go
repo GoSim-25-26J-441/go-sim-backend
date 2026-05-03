@@ -12,6 +12,7 @@ type User struct {
 	Role         string                 `json:"role" db:"role"`
 	Organization *string                `json:"organization,omitempty" db:"organization"`
 	Preferences  map[string]interface{} `json:"preferences,omitempty" db:"preferences"`
+	NewDesigner  string                 `json:"new_designer" db:"new_designer"`
 	CreatedAt    time.Time              `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at" db:"updated_at"`
 	LastLoginAt  *time.Time             `json:"last_login_at,omitempty" db:"last_login_at"`
@@ -34,4 +35,5 @@ type UpdateUserRequest struct {
 	PhotoURL     *string
 	Organization *string
 	Preferences  map[string]interface{}
+	NewDesigner  *string
 }

@@ -106,6 +106,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		PhotoURL     *string                `json:"photo_url,omitempty"`
 		Organization *string                `json:"organization,omitempty"`
 		Preferences  map[string]interface{} `json:"preferences,omitempty"`
+		NewDesigner  *string                `json:"new_designer,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -118,6 +119,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		PhotoURL:     req.PhotoURL,
 		Organization: req.Organization,
 		Preferences:  req.Preferences,
+		NewDesigner:  req.NewDesigner,
 	}
 
 	user, err := h.authService.UpdateUser(firebaseUID, updateReq)
