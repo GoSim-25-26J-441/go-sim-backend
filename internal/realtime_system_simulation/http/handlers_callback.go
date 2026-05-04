@@ -217,7 +217,7 @@ func (h *Handler) EngineRunCallback(c *gin.Context) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
 			defer cancel()
-			h.persistRunMetrics(ctx, &runCopy, bestRunID, topCandidates)
+			h.persistRunMetrics(ctx, &runCopy, bestRunID, topCandidates, body.FinalConfig)
 			isBatch := bestRunID != "" || len(topCandidates) > 0
 			if h.s3Client != nil && !isBatch {
 				h.uploadBestScenarioToS3(ctx, &runCopy, backendStatus, bestRunID)
@@ -367,7 +367,7 @@ func (h *Handler) EngineRunCallbackByID(c *gin.Context) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
 			defer cancel()
-			h.persistRunMetrics(ctx, &runCopy, bestRunID, topCandidates)
+			h.persistRunMetrics(ctx, &runCopy, bestRunID, topCandidates, body.FinalConfig)
 			isBatch := bestRunID != "" || len(topCandidates) > 0
 			if h.s3Client != nil && !isBatch {
 				h.uploadBestScenarioToS3(ctx, &runCopy, backendStatus, bestRunID)
@@ -588,6 +588,33 @@ func buildSpecMetricsWorkloadFromScenarioAndMetrics(scenarioYAML string, metrics
 	return spec, metricsOut, simWorkload
 }
 
+// mergeSummaryFinalConfig prefers callback final_config, then export final_config.
+// Returns nil when neither is present so MetricsRepository.UpsertSummary preserves an existing DB value.
+func mergeSummaryFinalConfig(callbackFC map[string]interface{}, exportFC map[string]any) map[string]any {
+	if callbackFC != nil && len(callbackFC) > 0 {
+		out := make(map[string]any, len(callbackFC))
+		for k, v := range callbackFC {
+			out[k] = v
+		}
+		return out
+	}
+	if exportFC != nil && len(exportFC) > 0 {
+		return exportFC
+	}
+	return nil
+}
+
+func metaFinalConfigFromMap(fc map[string]any) map[string]interface{} {
+	if fc == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(fc))
+	for k, v := range fc {
+		out[k] = v
+	}
+	return out
+}
+
 // uniqueCandidateIDs returns bestRunID (if non-empty) first, then each of topCandidates
 // deduplicated and in order. Used for batch optimization to decide which run IDs to export.
 func uniqueCandidateIDs(bestRunID string, topCandidates []string) []string {
@@ -727,7 +754,8 @@ func applyOptimizationReplaySummaryData(dst map[string]any, parentRun *GetRunRes
 // batch candidates are built by calling GET /v1/runs/{id}/export for each ID in best_run_id
 // and top_candidates. For batch mode, best-scenario S3 upload and simulation_summaries update
 // are done here to avoid duplicate export of the best run.
-func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationRun, bestRunID string, topCandidates []string) {
+// callbackFinalConfig is optional final_config from the engine completion callback (preferred over export when set).
+func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationRun, bestRunID string, topCandidates []string, callbackFinalConfig map[string]interface{}) {
 	if h.db == nil || run == nil || run.RunID == "" {
 		return
 	}
@@ -836,7 +864,8 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 		if metricsForSummary == nil {
 			metricsForSummary = map[string]any{}
 		}
-		if len(metricsForSummary) > 0 || exportResp.FinalConfig != nil || exportResp.Input.ScenarioYAML != "" {
+		mergedForSummary := mergeSummaryFinalConfig(callbackFinalConfig, exportResp.FinalConfig)
+		if len(metricsForSummary) > 0 || mergedForSummary != nil || exportResp.Input.ScenarioYAML != "" {
 			var totalDurationMs *int64
 			if exportResp.Run != nil && exportResp.Run.SimulationDurationMs > 0 {
 				totalDurationMs = &exportResp.Run.SimulationDurationMs
@@ -855,10 +884,6 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				}
 			}
 			applyOptimizationReplaySummaryData(summaryData, parentRunResp, bestRunID, topCandidates)
-			var finalCfg map[string]any
-			if exportResp.FinalConfig != nil {
-				finalCfg = exportResp.FinalConfig
-			}
 			summaryParams := &repository.SummaryUpsertParams{
 				RunID:           run.RunID,
 				EngineRunID:     run.EngineRunID,
@@ -866,23 +891,25 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 				ScenarioYAML:    exportResp.Input.ScenarioYAML,
 				SummaryData:     summaryData,
 				TotalDurationMs: totalDurationMs,
-				FinalConfig:     finalCfg,
+				FinalConfig:     mergedForSummary,
 			}
 			if err := metricsRepo.UpsertSummary(ctx, summaryParams); err != nil {
 				log.Printf("Failed to upsert simulation_summaries for run_id=%s: %v", run.RunID, err)
 			}
 		}
 
-		// Persist optimization history and final_config from export
-		if len(exportResp.OptimizationHistory) > 0 || exportResp.FinalConfig != nil {
+		// Persist optimization history and merged final_config (callback preferred over export)
+		if len(exportResp.OptimizationHistory) > 0 || mergedForSummary != nil {
 			meta := make(map[string]interface{})
 			if len(exportResp.OptimizationHistory) > 0 {
 				meta["optimization_history"] = exportResp.OptimizationHistory
 			}
-			if exportResp.FinalConfig != nil {
-				meta["final_config"] = exportResp.FinalConfig
+			if mergedForSummary != nil {
+				meta["final_config"] = metaFinalConfigFromMap(mergedForSummary)
 			}
-			_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{Metadata: meta})
+			if h.simService != nil {
+				_, _ = h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{Metadata: meta})
+			}
 		}
 	}
 
@@ -927,23 +954,49 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 			}
 			if id == bestRunID {
 				rec.S3Path = bestScenarioKey
-				// Upload best scenario to S3 and upsert simulation_summaries here to avoid duplicate ExportRun(bestRunID).
-				if h.s3Client != nil && h.db != nil && exp.Input.ScenarioYAML != "" {
+				// Upload best scenario to S3 when configured; always upsert simulation_summaries when DB is available
+				// so best_candidate_s3_path, scenario_yaml, and optional final_config persist even without S3 (e.g. tests).
+				if h.s3Client != nil && exp.Input.ScenarioYAML != "" {
 					if err := h.s3Client.PutObject(ctx, bestScenarioKey, []byte(exp.Input.ScenarioYAML)); err != nil {
 						log.Printf("Failed to upload best_scenario.yaml to S3 for run_id=%s: %v", run.RunID, err)
-					} else {
-						if _, err := h.db.ExecContext(ctx,
-							`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml)
-         VALUES ($1, $2, $3, $4)
+					}
+				}
+				if h.db != nil && exp.Input.ScenarioYAML != "" {
+					bestHasFC := exp.FinalConfig != nil && len(exp.FinalConfig) > 0
+					var upsertErr error
+					if bestHasFC {
+						fcJSON, jerr := json.Marshal(exp.FinalConfig)
+						if jerr != nil {
+							log.Printf("Failed to marshal best candidate final_config for run_id=%s: %v", run.RunID, jerr)
+							upsertErr = jerr
+						} else {
+							_, upsertErr = h.db.ExecContext(ctx,
+								`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml, final_config)
+         VALUES ($1, $2, $3, $4, $5::jsonb)
          ON CONFLICT (run_id) DO UPDATE
          SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path,
-             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
-							run.RunID, run.EngineRunID, bestScenarioKey, exp.Input.ScenarioYAML,
-						); err != nil {
-							log.Printf("Failed to upsert best_candidate_s3_path for run_id=%s: %v", run.RunID, err)
-						} else {
-							log.Printf("Best candidate scenario for run_id=%s stored at S3 key=%s and recorded in simulation_summaries", run.RunID, bestScenarioKey)
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml),
+             final_config = EXCLUDED.final_config`,
+								run.RunID, run.EngineRunID, bestScenarioKey, exp.Input.ScenarioYAML, string(fcJSON),
+							)
 						}
+					} else {
+						_, upsertErr = h.db.ExecContext(ctx,
+							`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml, final_config)
+         VALUES ($1, $2, $3, $4, '{}'::jsonb)
+         ON CONFLICT (run_id) DO UPDATE
+         SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml),
+             final_config = simulation_summaries.final_config`,
+							run.RunID, run.EngineRunID, bestScenarioKey, exp.Input.ScenarioYAML,
+						)
+					}
+					if upsertErr != nil {
+						log.Printf("Failed to upsert best_candidate_s3_path for run_id=%s: %v", run.RunID, upsertErr)
+					} else if h.s3Client != nil {
+						log.Printf("Best candidate scenario for run_id=%s stored at S3 key=%s and recorded in simulation_summaries", run.RunID, bestScenarioKey)
+					} else {
+						log.Printf("Best candidate scenario for run_id=%s recorded in simulation_summaries (S3 not configured)", run.RunID)
 					}
 				}
 			} else if h.s3Client != nil && exp.Input.ScenarioYAML != "" {
@@ -963,12 +1016,12 @@ func (h *Handler) persistRunMetrics(ctx context.Context, run *domain.SimulationR
 		} else if len(ids) > 0 {
 			log.Printf("Warning: no candidates persisted for run_id=%s despite %d candidate IDs (all exports may have failed or returned empty scenario_yaml)", run.RunID, len(ids))
 		}
-		if bundle := buildOptimizationReplayBundle(run, parentRunResp, exportResp, bestRunID, topCandidates, candidateExports); bundle != nil {
-			if h.simService == nil {
-				log.Printf("Cannot persist optimization replay bundle for run_id=%s: simulation service is not configured", run.RunID)
-			} else if _, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{Metadata: map[string]interface{}{"optimization_replay_bundle": bundle}}); err != nil {
+		if bundle := buildOptimizationReplayBundle(run, parentRunResp, exportResp, bestRunID, topCandidates, candidateExports); bundle != nil && h.simService != nil {
+			if _, err := h.simService.UpdateRun(run.RunID, &domain.UpdateRunRequest{Metadata: map[string]interface{}{"optimization_replay_bundle": bundle}}); err != nil {
 				log.Printf("Failed to persist optimization replay bundle for run_id=%s: %v", run.RunID, err)
 			}
+		} else if bundle != nil && h.simService == nil {
+			log.Printf("Cannot persist optimization replay bundle for run_id=%s: simulation service is not configured", run.RunID)
 		}
 		return
 	}
@@ -1086,13 +1139,32 @@ func (h *Handler) uploadBestScenarioToS3(ctx context.Context, run *domain.Simula
 	}
 
 	// Persist S3 path and scenario_yaml in simulation_summaries; create row if needed.
-	if _, err := h.db.ExecContext(
-		ctx,
-		`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml)
-         VALUES ($1, $2, $3, $4)
+	// When export includes final_config, persist it; otherwise preserve existing DB final_config on conflict.
+	if exportResp.FinalConfig != nil && len(exportResp.FinalConfig) > 0 {
+		fcJSON, jerr := json.Marshal(exportResp.FinalConfig)
+		if jerr != nil {
+			log.Printf("Failed to marshal final_config for uploadBestScenarioToS3 run_id=%s: %v", run.RunID, jerr)
+		} else if _, err := h.db.ExecContext(
+			ctx,
+			`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml, final_config)
+         VALUES ($1, $2, $3, $4, $5::jsonb)
          ON CONFLICT (run_id) DO UPDATE
          SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path,
-             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml)`,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml),
+             final_config = EXCLUDED.final_config`,
+			run.RunID, run.EngineRunID, key, scenarioYAML, string(fcJSON),
+		); err != nil {
+			log.Printf("Failed to upsert best_candidate_s3_path/scenario_yaml/final_config for run_id=%s into simulation_summaries: %v", run.RunID, err)
+			return
+		}
+	} else if _, err := h.db.ExecContext(
+		ctx,
+		`INSERT INTO simulation_summaries (run_id, engine_run_id, best_candidate_s3_path, scenario_yaml, final_config)
+         VALUES ($1, $2, $3, $4, '{}'::jsonb)
+         ON CONFLICT (run_id) DO UPDATE
+         SET best_candidate_s3_path = EXCLUDED.best_candidate_s3_path,
+             scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml),
+             final_config = simulation_summaries.final_config`,
 		run.RunID, run.EngineRunID, key, scenarioYAML,
 	); err != nil {
 		log.Printf("Failed to upsert best_candidate_s3_path/scenario_yaml for run_id=%s into simulation_summaries: %v", run.RunID, err)

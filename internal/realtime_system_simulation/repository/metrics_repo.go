@@ -187,13 +187,17 @@ func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertP
 		return fmt.Errorf("failed to marshal summary_data JSON: %w", err)
 	}
 
-	finalConfig := p.FinalConfig
-	if finalConfig == nil {
-		finalConfig = map[string]any{}
-	}
-	finalConfigJSON, err := json.Marshal(finalConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal final_config JSON: %w", err)
+	preserveFinal := p.FinalConfig == nil
+	var finalConfigJSON []byte
+	if !preserveFinal {
+		var marshalErr error
+		finalConfigJSON, marshalErr = json.Marshal(p.FinalConfig)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal final_config JSON: %w", marshalErr)
+		}
+	} else {
+		// Placeholder for SQL $8; on conflict update path uses existing DB final_config instead.
+		finalConfigJSON = []byte("{}")
 	}
 
 	// Ensure there is a reference row in simulation_runs to satisfy FK; insert if missing.
@@ -213,15 +217,16 @@ func (r *MetricsRepository) UpsertSummary(ctx context.Context, p *SummaryUpsertP
 	_, err = r.db.ExecContext(
 		ctx,
 		`INSERT INTO simulation_summaries (run_id, engine_run_id, metrics, summary_data, scenario_yaml, total_duration_ms, final_config)
-         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7::jsonb)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6,
+           CASE WHEN $7 THEN '{}'::jsonb ELSE $8::jsonb END)
          ON CONFLICT (run_id) DO UPDATE
          SET engine_run_id = EXCLUDED.engine_run_id,
              metrics = EXCLUDED.metrics,
              summary_data = EXCLUDED.summary_data,
              scenario_yaml = COALESCE(EXCLUDED.scenario_yaml, simulation_summaries.scenario_yaml),
              total_duration_ms = COALESCE(EXCLUDED.total_duration_ms, simulation_summaries.total_duration_ms),
-             final_config = EXCLUDED.final_config`,
-		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML, totalDurMs, string(finalConfigJSON),
+             final_config = CASE WHEN $7 THEN simulation_summaries.final_config ELSE $8::jsonb END`,
+		p.RunID, p.EngineRunID, string(metricsJSON), string(summaryJSON), p.ScenarioYAML, totalDurMs, preserveFinal, string(finalConfigJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert simulation_summaries for run_id=%s: %w", p.RunID, err)
