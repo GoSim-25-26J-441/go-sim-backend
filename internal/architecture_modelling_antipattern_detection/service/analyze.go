@@ -1,13 +1,32 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
+	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/suggestion"
 	_ "github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/suggestion/strategies"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/versioning"
 )
+
+// cloneGraphDeep copies the graph so suggestion strategies can mutate without corrupting origAnalysis.Graph.
+func cloneGraphDeep(g *domain.Graph) *domain.Graph {
+	if g == nil {
+		return domain.NewGraph()
+	}
+	b, err := json.Marshal(g)
+	if err != nil {
+		return domain.NewGraph()
+	}
+	var out domain.Graph
+	if err := json.Unmarshal(b, &out); err != nil {
+		return domain.NewGraph()
+	}
+	out.RebuildOutIn()
+	return &out
+}
 
 type SuggestPreviewResult struct {
 	Analysis     *Result                 `json:"analysis" yaml:"analysis"`
@@ -63,7 +82,8 @@ func ApplySuggestionsYAMLBytes(jobID string, yamlBytes []byte, outBaseDir, title
 	orderedKeys := suggestion.OrderedDetectionKeys(origAnalysis.Detections)
 	selectedMap := suggestion.ResolveSelectedIDs(selectedSuggestionIDs, orderedKeys)
 
-	fixed, applied, err := suggestion.ApplyFixesYAMLBytesFiltered(yamlBytes, origAnalysis.Graph, origAnalysis.Detections, selectedMap)
+	graphForApply := cloneGraphDeep(origAnalysis.Graph)
+	fixed, applied, err := suggestion.ApplyFixesYAMLBytesFiltered(yamlBytes, graphForApply, origAnalysis.Detections, selectedMap)
 	if err != nil {
 		return nil, err
 	}

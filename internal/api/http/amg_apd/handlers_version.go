@@ -2,6 +2,7 @@ package amg_apd
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -96,6 +97,39 @@ func (h *Handlers) DeleteVersion(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": id})
+}
+
+// PatchVersion updates mutable fields on a version (e.g. title). Scoped to user/chat; only amg_apd rows.
+func (h *Handlers) PatchVersion(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "version id is required"})
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body", "details": err.Error()})
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+		return
+	}
+	userID := getUserID(c)
+	chatID := getChatID(c)
+	ok, err := h.versionRepo.UpdateTitleByIDForUserChat(id, userID, chatID, title)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update version", "details": err.Error()})
+		return
+	}
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "version not found or not editable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": id, "title": title})
 }
 
 // CompareVersions returns two versions for side-by-side compare.
