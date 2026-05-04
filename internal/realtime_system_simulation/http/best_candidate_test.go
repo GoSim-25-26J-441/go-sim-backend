@@ -815,6 +815,87 @@ func TestHandler_GetRunCandidates_OnlineUsesPersistedSummaryFinalConfigWhenExpor
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestHandler_GetRunCandidates_UsesPersistedFinalConfigForLegacyNonBatchRun(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runID := "run-legacy-non-batch-summary-final-config"
+	userID := "user-legacy-non-batch-summary-final-config"
+	s3Key := "simulation/run-legacy-non-batch-summary-final-config/best_scenario.yaml"
+	simSvc := seedRunForCandidatesTests(t, runID, userID, "engine-legacy-non-batch-1", map[string]any{})
+
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "input": {}
+}`))
+	}))
+	defer engine.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "user_id", "project_public_id", "run_id", "candidate_id",
+			"spec", "metrics", "sim_workload", "source", "s3_path",
+		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", []byte(`{"hosts":[{"id":"host-1"},{"id":"host-2"},{"id":"host-3"}]}`), []byte("{}"), []byte("{}"), "export", s3Key))
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{
+			"hosts":[
+				{"id":"host-auto-1","cpu_cores":12,"memory_gb":32},
+				{"id":"host-auto-2","cpu_cores":12,"memory_gb":32},
+				{"id":"host-auto-3","cpu_cores":12,"memory_gb":32},
+				{"id":"host-auto-4","cpu_cores":12,"memory_gb":32}
+			],
+			"placements":[{"instance_id":"checkout-1","host_id":"host-auto-4","service_id":"checkout","lifecycle":"running","cpu_utilization":0.64,"memory_utilization":0.52,"active_requests":9,"queue_length":1,"cpu_cores":2,"memory_mb":1024}],
+			"services":[{"id":"checkout","replicas":4,"kind":"api","model":"m/m/1","role":"worker","scaling":{"min":1,"max":8}}],
+			"workload":[{"pattern_key":"browse","rate_rps":44}]
+		}`)))
+
+	h := &Handler{
+		simService:   simSvc,
+		engineClient: NewSimulationEngineClient(engine.URL),
+		db:           db,
+		s3Client: &fakeObjectStorage{objects: map[string][]byte{
+			s3Key: []byte("hosts:\n  - id: scenario-1\n    cores: 2\n  - id: scenario-2\n    cores: 2\n  - id: scenario-3\n    cores: 2\n"),
+		}},
+	}
+	router := gin.New()
+	router.GET("/runs/:id/candidates", h.GetRunCandidates)
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/candidates", nil)
+	req.Header.Set("X-User-Id", userID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
+		BestCandidate struct {
+			Source string `json:"source"`
+			Hosts  []struct {
+				HostID   string `json:"host_id"`
+				CPUCores int    `json:"cpu_cores"`
+			} `json:"hosts"`
+			Placements  []map[string]any `json:"placements"`
+			FinalConfig map[string]any   `json:"final_config"`
+		} `json:"best_candidate"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "final_config", resp.BestCandidate.Source)
+	assert.Equal(t, 4, resp.Simulation.Nodes)
+	require.NotNil(t, resp.BestCandidate.FinalConfig)
+	_, ok := resp.BestCandidate.FinalConfig["placements"]
+	assert.True(t, ok)
+	require.Len(t, resp.BestCandidate.Placements, 1)
+	require.Len(t, resp.BestCandidate.Hosts, 4)
+	assert.Equal(t, "host-auto-1", resp.BestCandidate.Hosts[0].HostID)
+	assert.Equal(t, 12, resp.BestCandidate.Hosts[0].CPUCores)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUploadBestScenarioToS3_StoresObjectAndDBRecord(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

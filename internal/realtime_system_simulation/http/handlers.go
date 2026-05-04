@@ -1125,6 +1125,46 @@ func finalConfigHostCount(config map[string]any) (int, bool) {
 	return len(hosts), true
 }
 
+func selectFinalConfigForCandidates(
+	run *domain.SimulationRun,
+	exportResp *ExportRunResponse,
+	summaryFinalConfig map[string]any,
+) map[string]any {
+	// Source priority:
+	// 1) callback-persisted run.metadata.final_config
+	// 2) export.final_config
+	// 3) persisted simulation_summaries.final_config
+	// 4) latest optimization_history[].current_config (metadata then export)
+	if run != nil && run.Metadata != nil {
+		if metaCfg, ok := run.Metadata["final_config"].(map[string]any); ok && finalConfigPresent(metaCfg) {
+			return metaCfg
+		}
+	}
+	if exportResp != nil && finalConfigPresent(exportResp.FinalConfig) {
+		return exportResp.FinalConfig
+	}
+	if finalConfigPresent(summaryFinalConfig) {
+		return summaryFinalConfig
+	}
+	if run != nil && run.Metadata != nil {
+		if historyRaw, ok := run.Metadata["optimization_history"].([]any); ok && len(historyRaw) > 0 {
+			raw, _ := json.Marshal(historyRaw)
+			var parsed []OptimizationStep
+			if err := json.Unmarshal(raw, &parsed); err == nil {
+				if cfg := lastCurrentConfigFromHistory(parsed); finalConfigPresent(cfg) {
+					return cfg
+				}
+			}
+		}
+	}
+	if exportResp != nil {
+		if cfg := lastCurrentConfigFromHistory(exportResp.OptimizationHistory); finalConfigPresent(cfg) {
+			return cfg
+		}
+	}
+	return nil
+}
+
 // simulationNodesFromCandidates sets simulation.nodes from candidate specs: prefer the best
 // candidate's host list, then the first candidate with a valid hosts array, otherwise 0.
 func simulationNodesFromCandidates(records []*simrepo.CandidateRecord, bestCandidateID string) int {
@@ -1216,6 +1256,8 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 				}
 			}
 		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("Failed to query simulation_summaries for run_id=%s: %v", runID, err)
 	}
 	nodes := simulationNodesFromCandidates(records, bestCandidateID)
 
@@ -1249,46 +1291,17 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 			exportResp = exp
 		}
 	}
-	if isOnlineOptimizationRun(run, exportResp) {
-		// Online source priority:
-		// 1) callback-persisted run.metadata.final_config
-		// 2) export.final_config
-		// 3) persisted simulation_summaries.final_config
-		// 4) latest optimization_history[].current_config (metadata then export)
-		// 5) best_scenario YAML fallback
-		var cfg map[string]any
-		if run.Metadata != nil {
-			if metaCfg, ok := run.Metadata["final_config"].(map[string]any); ok && finalConfigPresent(metaCfg) {
-				cfg = metaCfg
-			}
+	isBatch := isBatchOptimizationRun(run, exportResp)
+	cfg := selectFinalConfigForCandidates(run, exportResp, summaryFinalConfig)
+	useFinalConfig := !isBatch && finalConfigPresent(cfg)
+	if useFinalConfig {
+		s3 := ""
+		if bestPath.Valid {
+			s3 = bestPath.String
 		}
-		if cfg == nil && exportResp != nil && finalConfigPresent(exportResp.FinalConfig) {
-			cfg = exportResp.FinalConfig
-		}
-		if cfg == nil && finalConfigPresent(summaryFinalConfig) {
-			cfg = summaryFinalConfig
-		}
-		if cfg == nil && run.Metadata != nil {
-			if historyRaw, ok := run.Metadata["optimization_history"].([]any); ok && len(historyRaw) > 0 {
-				raw, _ := json.Marshal(historyRaw)
-				var parsed []OptimizationStep
-				if err := json.Unmarshal(raw, &parsed); err == nil {
-					cfg = lastCurrentConfigFromHistory(parsed)
-				}
-			}
-		}
-		if cfg == nil && exportResp != nil {
-			cfg = lastCurrentConfigFromHistory(exportResp.OptimizationHistory)
-		}
-		if cfg != nil {
-			s3 := ""
-			if bestPath.Valid {
-				s3 = bestPath.String
-			}
-			bestCandidateObj = finalConfigToBestCandidate(cfg, s3)
-			if cfgNodes, ok := finalConfigHostCount(cfg); ok {
-				nodes = cfgNodes
-			}
+		bestCandidateObj = finalConfigToBestCandidate(cfg, s3)
+		if cfgNodes, ok := finalConfigHostCount(cfg); ok {
+			nodes = cfgNodes
 		}
 	}
 	if bestCandidateObj == nil && bestPath.Valid && bestPath.String != "" && h.s3Client != nil {
