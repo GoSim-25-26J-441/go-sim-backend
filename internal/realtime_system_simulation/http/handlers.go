@@ -991,8 +991,9 @@ func lastCurrentConfigFromHistory(history []OptimizationStep) map[string]any {
 
 func finalConfigToBestCandidate(config map[string]any, s3Path string) gin.H {
 	out := gin.H{
-		"s3_path": s3Path,
-		"source":  "final_config",
+		"s3_path":      s3Path,
+		"source":       "final_config",
+		"final_config": config,
 	}
 	hosts := make([]gin.H, 0)
 	if hostRaw, ok := config["hosts"].([]any); ok {
@@ -1032,6 +1033,9 @@ func finalConfigToBestCandidate(config map[string]any, s3Path string) gin.H {
 				serviceID, _ = sm["service_id"].(string)
 			}
 			svcDTO := gin.H{"service_id": serviceID}
+			if id, ok := sm["id"].(string); ok && id != "" {
+				svcDTO["id"] = id
+			}
 			if reps, ok := toFloat64(sm["replicas"]); ok {
 				svcDTO["replicas"] = int(math.Round(reps))
 			}
@@ -1040,6 +1044,18 @@ func finalConfigToBestCandidate(config map[string]any, s3Path string) gin.H {
 			}
 			if mem, ok := toFloat64(sm["memory_mb"]); ok {
 				svcDTO["memory_mb"] = mem
+			}
+			if kind, ok := sm["kind"]; ok {
+				svcDTO["kind"] = kind
+			}
+			if model, ok := sm["model"]; ok {
+				svcDTO["model"] = model
+			}
+			if role, ok := sm["role"]; ok {
+				svcDTO["role"] = role
+			}
+			if scaling, ok := sm["scaling"]; ok {
+				svcDTO["scaling"] = scaling
 			}
 			services = append(services, svcDTO)
 		}
@@ -1064,6 +1080,9 @@ func finalConfigToBestCandidate(config map[string]any, s3Path string) gin.H {
 	}
 	out["hosts"] = hosts
 	out["services"] = services
+	if placements, ok := config["placements"].([]any); ok && len(placements) > 0 {
+		out["placements"] = placements
+	}
 	if len(workload) > 0 {
 		out["workload"] = workload
 	}
@@ -1073,6 +1092,10 @@ func finalConfigToBestCandidate(config map[string]any, s3Path string) gin.H {
 func hasKey(m map[string]any, key string) bool {
 	_, ok := m[key]
 	return ok
+}
+
+func finalConfigPresent(cfg map[string]any) bool {
+	return len(cfg) > 0
 }
 
 // hostCountFromSpec returns the length of spec["hosts"] when it is a JSON array ([]any after decode).
@@ -1085,6 +1108,17 @@ func hostCountFromSpec(spec map[string]any) (int, bool) {
 		return 0, false
 	}
 	hosts, ok := v.([]any)
+	if !ok {
+		return 0, false
+	}
+	return len(hosts), true
+}
+
+func finalConfigHostCount(config map[string]any) (int, bool) {
+	if config == nil {
+		return 0, false
+	}
+	hosts, ok := config["hosts"].([]any)
 	if !ok {
 		return 0, false
 	}
@@ -1161,15 +1195,25 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 
 	var bestCandidateID string
 	var bestPath sql.NullString
+	var summaryFinalConfigJSON []byte
+	var summaryFinalConfig map[string]any
 	if err := h.db.QueryRowContext(
 		c.Request.Context(),
-		`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = $1`,
+		`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = $1`,
 		runID,
-	).Scan(&bestPath); err == nil && bestPath.Valid && bestPath.String != "" {
-		for _, rec := range records {
-			if rec.S3Path == bestPath.String {
-				bestCandidateID = rec.CandidateID
-				break
+	).Scan(&bestPath, &summaryFinalConfigJSON); err == nil {
+		if len(summaryFinalConfigJSON) > 0 && string(summaryFinalConfigJSON) != "null" {
+			if unmarshalErr := json.Unmarshal(summaryFinalConfigJSON, &summaryFinalConfig); unmarshalErr != nil {
+				log.Printf("Failed to unmarshal final_config for run_id=%s: %v", runID, unmarshalErr)
+				summaryFinalConfig = nil
+			}
+		}
+		if bestPath.Valid && bestPath.String != "" {
+			for _, rec := range records {
+				if rec.S3Path == bestPath.String {
+					bestCandidateID = rec.CandidateID
+					break
+				}
 			}
 		}
 	}
@@ -1209,16 +1253,20 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 		// Online source priority:
 		// 1) callback-persisted run.metadata.final_config
 		// 2) export.final_config
-		// 3) latest optimization_history[].current_config (metadata then export)
-		// 4) best_scenario YAML fallback
+		// 3) persisted simulation_summaries.final_config
+		// 4) latest optimization_history[].current_config (metadata then export)
+		// 5) best_scenario YAML fallback
 		var cfg map[string]any
 		if run.Metadata != nil {
-			if metaCfg, ok := run.Metadata["final_config"].(map[string]any); ok && len(metaCfg) > 0 {
+			if metaCfg, ok := run.Metadata["final_config"].(map[string]any); ok && finalConfigPresent(metaCfg) {
 				cfg = metaCfg
 			}
 		}
-		if cfg == nil && exportResp != nil && len(exportResp.FinalConfig) > 0 {
+		if cfg == nil && exportResp != nil && finalConfigPresent(exportResp.FinalConfig) {
 			cfg = exportResp.FinalConfig
+		}
+		if cfg == nil && finalConfigPresent(summaryFinalConfig) {
+			cfg = summaryFinalConfig
 		}
 		if cfg == nil && run.Metadata != nil {
 			if historyRaw, ok := run.Metadata["optimization_history"].([]any); ok && len(historyRaw) > 0 {
@@ -1238,6 +1286,9 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 				s3 = bestPath.String
 			}
 			bestCandidateObj = finalConfigToBestCandidate(cfg, s3)
+			if cfgNodes, ok := finalConfigHostCount(cfg); ok {
+				nodes = cfgNodes
+			}
 		}
 	}
 	if bestCandidateObj == nil && bestPath.Valid && bestPath.String != "" && h.s3Client != nil {
