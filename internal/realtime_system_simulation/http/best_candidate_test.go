@@ -86,9 +86,9 @@ func TestHandler_GetRunCandidates_Unified(t *testing.T) {
 		))
 
 	// Best candidate path query
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Key))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
 
 	yamlContent := `
 hosts:
@@ -229,9 +229,9 @@ func TestHandler_GetRunCandidates_SimulationNodesUsesBestCandidateHosts(t *testi
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(rows)
 
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Best))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Best, []byte(`{}`)))
 
 	h := &Handler{
 		simService: simSvc,
@@ -308,9 +308,9 @@ func TestHandler_GetRunCandidates_SimulationNodesZeroWithoutHosts(t *testing.T) 
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(rows)
 
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(nil))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(nil, []byte(`{}`)))
 
 	h := &Handler{
 		simService: simSvc,
@@ -380,8 +380,31 @@ func TestHandler_GetRunCandidates_OnlineUsesFinalConfig(t *testing.T) {
       {"id":"host-2","cpu_cores":9,"memory_gb":16},
       {"id":"host-3","cpu_cores":9,"memory_gb":16}
     ],
+    "placements": [
+      {
+        "instance_id":"gateway-1#1",
+        "host_id":"host-auto-4",
+        "service_id":"gateway-1",
+        "cpu_utilization":0.82,
+        "memory_utilization":0.61,
+        "active_requests":77,
+        "lifecycle":"running",
+        "queue_length":2,
+        "cpu_cores":2,
+        "memory_mb":1024
+      }
+    ],
     "services": [
-      {"id":"gateway-1","replicas":23,"cpu_cores":2,"memory_mb":1024},
+      {
+        "id":"gateway-1",
+        "replicas":23,
+        "cpu_cores":2,
+        "memory_mb":1024,
+        "kind":"api",
+        "model":"m/m/1",
+        "role":"edge",
+        "scaling":{"min":1,"max":30}
+      },
       {"id":"service-1","replicas":2,"cpu_cores":1,"memory_mb":512}
     ],
     "workload": [{"pattern_key":"checkout","rate_rps":123.2}]
@@ -393,16 +416,16 @@ func TestHandler_GetRunCandidates_OnlineUsesFinalConfig(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
-	specJSON := []byte(`{"hosts":[{"id":"host-1"},{"id":"host-2"},{"id":"host-3"}]}`)
+	specJSON := []byte(`{"hosts":[{"id":"host-1"}]}`)
 	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "project_public_id", "run_id", "candidate_id",
 			"spec", "metrics", "sim_workload", "source", "s3_path",
 		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", specJSON, []byte("{}"), []byte("{}"), "export", s3Key))
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Key))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
 
 	h := &Handler{
 		simService:   simSvc,
@@ -421,6 +444,9 @@ func TestHandler_GetRunCandidates_OnlineUsesFinalConfig(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var resp struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
 		BestCandidate struct {
 			Source string `json:"source"`
 			S3Path string `json:"s3_path"`
@@ -430,21 +456,60 @@ func TestHandler_GetRunCandidates_OnlineUsesFinalConfig(t *testing.T) {
 			Services []struct {
 				ServiceID string `json:"service_id"`
 				Replicas  int    `json:"replicas"`
+				Kind      string `json:"kind"`
+				Model     string `json:"model"`
+				Role      string `json:"role"`
+				Scaling   struct {
+					Min int `json:"min"`
+					Max int `json:"max"`
+				} `json:"scaling"`
 			} `json:"services"`
+			Placements []struct {
+				InstanceID        string  `json:"instance_id"`
+				HostID            string  `json:"host_id"`
+				ServiceID         string  `json:"service_id"`
+				CPUCores          float64 `json:"cpu_cores"`
+				MemoryMB          float64 `json:"memory_mb"`
+				CPUTilization     float64 `json:"cpu_utilization"`
+				MemoryUtilization float64 `json:"memory_utilization"`
+				ActiveRequests    int     `json:"active_requests"`
+				Lifecycle         string  `json:"lifecycle"`
+				QueueLength       int     `json:"queue_length"`
+			} `json:"placements"`
 			Workload []struct {
 				PatternKey string `json:"pattern_key"`
 				RateRPS    int    `json:"rate_rps"`
 			} `json:"workload"`
+			FinalConfig map[string]any `json:"final_config"`
 		} `json:"best_candidate"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, "final_config", resp.BestCandidate.Source)
 	require.Equal(t, s3Key, resp.BestCandidate.S3Path)
+	assert.Equal(t, 3, resp.Simulation.Nodes)
 	require.Len(t, resp.BestCandidate.Hosts, 3)
 	assert.Equal(t, 9, resp.BestCandidate.Hosts[0].CPUCores)
 	require.Len(t, resp.BestCandidate.Services, 2)
 	assert.Equal(t, "gateway-1", resp.BestCandidate.Services[0].ServiceID)
 	assert.Equal(t, 23, resp.BestCandidate.Services[0].Replicas)
+	assert.Equal(t, "api", resp.BestCandidate.Services[0].Kind)
+	assert.Equal(t, "m/m/1", resp.BestCandidate.Services[0].Model)
+	assert.Equal(t, "edge", resp.BestCandidate.Services[0].Role)
+	assert.Equal(t, 1, resp.BestCandidate.Services[0].Scaling.Min)
+	assert.Equal(t, 30, resp.BestCandidate.Services[0].Scaling.Max)
+	require.Len(t, resp.BestCandidate.Placements, 1)
+	assert.Equal(t, "gateway-1#1", resp.BestCandidate.Placements[0].InstanceID)
+	assert.Equal(t, "host-auto-4", resp.BestCandidate.Placements[0].HostID)
+	assert.Equal(t, "gateway-1", resp.BestCandidate.Placements[0].ServiceID)
+	assert.Equal(t, "running", resp.BestCandidate.Placements[0].Lifecycle)
+	assert.Equal(t, 77, resp.BestCandidate.Placements[0].ActiveRequests)
+	assert.Equal(t, 2, resp.BestCandidate.Placements[0].QueueLength)
+	assert.Equal(t, 2.0, resp.BestCandidate.Placements[0].CPUCores)
+	assert.Equal(t, 1024.0, resp.BestCandidate.Placements[0].MemoryMB)
+	require.NotNil(t, resp.BestCandidate.FinalConfig)
+	finalCfgPlacements, ok := resp.BestCandidate.FinalConfig["placements"].([]any)
+	require.True(t, ok)
+	require.Len(t, finalCfgPlacements, 1)
 	require.Len(t, resp.BestCandidate.Workload, 1)
 	assert.Equal(t, 124, resp.BestCandidate.Workload[0].RateRPS)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -478,9 +543,9 @@ func TestHandler_GetRunCandidates_OnlineFallsBackToOptimizationHistory(t *testin
 			"id", "user_id", "project_public_id", "run_id", "candidate_id",
 			"spec", "metrics", "sim_workload", "source", "s3_path",
 		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", []byte(`{"hosts":[{"id":"host-1"}]}`), []byte("{}"), []byte("{}"), "export", s3Key))
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Key))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
 	h := &Handler{simService: simSvc, engineClient: NewSimulationEngineClient(engine.URL), db: db}
 	router := gin.New()
 	router.GET("/runs/:id/candidates", h.GetRunCandidates)
@@ -525,9 +590,9 @@ func TestHandler_GetRunCandidates_OnlineFallsBackToScenarioWhenNoFinalConfig(t *
 			"id", "user_id", "project_public_id", "run_id", "candidate_id",
 			"spec", "metrics", "sim_workload", "source", "s3_path",
 		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", []byte(`{"hosts":[{"id":"host-1"}]}`), []byte("{}"), []byte("{}"), "export", s3Key))
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Key))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
 	h := &Handler{
 		simService:   simSvc,
 		engineClient: NewSimulationEngineClient(engine.URL),
@@ -544,6 +609,9 @@ func TestHandler_GetRunCandidates_OnlineFallsBackToScenarioWhenNoFinalConfig(t *
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var resp struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
 		BestCandidate struct {
 			Services []struct {
 				ServiceID string `json:"service_id"`
@@ -552,6 +620,7 @@ func TestHandler_GetRunCandidates_OnlineFallsBackToScenarioWhenNoFinalConfig(t *
 		} `json:"best_candidate"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.Simulation.Nodes)
 	assert.Equal(t, "gateway-1", resp.BestCandidate.Services[0].ServiceID)
 	assert.Equal(t, 2, resp.BestCandidate.Services[0].Replicas)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -577,9 +646,9 @@ func TestHandler_GetRunCandidates_BatchStillUsesScenarioArtifact(t *testing.T) {
 			"id", "user_id", "project_public_id", "run_id", "candidate_id",
 			"spec", "metrics", "sim_workload", "source", "s3_path",
 		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", []byte(`{"hosts":[{"id":"host-1"}]}`), []byte("{}"), []byte("{}"), "export", s3Key))
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Key))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{"hosts":[{"id":"ignored-in-batch","cpu_cores":99}]}`)))
 	h := &Handler{
 		simService:   simSvc,
 		engineClient: NewSimulationEngineClient(engine.URL),
@@ -596,6 +665,9 @@ func TestHandler_GetRunCandidates_BatchStillUsesScenarioArtifact(t *testing.T) {
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var resp struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
 		BestCandidate struct {
 			Source string `json:"source"`
 			Hosts  []struct {
@@ -604,6 +676,7 @@ func TestHandler_GetRunCandidates_BatchStillUsesScenarioArtifact(t *testing.T) {
 		} `json:"best_candidate"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.Simulation.Nodes)
 	assert.Equal(t, "", resp.BestCandidate.Source)
 	assert.Equal(t, 2, resp.BestCandidate.Hosts[0].CPUCores)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -630,9 +703,9 @@ func TestHandler_GetRunCandidates_OnlineUsesCallbackPersistedFinalConfigFirst(t 
 			"id", "user_id", "project_public_id", "run_id", "candidate_id",
 			"spec", "metrics", "sim_workload", "source", "s3_path",
 		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", []byte(`{"hosts":[{"id":"host-1"}]}`), []byte("{}"), []byte("{}"), "export", s3Key))
-	mock.ExpectQuery(`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = \$1`).
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
-		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path"}).AddRow(s3Key))
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
 	h := &Handler{
 		simService: simSvc,
 		db:         db,
@@ -660,6 +733,85 @@ func TestHandler_GetRunCandidates_OnlineUsesCallbackPersistedFinalConfigFirst(t 
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, 9, resp.BestCandidate.Hosts[0].CPUCores)
 	assert.Equal(t, 23, resp.BestCandidate.Services[0].Replicas)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestHandler_GetRunCandidates_OnlineUsesPersistedSummaryFinalConfigWhenExportMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runID := "run-online-summary-final-config"
+	userID := "user-online-summary-final-config"
+	s3Key := "simulation/run-online-summary-final-config/best_scenario.yaml"
+	simSvc := seedRunForCandidatesTests(t, runID, userID, "engine-online-summary-1", map[string]any{"mode": "online"})
+
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "input": {
+    "optimization": {"online": true}
+  }
+}`))
+	}))
+	defer engine.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "user_id", "project_public_id", "run_id", "candidate_id",
+			"spec", "metrics", "sim_workload", "source", "s3_path",
+		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", []byte(`{"hosts":[{"id":"host-1"}]}`), []byte("{}"), []byte("{}"), "export", s3Key))
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{
+			"hosts":[{"id":"host-auto-4","cpu_cores":12,"memory_gb":32}],
+			"placements":[{"instance_id":"checkout-1","host_id":"host-auto-4","service_id":"checkout","lifecycle":"running","cpu_utilization":0.64,"memory_utilization":0.52,"active_requests":9,"queue_length":1,"cpu_cores":2,"memory_mb":1024}],
+			"services":[{"id":"checkout","replicas":3,"kind":"api","model":"m/m/1","role":"worker","scaling":{"min":1,"max":6}}],
+			"workload":[{"pattern_key":"browse","rate_rps":44}]
+		}`)))
+
+	h := &Handler{
+		simService:   simSvc,
+		engineClient: NewSimulationEngineClient(engine.URL),
+		db:           db,
+		s3Client: &fakeObjectStorage{objects: map[string][]byte{
+			s3Key: []byte("hosts:\n  - id: host-fallback\n    cores: 2\n"),
+		}},
+	}
+	router := gin.New()
+	router.GET("/runs/:id/candidates", h.GetRunCandidates)
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/candidates", nil)
+	req.Header.Set("X-User-Id", userID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp struct {
+		BestCandidate struct {
+			Source     string `json:"source"`
+			Placements []struct {
+				HostID     string `json:"host_id"`
+				InstanceID string `json:"instance_id"`
+			} `json:"placements"`
+			Services []struct {
+				Kind string `json:"kind"`
+				Role string `json:"role"`
+			} `json:"services"`
+			FinalConfig map[string]any `json:"final_config"`
+		} `json:"best_candidate"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "final_config", resp.BestCandidate.Source)
+	require.Len(t, resp.BestCandidate.Placements, 1)
+	assert.Equal(t, "host-auto-4", resp.BestCandidate.Placements[0].HostID)
+	assert.Equal(t, "checkout-1", resp.BestCandidate.Placements[0].InstanceID)
+	require.Len(t, resp.BestCandidate.Services, 1)
+	assert.Equal(t, "api", resp.BestCandidate.Services[0].Kind)
+	assert.Equal(t, "worker", resp.BestCandidate.Services[0].Role)
+	require.NotNil(t, resp.BestCandidate.FinalConfig)
+	_, ok := resp.BestCandidate.FinalConfig["placements"]
+	assert.True(t, ok)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
