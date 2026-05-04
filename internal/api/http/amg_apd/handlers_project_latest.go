@@ -60,7 +60,7 @@ func (h *Handlers) GetLatestForProject(c *gin.Context) {
 		detectionsJSON, _ := json.Marshal(res.Detections)
 		if diagramID != "" {
 			// Update existing diagram row in place so we don't create a new version.
-			if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(diagramID, userID, projectPublicID, graphJSON, detectionsJSON, dotContent); err != nil {
+			if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(diagramID, userID, projectPublicID, graphJSON, detectionsJSON, dotContent, yamlContent); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update version analysis", "details": err.Error()})
 				return
 			}
@@ -86,7 +86,7 @@ func (h *Handlers) GetLatestForProject(c *gin.Context) {
 			}
 		}
 		// No existing row id: create new AMG-APD version (legacy path).
-		row, err = h.versionRepo.Save(userID, chatID, title, yamlContent, graphJSON, detectionsJSON, dotContent)
+		row, err = h.versionRepo.Save(userID, chatID, title, yamlContent, graphJSON, detectionsJSON, dotContent, true)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save version", "details": err.Error()})
 			return

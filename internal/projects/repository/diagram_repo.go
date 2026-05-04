@@ -86,7 +86,7 @@ where project_public_id = $1
 	if len(in.SpecSummary) > 0 {
 		specText = string(in.SpecSummary)
 	} else if diagramText != "" {
-		if generated, err := generateSpecSummaryFromDiagram(diagramText); err == nil && generated != "" {
+		if generated, err := GenerateSpecSummaryFromDiagram(diagramText); err == nil && generated != "" {
 			specText = generated
 		}
 	}
@@ -162,7 +162,7 @@ where public_id = $2
 	return &ver, nil
 }
 
-// generateSpecSummaryFromDiagram builds a minimal spec_summary JSON from the diagram_json payload.
+// GenerateSpecSummaryFromDiagram builds a minimal spec_summary JSON from the diagram_json payload.
 // Expected diagram_json shape:
 //
 //	{
@@ -180,7 +180,7 @@ where public_id = $2
 //	}
 //
 // service_types is optional for backward compatibility; when absent, YAML uses type "service" for all names in services.
-func generateSpecSummaryFromDiagram(diagramText string) (string, error) {
+func GenerateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	if strings.TrimSpace(diagramText) == "" {
 		return "", nil
 	}
@@ -456,7 +456,7 @@ for update of dv
 	if len(in.SpecSummary) > 0 {
 		specText = strings.TrimSpace(string(in.SpecSummary))
 	} else if diagramText != "" {
-		if generated, err := generateSpecSummaryFromDiagram(diagramText); err == nil && generated != "" {
+		if generated, err := GenerateSpecSummaryFromDiagram(diagramText); err == nil && generated != "" {
 			specText = generated
 		}
 	}

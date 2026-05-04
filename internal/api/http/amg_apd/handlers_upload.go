@@ -43,10 +43,11 @@ func getIncomingDir() string {
 }
 
 type analyzeRawReq struct {
-	YAML       string                    `json:"yaml"`
-	Title      string                    `json:"title"`
-	OutDir     string                    `json:"out_dir"`
-	NodeLayout map[string]nodeLayoutXY   `json:"node_layout,omitempty"`
+	YAML                  string                  `json:"yaml"`
+	Title                 string                  `json:"title"`
+	OutDir                string                  `json:"out_dir"`
+	NodeLayout            map[string]nodeLayoutXY `json:"node_layout,omitempty"`
+	MergePreviousDiagram  *bool                   `json:"merge_previous_diagram,omitempty"`
 }
 
 // AnalyzeRaw runs analysis and persists to DB (user_id/chat_id from headers or TestUser123/TestChat123).
@@ -74,7 +75,11 @@ func (h *Handlers) AnalyzeRaw(c *gin.Context) {
 	mergeNodeLayoutIntoGraph(res.Graph, req.NodeLayout)
 	graphJSON, _ := json.Marshal(res.Graph)
 	detectionsJSON, _ := json.Marshal(res.Detections)
-	row, err := h.versionRepo.Save(userID, chatID, req.Title, req.YAML, graphJSON, detectionsJSON, dotContent)
+	mergePrev := true
+	if req.MergePreviousDiagram != nil {
+		mergePrev = *req.MergePreviousDiagram
+	}
+	row, err := h.versionRepo.Save(userID, chatID, req.Title, req.YAML, graphJSON, detectionsJSON, dotContent, mergePrev)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save version", "details": err.Error()})
 		return
@@ -134,7 +139,11 @@ func (h *Handlers) AnalyzeUpload(c *gin.Context) {
 	}
 	graphJSON, _ := json.Marshal(res.Graph)
 	detectionsJSON, _ := json.Marshal(res.Detections)
-	row, err := h.versionRepo.Save(userID, chatID, title, string(yamlBytes), graphJSON, detectionsJSON, dotContent)
+	mergePrev := true
+	if v := strings.TrimSpace(c.PostForm("merge_previous_diagram")); v == "0" || strings.EqualFold(v, "false") {
+		mergePrev = false
+	}
+	row, err := h.versionRepo.Save(userID, chatID, title, string(yamlBytes), graphJSON, detectionsJSON, dotContent, mergePrev)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save version", "details": err.Error()})
 		return
@@ -202,7 +211,7 @@ func (h *Handlers) UpdateVersionAnalysis(c *gin.Context) {
 	mergeNodeLayoutIntoGraph(res.Graph, req.NodeLayout)
 	graphJSON, _ := json.Marshal(res.Graph)
 	detectionsJSON, _ := json.Marshal(res.Detections)
-	if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(req.VersionID, userID, chatID, graphJSON, detectionsJSON, dotContent); err != nil {
+	if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(req.VersionID, userID, chatID, graphJSON, detectionsJSON, dotContent, yamlContent); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update version", "details": err.Error()})
 		return
 	}
