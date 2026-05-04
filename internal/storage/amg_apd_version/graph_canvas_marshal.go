@@ -2,7 +2,9 @@ package amg_apd_version
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -311,7 +313,11 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 			baseByNodeID[id] = n
 		}
 	}
-	baseEdgeByPair := make(map[string]canvasWireEdge, len(base.Edges)*2)
+	baseEdgePairCap := len(base.Edges)
+	if baseEdgePairCap > math.MaxInt/2 {
+		return nil, errors.New("edge count too large")
+	}
+	baseEdgeByPair := make(map[string]canvasWireEdge, baseEdgePairCap*2)
 	for _, e := range base.Edges {
 		fr := resolveWireEndpoint(e.From, alias)
 		tr := resolveWireEndpoint(e.To, alias)
@@ -337,7 +343,12 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 		}
 	}
 
-	nodeIDs := make(map[string]struct{}, len(analyzed.Nodes)+len(base.Nodes))
+	analyzedNodeCount := len(analyzed.Nodes)
+	baseNodeCount := len(base.Nodes)
+	if baseNodeCount > math.MaxInt-analyzedNodeCount {
+		return nil, errors.New("node count too large")
+	}
+	nodeIDs := make(map[string]struct{}, analyzedNodeCount+baseNodeCount)
 	for _, n := range analyzed.Nodes {
 		if id := strings.TrimSpace(n.ID); id != "" {
 			nodeIDs[id] = struct{}{}
@@ -359,7 +370,12 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 		}
 	}
 
-	edgeSeen := make(map[string]struct{}, len(analyzed.Edges)+len(base.Edges))
+	analyzedEdgeCount := len(analyzed.Edges)
+	baseEdgeCount := len(base.Edges)
+	if baseEdgeCount > math.MaxInt-analyzedEdgeCount {
+		return nil, errors.New("edge count too large")
+	}
+	edgeSeen := make(map[string]struct{}, analyzedEdgeCount+baseEdgeCount)
 	for _, e := range analyzed.Edges {
 		fr := resolveWireEndpoint(e.From, alias)
 		tr := resolveWireEndpoint(e.To, alias)
