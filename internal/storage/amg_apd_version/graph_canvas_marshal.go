@@ -284,6 +284,20 @@ func ensureUniqueWireEdgeIDs(edges []canvasWireEdge) {
 	}
 }
 
+func safeMapCapacity(a, b, capLimit int) (int, error) {
+	if a < 0 || b < 0 {
+		return 0, errors.New("negative count")
+	}
+	if b > math.MaxInt-a {
+		return 0, errors.New("count too large")
+	}
+	total := a + b
+	if total > capLimit {
+		return capLimit, nil
+	}
+	return total, nil
+}
+
 // mergeCanvasPreserveFromBase overlays the last saved canvas onto freshly analyzed canvas JSON:
 // - keeps x/y (and node records) from base when node ids match;
 // - restores edge id/label from base when from→to matches;
@@ -343,12 +357,12 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 		}
 	}
 
-	analyzedNodeCount := len(analyzed.Nodes)
-	baseNodeCount := len(base.Nodes)
-	if baseNodeCount > math.MaxInt-analyzedNodeCount {
+	const maxNodeMapPrealloc = 1 << 20
+	nodeCap, err := safeMapCapacity(len(analyzed.Nodes), len(base.Nodes), maxNodeMapPrealloc)
+	if err != nil {
 		return nil, errors.New("node count too large")
 	}
-	nodeIDs := make(map[string]struct{}, analyzedNodeCount+baseNodeCount)
+	nodeIDs := make(map[string]struct{}, nodeCap)
 	for _, n := range analyzed.Nodes {
 		if id := strings.TrimSpace(n.ID); id != "" {
 			nodeIDs[id] = struct{}{}
@@ -370,12 +384,12 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 		}
 	}
 
-	analyzedEdgeCount := len(analyzed.Edges)
-	baseEdgeCount := len(base.Edges)
-	if baseEdgeCount > math.MaxInt-analyzedEdgeCount {
+	const maxEdgeMapPrealloc = 1 << 20
+	edgeCap, err := safeMapCapacity(len(analyzed.Edges), len(base.Edges), maxEdgeMapPrealloc)
+	if err != nil {
 		return nil, errors.New("edge count too large")
 	}
-	edgeSeen := make(map[string]struct{}, analyzedEdgeCount+baseEdgeCount)
+	edgeSeen := make(map[string]struct{}, edgeCap)
 	for _, e := range analyzed.Edges {
 		fr := resolveWireEndpoint(e.From, alias)
 		tr := resolveWireEndpoint(e.To, alias)
