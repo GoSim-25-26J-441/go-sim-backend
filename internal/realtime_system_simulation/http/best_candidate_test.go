@@ -515,6 +515,149 @@ func TestHandler_GetRunCandidates_OnlineUsesFinalConfig(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// Regression: simulation-core may set best_run_id and candidate_run_ids to the parent run
+// for online/self-result exports; that must not force batch mode or S3 scenario fallback.
+func TestHandler_GetRunCandidates_OnlineWithSelfResultRunIDsUsesFinalConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runID := "run-online-self-result-ids"
+	userID := "user-online-self-result-ids"
+	engineRunID := "engine-online-self-result-ids"
+	s3Key := "simulation/" + runID + "/best_scenario.yaml"
+	simSvc := seedRunForCandidatesTests(t, runID, userID, engineRunID, map[string]any{"mode": "online"})
+
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/runs/"+engineRunID+"/export", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "run": {
+    "best_run_id": "` + engineRunID + `",
+    "candidate_run_ids": ["` + engineRunID + `","` + engineRunID + `"]
+  },
+  "input": {
+    "scenario_yaml": "hosts:\n  - id: host-1\n    cores: 2\nservices:\n  - id: gateway-1\n    replicas: 1\n",
+    "optimization": {"online": true}
+  },
+  "final_config": {
+    "hosts": [
+      {"id":"host-auto-1","cpu_cores":8,"memory_gb":16},
+      {"id":"host-auto-2","cpu_cores":8,"memory_gb":16}
+    ],
+    "services": [
+      {"id":"gateway-1","replicas":7,"cpu_cores":2,"memory_mb":512,"kind":"api","model":"m/m/1","role":"edge"}
+    ]
+  }
+}`))
+	}))
+	defer engine.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "user_id", "project_public_id", "run_id", "candidate_id",
+			"spec", "metrics", "sim_workload", "source", "s3_path",
+		}).AddRow("uuid-1", userID, "proj-oc", runID, "best-1", []byte(`{"hosts":[{"id":"host-1"}]}`), []byte("{}"), []byte("{}"), "export", s3Key))
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
+
+	h := &Handler{
+		simService:   simSvc,
+		engineClient: NewSimulationEngineClient(engine.URL),
+		db:           db,
+		s3Client: &fakeObjectStorage{objects: map[string][]byte{
+			s3Key: []byte("hosts:\n  - id: host-1\n    cores: 2\nservices:\n  - id: gateway-1\n    replicas: 1\n"),
+		}},
+	}
+	router := gin.New()
+	router.GET("/runs/:id/candidates", h.GetRunCandidates)
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/candidates", nil)
+	req.Header.Set("X-User-Id", userID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
+		BestCandidate struct {
+			Source string `json:"source"`
+			Hosts  []struct {
+				HostID   string `json:"host_id"`
+				CPUCores int    `json:"cpu_cores"`
+			} `json:"hosts"`
+			Services []struct {
+				ServiceID string `json:"service_id"`
+				Replicas  int    `json:"replicas"`
+			} `json:"services"`
+		} `json:"best_candidate"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "final_config", resp.BestCandidate.Source)
+	assert.Equal(t, 2, resp.Simulation.Nodes)
+	require.Len(t, resp.BestCandidate.Hosts, 2)
+	assert.Equal(t, "host-auto-1", resp.BestCandidate.Hosts[0].HostID)
+	assert.Equal(t, "host-auto-2", resp.BestCandidate.Hosts[1].HostID)
+	require.Len(t, resp.BestCandidate.Services, 1)
+	assert.Equal(t, "gateway-1", resp.BestCandidate.Services[0].ServiceID)
+	assert.Equal(t, 7, resp.BestCandidate.Services[0].Replicas)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestIsBatchOptimizationRun_OnlineMetadataIgnoresSelfBestAndCandidateIDs(t *testing.T) {
+	engineID := "engine-online-self-1"
+	run := &domain.SimulationRun{Metadata: map[string]any{"mode": "online"}}
+	exp := &ExportRunResponse{
+		Run: &ExportRunRun{
+			BestRunID:           engineID,
+			CandidateRunIDs:     []string{engineID, engineID},
+			BatchScoreBreakdown: nil,
+		},
+		Input: RunInput{
+			ScenarioYAML: "x: 1\n",
+			Optimization: json.RawMessage(`{"online":true,"batch":{}}`),
+		},
+	}
+	assert.False(t, isBatchOptimizationRun(run, exp), "self-result run IDs and empty optimization.batch must not imply batch")
+}
+
+func TestIsBatchOptimizationRun_NonEmptyOptimizationBatchInExport(t *testing.T) {
+	run := &domain.SimulationRun{Metadata: map[string]any{"mode": "online"}}
+	exp := &ExportRunResponse{
+		Run:   &ExportRunRun{},
+		Input: RunInput{Optimization: json.RawMessage(`{"online":true,"batch":{"min_hosts":1}}`)},
+	}
+	assert.True(t, isBatchOptimizationRun(run, exp))
+}
+
+func TestIsBatchOptimizationRun_ModeBatchIgnoresOnlineExportFields(t *testing.T) {
+	engineID := "engine-batch-1"
+	run := &domain.SimulationRun{Metadata: map[string]any{"mode": "batch"}}
+	exp := &ExportRunResponse{
+		Run: &ExportRunRun{
+			BestRunID:       engineID,
+			CandidateRunIDs: []string{engineID},
+		},
+		Input: RunInput{Optimization: json.RawMessage(`{"online":true}`)},
+	}
+	assert.True(t, isBatchOptimizationRun(run, exp))
+}
+
+func TestIsBatchOptimizationRun_ExportBatchRecommendationSignals(t *testing.T) {
+	f := true
+	run := &domain.SimulationRun{Metadata: map[string]any{}}
+	exp := &ExportRunResponse{
+		Run: &ExportRunRun{
+			BatchRecommendationFeasible: &f,
+		},
+		Input: RunInput{},
+	}
+	assert.True(t, isBatchOptimizationRun(run, exp))
+}
+
 func TestHandler_GetRunCandidates_OnlineFallsBackToOptimizationHistory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	runID := "run-online-history"
