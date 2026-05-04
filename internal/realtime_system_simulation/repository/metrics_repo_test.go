@@ -33,17 +33,18 @@ func TestMetricsRepository_UpsertSummary_CreatesSimulationRunsAndSummary(t *test
 		WithArgs(
 			driver.Value(runID),
 			driver.Value(engineRunID),
-			sqlmock.AnyArg(), // metrics JSON
-			sqlmock.AnyArg(), // summary_data JSON
-			driver.Value(""), // scenario_yaml
+			sqlmock.AnyArg(),   // metrics JSON
+			sqlmock.AnyArg(),   // summary_data JSON
+			driver.Value(""),   // scenario_yaml
 			nil,                // total_duration_ms
-			sqlmock.AnyArg(),   // final_config JSON
+			driver.Value(true), // preserve final_config (nil input)
+			driver.Value("{}"), // placeholder when preserving
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err = repo.UpsertSummary(context.Background(), &SummaryUpsertParams{
-		RunID:        runID,
-		EngineRunID:  engineRunID,
+		RunID:       runID,
+		EngineRunID: engineRunID,
 		Metrics: map[string]any{
 			"request_latency_ms": map[string]any{
 				"p95": 120.0,
@@ -76,6 +77,7 @@ func TestMetricsRepository_UpsertSummary_NilFinalConfigStoredAsObject(t *testing
 			sqlmock.AnyArg(),
 			driver.Value(""),
 			nil,
+			driver.Value(true),
 			driver.Value("{}"),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -112,7 +114,8 @@ func TestMetricsRepository_UpsertSummary_PersistsTotalDurationMs(t *testing.T) {
 			sqlmock.AnyArg(),
 			driver.Value(""),
 			driver.Value(totalDurationMs),
-			sqlmock.AnyArg(),
+			driver.Value(true),
+			driver.Value("{}"),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -274,5 +277,109 @@ func TestMetricsRepository_InsertTimeSeries_InsertsBatch(t *testing.T) {
 
 	err = repo.InsertTimeSeries(context.Background(), points)
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMetricsRepository_UpsertSummary_UpdatesWhenFinalConfigSet(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := NewMetricsRepository(db)
+	runID := "run-fc-update"
+	engineRunID := "engine-fc-update"
+	fc := map[string]any{"hosts": []any{map[string]any{"id": "h1"}}}
+	fcJSON, err := json.Marshal(fc)
+	require.NoError(t, err)
+
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value(""),
+			nil,
+			driver.Value(false),
+			driver.Value(string(fcJSON)),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err = repo.UpsertSummary(context.Background(), &SummaryUpsertParams{
+		RunID:        runID,
+		EngineRunID:  engineRunID,
+		Metrics:      map[string]any{"m": 1},
+		SummaryData:  map[string]any{},
+		ScenarioYAML: "",
+		FinalConfig:  fc,
+	})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMetricsRepository_UpsertSummary_SecondNilPreservesFirstFinalConfig(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := NewMetricsRepository(db)
+	runID := "run-fc-preserve-chain"
+	engineRunID := "engine-fc-preserve-chain"
+	fc := map[string]any{"placements": []any{"p1"}}
+	fcJSON, err := json.Marshal(fc)
+	require.NoError(t, err)
+
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value(""),
+			nil,
+			driver.Value(false),
+			driver.Value(string(fcJSON)),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	require.NoError(t, repo.UpsertSummary(context.Background(), &SummaryUpsertParams{
+		RunID:        runID,
+		EngineRunID:  engineRunID,
+		Metrics:      map[string]any{"a": 1},
+		SummaryData:  map[string]any{},
+		ScenarioYAML: "",
+		FinalConfig:  fc,
+	}))
+
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value(""),
+			nil,
+			driver.Value(true),
+			driver.Value("{}"),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	require.NoError(t, repo.UpsertSummary(context.Background(), &SummaryUpsertParams{
+		RunID:        runID,
+		EngineRunID:  engineRunID,
+		Metrics:      map[string]any{"b": 2},
+		SummaryData:  map[string]any{},
+		ScenarioYAML: "",
+		FinalConfig:  nil,
+	}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }

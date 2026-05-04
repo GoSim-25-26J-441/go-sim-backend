@@ -69,7 +69,7 @@ func TestCreateRunForProject_InlineScenarioWithoutSaveDoesNotTouchCache(t *testi
 		WithArgs("dv-1", "project-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("dv-1"))
 	mock.ExpectExec(`INSERT INTO simulation_runs`).WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), yaml, nil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), yaml, nil, true, "{}").WillReturnResult(sqlmock.NewResult(1, 1))
 
 	body := fmt.Sprintf(`{"diagram_version_id":"dv-1","scenario_yaml":%q,"save_scenario":false,"duration_ms":1000}`, yaml)
 	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(body))
@@ -141,7 +141,7 @@ func TestCreateRunForProject_SaveScenarioTruePersistsEdited(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"diagram_version_id", "scenario_yaml", "scenario_hash", "s3_path", "source", "source_hash", "created_at", "updated_at"}).
 			AddRow("dv-1", yaml, hashHex, nil, "edited", nil, now, now))
 	mock.ExpectExec(`INSERT INTO simulation_runs`).WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), yaml, nil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries`).WithArgs(sqlmock.AnyArg(), "engine-1", sqlmock.AnyArg(), sqlmock.AnyArg(), yaml, nil, true, "{}").WillReturnResult(sqlmock.NewResult(1, 1))
 
 	body := fmt.Sprintf(`{"diagram_version_id":"dv-1","scenario_yaml":%q,"save_scenario":true,"duration_ms":1000}`, yaml)
 	req := httptest.NewRequest(http.MethodPost, "/projects/project-1/runs", bytes.NewBufferString(body))

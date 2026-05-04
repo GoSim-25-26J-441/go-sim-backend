@@ -927,7 +927,12 @@ func TestUploadBestScenarioToS3_StoresObjectAndDBRecord(t *testing.T) {
 		WithArgs(driver.Value(runID)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO simulation_summaries`).
-		WithArgs(driver.Value(runID), driver.Value(engineRunID), driver.Value("simulation/"+runID+"/best_scenario.yaml"), driver.Value("hosts:\n  - id: host-1\n    cores: 4\n")).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			driver.Value("simulation/"+runID+"/best_scenario.yaml"),
+			driver.Value("hosts:\n  - id: host-1\n    cores: 4\n"),
+		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	h := &Handler{
@@ -976,7 +981,12 @@ func TestUploadBestScenarioToS3_UsesBestRunIDWhenSet(t *testing.T) {
 		WithArgs(driver.Value(runID)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO simulation_summaries`).
-		WithArgs(driver.Value(runID), driver.Value(engineRunID), driver.Value("simulation/"+runID+"/best_scenario.yaml"), driver.Value("hosts:\n  - id: h1\n    cores: 2\n")).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			driver.Value("simulation/"+runID+"/best_scenario.yaml"),
+			driver.Value("hosts:\n  - id: h1\n    cores: 2\n"),
+		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	h := &Handler{
@@ -1138,7 +1148,7 @@ func TestPersistRunMetrics_OrdinaryFallbackUsesParentRunIDCandidate(t *testing.T
 	mock.ExpectExec(`INSERT INTO simulation_runs`).
 		WithArgs(driver.Value(runID)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+	mock.ExpectExec(`INSERT INTO simulation_summaries \(run_id, engine_run_id, metrics, summary_data, scenario_yaml, total_duration_ms, final_config\)`).
 		WithArgs(
 			driver.Value(runID),
 			driver.Value(engineRunID),
@@ -1146,7 +1156,8 @@ func TestPersistRunMetrics_OrdinaryFallbackUsesParentRunIDCandidate(t *testing.T
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			driver.Value(int64(5000)),
-			sqlmock.AnyArg(),
+			driver.Value(true),
+			driver.Value("{}"),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(`INSERT INTO simulation_runs`).
@@ -1180,8 +1191,121 @@ func TestPersistRunMetrics_OrdinaryFallbackUsesParentRunIDCandidate(t *testing.T
 		ProjectPublicID: "proj-ordinary",
 	}
 
-	h.persistRunMetrics(context.Background(), run, "", nil)
+	h.persistRunMetrics(context.Background(), run, "", nil, nil)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPersistRunMetrics_UsesCallbackFinalConfigWhenExportMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runID := "run-callback-fc-1"
+	engineRunID := "engine-callback-fc-1"
+	userID := "user-callback-fc-1"
+
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"run":{"id":"engine-callback-fc-1","status":"RUN_STATUS_COMPLETED"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/export":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "input": {
+    "scenario_yaml": "hosts:\n  - id: host-1\n    cores: 2\n",
+    "duration_ms": 5000
+  },
+  "metrics": {"throughput_rps": 10}
+}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/metrics/timeseries":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"run_id":"engine-callback-fc-1","points":[]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/"+engineRunID+"/metrics":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"metrics":{"throughput_rps":10}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer engineServer.Close()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO simulation_summaries \(run_id, engine_run_id, metrics, summary_data, scenario_yaml, total_duration_ms, final_config\)`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value(int64(5000)),
+			driver.Value(false),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO simulation_runs`).
+		WithArgs(driver.Value(runID)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectBegin()
+	mock.ExpectPrepare(`INSERT INTO simulation_candidates`).
+		ExpectExec().
+		WithArgs(
+			driver.Value(userID),
+			sqlmock.AnyArg(),
+			driver.Value(runID),
+			driver.Value(runID),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			driver.Value("scenario_yaml"),
+			driver.Value(""),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	runRepo := simrepo.NewRunRepository(rdb)
+	svc := service.NewSimulationService(runRepo)
+	run := &domain.SimulationRun{
+		RunID:           runID,
+		EngineRunID:     engineRunID,
+		UserID:          userID,
+		ProjectPublicID: "proj-callback-fc",
+		Status:          domain.StatusCompleted,
+	}
+	require.NoError(t, runRepo.Create(run))
+
+	callbackFC := map[string]interface{}{
+		"hosts": []interface{}{
+			map[string]interface{}{"id": "host-callback-only", "cpu_cores": float64(16)},
+		},
+	}
+
+	h := &Handler{
+		simService:   svc,
+		engineClient: NewSimulationEngineClient(engineServer.URL),
+		db:           db,
+	}
+
+	h.persistRunMetrics(context.Background(), run, "", nil, callbackFC)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	updated, err := svc.GetRun(runID)
+	require.NoError(t, err)
+	fcMeta, ok := updated.Metadata["final_config"].(map[string]interface{})
+	require.True(t, ok)
+	hosts, ok := fcMeta["hosts"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, hosts, 1)
+	h0 := hosts[0].(map[string]interface{})
+	assert.Equal(t, "host-callback-only", h0["id"])
 }
 
 func TestPersistRunMetrics_BatchPersistsOptimizationReplayBundle(t *testing.T) {
@@ -1247,7 +1371,7 @@ func TestPersistRunMetrics_BatchPersistsOptimizationReplayBundle(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO simulation_runs`).
 		WithArgs(driver.Value(runID)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO simulation_summaries`).
+	mock.ExpectExec(`INSERT INTO simulation_summaries \(run_id, engine_run_id, metrics, summary_data, scenario_yaml, total_duration_ms, final_config\)`).
 		WithArgs(
 			driver.Value(runID),
 			driver.Value(engineRunID),
@@ -1255,12 +1379,24 @@ func TestPersistRunMetrics_BatchPersistsOptimizationReplayBundle(t *testing.T) {
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			driver.Value(int64(2000)),
-			sqlmock.AnyArg(),
+			driver.Value(true),
+			driver.Value("{}"),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(`INSERT INTO simulation_runs`).
 		WithArgs(driver.Value(runID)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	bestFC, err := json.Marshal(map[string]any{"services": []any{map[string]any{"service_id": "gateway-1", "replicas": 2}}})
+	require.NoError(t, err)
+	mock.ExpectExec(`INSERT INTO simulation_summaries \(run_id, engine_run_id, best_candidate_s3_path, scenario_yaml, final_config\)`).
+		WithArgs(
+			driver.Value(runID),
+			driver.Value(engineRunID),
+			driver.Value("simulation/"+runID+"/best_scenario.yaml"),
+			sqlmock.AnyArg(),
+			driver.Value(string(bestFC)),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectBegin()
 	prep := mock.ExpectPrepare(`INSERT INTO simulation_candidates`)
 	for _, tc := range []struct {
@@ -1307,7 +1443,7 @@ func TestPersistRunMetrics_BatchPersistsOptimizationReplayBundle(t *testing.T) {
 		db:           db,
 	}
 
-	h.persistRunMetrics(context.Background(), run, bestRunID, []string{bestRunID, candidateRunID})
+	h.persistRunMetrics(context.Background(), run, bestRunID, []string{bestRunID, candidateRunID}, nil)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	updated, err := svc.GetRun(runID)
