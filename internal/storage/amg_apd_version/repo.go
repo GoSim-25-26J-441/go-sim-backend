@@ -464,6 +464,27 @@ func (r *Repo) DeleteByID(id string) (bool, error) {
 	return n > 0, nil
 }
 
+// UpdateTitleByIDForUserChat sets the display title for a version row owned by the user and project.
+// Only rows with source = 'amg_apd' are updated (same scope as DeleteByIDForUserChat).
+func (r *Repo) UpdateTitleByIDForUserChat(id, userID, chatID, title string) (bool, error) {
+	if userID == "" {
+		userID = DefaultUserID
+	}
+	if chatID == "" {
+		chatID = DefaultChatID
+	}
+	res, err := r.db.Exec(`
+		UPDATE diagram_versions
+		SET title = $1
+		WHERE id = $2 AND user_firebase_uid = $3 AND project_public_id = $4 AND source = 'amg_apd'
+	`, title, id, userID, chatID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // DeleteByIDForUserChat deletes a version by id only if it belongs to user_id and chat_id.
 func (r *Repo) DeleteByIDForUserChat(id, userID, chatID string) (bool, error) {
 	if userID == "" {

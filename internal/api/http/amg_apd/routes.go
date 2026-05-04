@@ -24,6 +24,7 @@ func Register(r *gin.Engine, db *sql.DB, versionRepo *amg_apd_version.Repo) {
 	v1.GET("/versions", h.ListVersions)
 	v1.GET("/versions/compare", h.CompareVersions)
 	v1.GET("/versions/:id", h.GetVersion)
+	v1.PATCH("/versions/:id", h.PatchVersion)
 	v1.DELETE("/versions/:id", h.DeleteVersion)
 	v1.GET("/projects/:project_public_id/latest", h.GetLatestForProject)
 
