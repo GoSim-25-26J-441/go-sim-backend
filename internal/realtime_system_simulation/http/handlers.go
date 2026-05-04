@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -844,6 +846,258 @@ func parseScenarioYAMLHostsServices(data []byte) (hosts []gin.H, services []gin.
 	return hosts, services
 }
 
+func toFloat64(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case json.Number:
+		f, err := x.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	default:
+		return 0, false
+	}
+}
+
+func parseOnlineFlagFromOptimization(raw any) bool {
+	if raw == nil {
+		return false
+	}
+	switch typed := raw.(type) {
+	case map[string]any:
+		if v, ok := typed["online"].(bool); ok {
+			return v
+		}
+	case json.RawMessage:
+		var m map[string]any
+		if err := json.Unmarshal(typed, &m); err == nil {
+			if v, ok := m["online"].(bool); ok {
+				return v
+			}
+		}
+	case []byte:
+		var m map[string]any
+		if err := json.Unmarshal(typed, &m); err == nil {
+			if v, ok := m["online"].(bool); ok {
+				return v
+			}
+		}
+	}
+	return false
+}
+
+func parseBatchFlagFromOptimization(raw any) bool {
+	if raw == nil {
+		return false
+	}
+	switch typed := raw.(type) {
+	case map[string]any:
+		if v, ok := typed["batch"].(map[string]any); ok {
+			return len(v) > 0
+		}
+	case json.RawMessage:
+		var m map[string]any
+		if err := json.Unmarshal(typed, &m); err == nil {
+			if v, ok := m["batch"].(map[string]any); ok {
+				return len(v) > 0
+			}
+		}
+	case []byte:
+		var m map[string]any
+		if err := json.Unmarshal(typed, &m); err == nil {
+			if v, ok := m["batch"].(map[string]any); ok {
+				return len(v) > 0
+			}
+		}
+	}
+	return false
+}
+
+func isBatchOptimizationRun(run *domain.SimulationRun, exportResp *ExportRunResponse) bool {
+	if run != nil && run.Metadata != nil {
+		if mode, ok := run.Metadata["mode"].(string); ok && mode == "batch" {
+			return true
+		}
+		if cfg, ok := run.Metadata["optimization_config"].(map[string]any); ok {
+			if mode, ok := cfg["mode"].(string); ok && mode == "batch" {
+				return true
+			}
+		}
+		if parseBatchFlagFromOptimization(run.Metadata["optimization"]) {
+			return true
+		}
+	}
+	if exportResp == nil {
+		return false
+	}
+	if parseBatchFlagFromOptimization(exportResp.Input.Optimization) {
+		return true
+	}
+	if exportResp.Run != nil {
+		if exportResp.Run.BestRunID != "" || len(exportResp.Run.CandidateRunIDs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func isOnlineOptimizationRun(run *domain.SimulationRun, exportResp *ExportRunResponse) bool {
+	if isBatchOptimizationRun(run, exportResp) {
+		return false
+	}
+	if run != nil && run.Metadata != nil {
+		if mode, ok := run.Metadata["mode"].(string); ok && mode == "online" {
+			return true
+		}
+		if cfg, ok := run.Metadata["optimization_config"].(map[string]any); ok {
+			if mode, ok := cfg["mode"].(string); ok && mode == "online" {
+				return true
+			}
+		}
+		if parseOnlineFlagFromOptimization(run.Metadata["optimization"]) {
+			return true
+		}
+	}
+	if exportResp == nil {
+		return false
+	}
+	if len(exportResp.FinalConfig) > 0 || len(exportResp.OptimizationHistory) > 0 {
+		return true
+	}
+	return parseOnlineFlagFromOptimization(exportResp.Input.Optimization)
+}
+
+func lastCurrentConfigFromHistory(history []OptimizationStep) map[string]any {
+	if len(history) == 0 {
+		return nil
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		if len(history[i].CurrentConfig) > 0 {
+			return history[i].CurrentConfig
+		}
+	}
+	return nil
+}
+
+func finalConfigToBestCandidate(config map[string]any, s3Path string) gin.H {
+	out := gin.H{
+		"s3_path":      s3Path,
+		"source":       "final_config",
+		"final_config": config,
+	}
+	hosts := make([]gin.H, 0)
+	if hostRaw, ok := config["hosts"].([]any); ok {
+		for _, h := range hostRaw {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			hostID, _ := hm["id"].(string)
+			if hostID == "" {
+				hostID, _ = hm["host_id"].(string)
+			}
+			hostDTO := gin.H{"host_id": hostID}
+			if cpu, ok := toFloat64(hm["cpu_cores"]); ok {
+				hostDTO["cpu_cores"] = int(math.Round(cpu))
+			}
+			if !hasKey(hm, "cpu_cores") {
+				if cores, ok := toFloat64(hm["cores"]); ok {
+					hostDTO["cpu_cores"] = int(math.Round(cores))
+				}
+			}
+			if mem, ok := toFloat64(hm["memory_gb"]); ok {
+				hostDTO["memory_gb"] = mem
+			}
+			hosts = append(hosts, hostDTO)
+		}
+	}
+	services := make([]gin.H, 0)
+	if svcRaw, ok := config["services"].([]any); ok {
+		for _, s := range svcRaw {
+			sm, ok := s.(map[string]any)
+			if !ok {
+				continue
+			}
+			serviceID, _ := sm["id"].(string)
+			if serviceID == "" {
+				serviceID, _ = sm["service_id"].(string)
+			}
+			svcDTO := gin.H{"service_id": serviceID}
+			if id, ok := sm["id"].(string); ok && id != "" {
+				svcDTO["id"] = id
+			}
+			if reps, ok := toFloat64(sm["replicas"]); ok {
+				svcDTO["replicas"] = int(math.Round(reps))
+			}
+			if cpu, ok := toFloat64(sm["cpu_cores"]); ok {
+				svcDTO["cpu_cores"] = cpu
+			}
+			if mem, ok := toFloat64(sm["memory_mb"]); ok {
+				svcDTO["memory_mb"] = mem
+			}
+			if kind, ok := sm["kind"]; ok {
+				svcDTO["kind"] = kind
+			}
+			if model, ok := sm["model"]; ok {
+				svcDTO["model"] = model
+			}
+			if role, ok := sm["role"]; ok {
+				svcDTO["role"] = role
+			}
+			if scaling, ok := sm["scaling"]; ok {
+				svcDTO["scaling"] = scaling
+			}
+			services = append(services, svcDTO)
+		}
+	}
+	workload := make([]gin.H, 0)
+	if wlRaw, ok := config["workload"].([]any); ok {
+		for i, w := range wlRaw {
+			wm, ok := w.(map[string]any)
+			if !ok {
+				continue
+			}
+			patternKey, _ := wm["pattern_key"].(string)
+			if patternKey == "" {
+				patternKey = fmt.Sprintf("workload[%d]", i)
+			}
+			wlDTO := gin.H{"pattern_key": patternKey}
+			if rate, ok := toFloat64(wm["rate_rps"]); ok {
+				wlDTO["rate_rps"] = int(math.Ceil(rate))
+			}
+			workload = append(workload, wlDTO)
+		}
+	}
+	out["hosts"] = hosts
+	out["services"] = services
+	if placements, ok := config["placements"].([]any); ok && len(placements) > 0 {
+		out["placements"] = placements
+	}
+	if len(workload) > 0 {
+		out["workload"] = workload
+	}
+	return out
+}
+
+func hasKey(m map[string]any, key string) bool {
+	_, ok := m[key]
+	return ok
+}
+
+func finalConfigPresent(cfg map[string]any) bool {
+	return len(cfg) > 0
+}
+
 // hostCountFromSpec returns the length of spec["hosts"] when it is a JSON array ([]any after decode).
 func hostCountFromSpec(spec map[string]any) (int, bool) {
 	if spec == nil {
@@ -854,6 +1108,17 @@ func hostCountFromSpec(spec map[string]any) (int, bool) {
 		return 0, false
 	}
 	hosts, ok := v.([]any)
+	if !ok {
+		return 0, false
+	}
+	return len(hosts), true
+}
+
+func finalConfigHostCount(config map[string]any) (int, bool) {
+	if config == nil {
+		return 0, false
+	}
+	hosts, ok := config["hosts"].([]any)
 	if !ok {
 		return 0, false
 	}
@@ -930,15 +1195,25 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 
 	var bestCandidateID string
 	var bestPath sql.NullString
+	var summaryFinalConfigJSON []byte
+	var summaryFinalConfig map[string]any
 	if err := h.db.QueryRowContext(
 		c.Request.Context(),
-		`SELECT best_candidate_s3_path FROM simulation_summaries WHERE run_id = $1`,
+		`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = $1`,
 		runID,
-	).Scan(&bestPath); err == nil && bestPath.Valid && bestPath.String != "" {
-		for _, rec := range records {
-			if rec.S3Path == bestPath.String {
-				bestCandidateID = rec.CandidateID
-				break
+	).Scan(&bestPath, &summaryFinalConfigJSON); err == nil {
+		if len(summaryFinalConfigJSON) > 0 && string(summaryFinalConfigJSON) != "null" {
+			if unmarshalErr := json.Unmarshal(summaryFinalConfigJSON, &summaryFinalConfig); unmarshalErr != nil {
+				log.Printf("Failed to unmarshal final_config for run_id=%s: %v", runID, unmarshalErr)
+				summaryFinalConfig = nil
+			}
+		}
+		if bestPath.Valid && bestPath.String != "" {
+			for _, rec := range records {
+				if rec.S3Path == bestPath.String {
+					bestCandidateID = rec.CandidateID
+					break
+				}
 			}
 		}
 	}
@@ -965,8 +1240,58 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 		})
 	}
 
-	var bestCandidateObj interface{}
-	if bestPath.Valid && bestPath.String != "" && h.s3Client != nil {
+	var (
+		bestCandidateObj interface{}
+		exportResp       *ExportRunResponse
+	)
+	if run.EngineRunID != "" && h.engineClient != nil {
+		if exp, err := h.engineClient.ExportRun(run.EngineRunID); err == nil {
+			exportResp = exp
+		}
+	}
+	if isOnlineOptimizationRun(run, exportResp) {
+		// Online source priority:
+		// 1) callback-persisted run.metadata.final_config
+		// 2) export.final_config
+		// 3) persisted simulation_summaries.final_config
+		// 4) latest optimization_history[].current_config (metadata then export)
+		// 5) best_scenario YAML fallback
+		var cfg map[string]any
+		if run.Metadata != nil {
+			if metaCfg, ok := run.Metadata["final_config"].(map[string]any); ok && finalConfigPresent(metaCfg) {
+				cfg = metaCfg
+			}
+		}
+		if cfg == nil && exportResp != nil && finalConfigPresent(exportResp.FinalConfig) {
+			cfg = exportResp.FinalConfig
+		}
+		if cfg == nil && finalConfigPresent(summaryFinalConfig) {
+			cfg = summaryFinalConfig
+		}
+		if cfg == nil && run.Metadata != nil {
+			if historyRaw, ok := run.Metadata["optimization_history"].([]any); ok && len(historyRaw) > 0 {
+				raw, _ := json.Marshal(historyRaw)
+				var parsed []OptimizationStep
+				if err := json.Unmarshal(raw, &parsed); err == nil {
+					cfg = lastCurrentConfigFromHistory(parsed)
+				}
+			}
+		}
+		if cfg == nil && exportResp != nil {
+			cfg = lastCurrentConfigFromHistory(exportResp.OptimizationHistory)
+		}
+		if cfg != nil {
+			s3 := ""
+			if bestPath.Valid {
+				s3 = bestPath.String
+			}
+			bestCandidateObj = finalConfigToBestCandidate(cfg, s3)
+			if cfgNodes, ok := finalConfigHostCount(cfg); ok {
+				nodes = cfgNodes
+			}
+		}
+	}
+	if bestCandidateObj == nil && bestPath.Valid && bestPath.String != "" && h.s3Client != nil {
 		if data, err := h.s3Client.GetObject(c.Request.Context(), bestPath.String); err == nil {
 			hosts, services := parseScenarioYAMLHostsServices(data)
 			if hosts != nil || services != nil {
