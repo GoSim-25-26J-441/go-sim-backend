@@ -923,6 +923,41 @@ func parseBatchFlagFromOptimization(raw any) bool {
 	return false
 }
 
+// metadataTopLevelBatchObjectPresent reports a non-empty run.Metadata["batch"] object
+// (BFF or worker may persist batch tuning alongside optimization).
+func metadataTopLevelBatchObjectPresent(meta map[string]any) bool {
+	if meta == nil {
+		return false
+	}
+	v, ok := meta["batch"].(map[string]any)
+	return ok && len(v) > 0
+}
+
+// exportRunHasBatchRecommendationSignals is true when the export "run" block carries
+// batch optimization scoring / recommendation fields (simulation-core batch outcome),
+// as opposed to online runs that may still populate best_run_id / candidate_run_ids alone.
+func exportRunHasBatchRecommendationSignals(r *ExportRunRun) bool {
+	if r == nil {
+		return false
+	}
+	if r.BatchRecommendationFeasible != nil {
+		return true
+	}
+	if r.BatchViolationScore != nil {
+		return true
+	}
+	if r.BatchEfficiencyScore != nil {
+		return true
+	}
+	if strings.TrimSpace(r.BatchRecommendationSummary) != "" {
+		return true
+	}
+	if r.BatchScoreBreakdown != nil {
+		return true
+	}
+	return false
+}
+
 func isBatchOptimizationRun(run *domain.SimulationRun, exportResp *ExportRunResponse) bool {
 	if run != nil && run.Metadata != nil {
 		if mode, ok := run.Metadata["mode"].(string); ok && mode == "batch" {
@@ -932,6 +967,9 @@ func isBatchOptimizationRun(run *domain.SimulationRun, exportResp *ExportRunResp
 			if mode, ok := cfg["mode"].(string); ok && mode == "batch" {
 				return true
 			}
+		}
+		if metadataTopLevelBatchObjectPresent(run.Metadata) {
+			return true
 		}
 		if parseBatchFlagFromOptimization(run.Metadata["optimization"]) {
 			return true
@@ -943,10 +981,8 @@ func isBatchOptimizationRun(run *domain.SimulationRun, exportResp *ExportRunResp
 	if parseBatchFlagFromOptimization(exportResp.Input.Optimization) {
 		return true
 	}
-	if exportResp.Run != nil {
-		if exportResp.Run.BestRunID != "" || len(exportResp.Run.CandidateRunIDs) > 0 {
-			return true
-		}
+	if exportResp.Run != nil && exportRunHasBatchRecommendationSignals(exportResp.Run) {
+		return true
 	}
 	return false
 }
