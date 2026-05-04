@@ -211,7 +211,14 @@ func (h *Handlers) UpdateVersionAnalysis(c *gin.Context) {
 	mergeNodeLayoutIntoGraph(res.Graph, req.NodeLayout)
 	graphJSON, _ := json.Marshal(res.Graph)
 	detectionsJSON, _ := json.Marshal(res.Detections)
-	if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(req.VersionID, userID, chatID, graphJSON, detectionsJSON, dotContent, yamlContent); err != nil {
+	// Only merge into existing diagram_json when re-analyzing the same YAML already stored on this row.
+	// If the client sends different YAML (e.g. stale version_id + suggestion-fixed YAML), merging would
+	// splice the new model onto the old canvas and corrupt the historic version.
+	normalizeYAML := func(s string) string {
+		return strings.ReplaceAll(strings.TrimSpace(s), "\r\n", "\n")
+	}
+	preserveCanvasMerge := normalizeYAML(yamlContent) == normalizeYAML(row.YAMLContent)
+	if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(req.VersionID, userID, chatID, graphJSON, detectionsJSON, dotContent, yamlContent, preserveCanvasMerge); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update version", "details": err.Error()})
 		return
 	}

@@ -14,7 +14,7 @@ func canvasTypeToNodeKind(t string) domain.NodeKind {
 		return domain.NodeDB
 	case "topic":
 		return domain.NodeEventTopic
-	case "gateway":
+	case "gateway", "api_gateway", "api-gateway":
 		return domain.NodeAPIGateway
 	case "external":
 		return domain.NodeExternalSystem

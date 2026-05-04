@@ -162,24 +162,6 @@ where public_id = $2
 	return &ver, nil
 }
 
-// GenerateSpecSummaryFromDiagram builds a minimal spec_summary JSON from the diagram_json payload.
-// Expected diagram_json shape:
-//
-//	{
-//	  "nodes": [{ "id": "...", "type": "service|db|...", "label": "..." }, ...],
-//	  "edges": [{ "from": "node-id", "to": "node-id", "protocol": "REST|SQL|..." }, ...]
-//	}
-//
-// Output spec_summary JSON:
-//
-//	{
-//	  "services": ["service-label-1", "service-label-2", ...],
-//	  "service_types": { "client-1": "client", "gateway-1": "gateway" },
-//	  "datastores": ["db-label-1", ...],
-//	  "dependencies": ["fromLabel->toLabel(protocol)", ...]
-//	}
-//
-// service_types is optional for backward compatibility; when absent, YAML uses type "service" for all names in services.
 func GenerateSpecSummaryFromDiagram(diagramText string) (string, error) {
 	if strings.TrimSpace(diagramText) == "" {
 		return "", nil
@@ -225,16 +207,16 @@ func GenerateSpecSummaryFromDiagram(diagramText string) (string, error) {
 		}
 	}
 
-	var services []string
+	services := make([]string, 0, len(servicesSet))
 	for s := range servicesSet {
 		services = append(services, s)
 	}
-	var datastores []string
+	datastores := make([]string, 0, len(datastoresSet))
 	for d := range datastoresSet {
 		datastores = append(datastores, d)
 	}
 
-	var deps []string
+	deps := make([]string, 0, len(payload.Edges))
 	for _, e := range payload.Edges {
 		fromLabel, okFrom := idToLabel[e.From]
 		toLabel, okTo := idToLabel[e.To]

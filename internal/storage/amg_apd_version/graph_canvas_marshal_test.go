@@ -49,3 +49,31 @@ func TestMergeCanvasPreserveFromBase_DBAndEdges(t *testing.T) {
 		t.Fatal("expected db node from base")
 	}
 }
+
+// Regression: base canvas used editor temp node ids while analyzer used canonical ids —
+// merge must not keep parallel copies nor reuse edge-0 / edge-1 ids for appended edges.
+func TestMergeCanvasPreserveFromBase_DedupesTempIdsAgainstCanonical(t *testing.T) {
+	analyzed := `{"edges":[{"id":"edge-0","to":"API_GATEWAY:gateway-1","from":"CLIENT:client-1","sync":true,"label":"client-1 → gateway-1","protocol":"REST"},{"id":"edge-1","to":"SERVICE:service-1","from":"API_GATEWAY:gateway-1","sync":true,"protocol":"REST"},{"id":"edge-2","to":"SERVICE:service-2","from":"API_GATEWAY:gateway-1","sync":true,"protocol":"REST"}],"nodes":[{"id":"API_GATEWAY:gateway-1","type":"gateway","label":"gateway-1"},{"id":"CLIENT:client-1","type":"client","label":"client-1"},{"id":"SERVICE:service-1","type":"service","label":"service-1"},{"id":"SERVICE:service-2","type":"service","label":"service-2"}]}`
+	base := `{"edges":[{"id":"edge-0","to":"node-gw","from":"node-cli","sync":true,"protocol":"REST"},{"id":"edge-1","to":"node-s1","from":"node-gw","sync":true,"protocol":"REST"},{"id":"edge-2","to":"node-s2","from":"node-gw","sync":true,"protocol":"REST"}],"nodes":[{"id":"node-cli","type":"client","label":"client-1","x":1,"y":2},{"id":"node-gw","type":"gateway","label":"gateway-1","x":3,"y":4},{"id":"node-s1","type":"service","label":"service-1"},{"id":"node-s2","type":"service","label":"service-2"}]}`
+	out, err := mergeCanvasPreserveFromBase([]byte(analyzed), []byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc canvasWireDoc
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Nodes) != 4 {
+		t.Fatalf("nodes: want 4 (canonical only) got %d", len(doc.Nodes))
+	}
+	if len(doc.Edges) != 3 {
+		t.Fatalf("edges: want 3 got %d", len(doc.Edges))
+	}
+	seen := make(map[string]struct{})
+	for _, e := range doc.Edges {
+		if _, ok := seen[e.ID]; ok {
+			t.Fatalf("duplicate edge id %q", e.ID)
+		}
+		seen[e.ID] = struct{}{}
+	}
+}

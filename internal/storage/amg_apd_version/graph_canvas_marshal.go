@@ -3,6 +3,7 @@ package amg_apd_version
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/architecture_modelling_antipattern_detection/domain"
@@ -13,7 +14,8 @@ func nodeKindToCanvasType(k domain.NodeKind) string {
 	case domain.NodeService:
 		return "service"
 	case domain.NodeAPIGateway:
-		return "gateway"
+		// Canonical wire type aligned with spec_summary / YAML (see mapper.CanonicalServiceTypeForYAML).
+		return "api_gateway"
 	case domain.NodeDB:
 		return "db"
 	case domain.NodeClient:
@@ -147,6 +149,139 @@ func edgePairKey(from, to string) string {
 	return strings.TrimSpace(from) + "\x00" + strings.TrimSpace(to)
 }
 
+func normalizeCanvasToken(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// canvasWireMatchKeys builds index keys so a temp editor id (e.g. node-…-…) can match
+// a canonical diagram id (e.g. SERVICE:service-1) with the same type + label or id suffix.
+func canvasWireMatchKeys(n canvasWireNode) []string {
+	t := normalizeCanvasToken(n.Type)
+	l := normalizeCanvasToken(n.Label)
+	keys := make([]string, 0, 3)
+	if l != "" {
+		keys = append(keys, t+"\x00"+l)
+	}
+	id := strings.TrimSpace(n.ID)
+	if idx := strings.LastIndex(id, ":"); idx >= 0 {
+		suf := normalizeCanvasToken(id[idx+1:])
+		if suf != "" {
+			keys = append(keys, t+"\x00"+suf)
+		}
+	}
+	return keys
+}
+
+// buildBaseNodeAliasToAnalyzed maps base-only node ids (often editor temp ids) to an
+// analyzed node id when type+label (or type+id suffix) match — prevents merged diagrams
+// from keeping two copies of the same logical node and parallel duplicate edges.
+func buildBaseNodeAliasToAnalyzed(analyzed, base canvasWireDoc) map[string]string {
+	out := make(map[string]string)
+	idx := make(map[string]string)
+	for _, n := range analyzed.Nodes {
+		aid := strings.TrimSpace(n.ID)
+		if aid == "" {
+			continue
+		}
+		for _, k := range canvasWireMatchKeys(n) {
+			if _, ok := idx[k]; !ok {
+				idx[k] = aid
+			}
+		}
+	}
+	for _, bn := range base.Nodes {
+		bid := strings.TrimSpace(bn.ID)
+		if bid == "" {
+			continue
+		}
+		for _, k := range canvasWireMatchKeys(bn) {
+			if aid, ok := idx[k]; ok && aid != "" && aid != bid {
+				out[bid] = aid
+				break
+			}
+		}
+	}
+	return out
+}
+
+func resolveWireEndpoint(id string, alias map[string]string) string {
+	id = strings.TrimSpace(id)
+	if a, ok := alias[id]; ok && a != "" {
+		return a
+	}
+	return id
+}
+
+// allocateUniqueWireEdgeID returns an id of the form edge-N not present in existing.
+func allocateUniqueWireEdgeID(existing []canvasWireEdge) string {
+	used := make(map[string]struct{})
+	maxN := -1
+	for _, e := range existing {
+		id := strings.TrimSpace(e.ID)
+		if id != "" {
+			used[id] = struct{}{}
+		}
+		if !strings.HasPrefix(id, "edge-") {
+			continue
+		}
+		rest := strings.TrimPrefix(id, "edge-")
+		if n, err := strconv.Atoi(rest); err == nil && n > maxN {
+			maxN = n
+		}
+	}
+	for i := maxN + 1; ; i++ {
+		cand := fmt.Sprintf("edge-%d", i)
+		if _, taken := used[cand]; !taken {
+			return cand
+		}
+	}
+}
+
+func dedupeWireEdgesByEndpointPair(doc *canvasWireDoc) {
+	if len(doc.Edges) <= 1 {
+		return
+	}
+	seen := make(map[string]struct{})
+	out := make([]canvasWireEdge, 0, len(doc.Edges))
+	for _, e := range doc.Edges {
+		from := strings.TrimSpace(e.From)
+		to := strings.TrimSpace(e.To)
+		if from == "" || to == "" {
+			continue
+		}
+		k := edgePairKey(from, to)
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, e)
+	}
+	doc.Edges = out
+}
+
+func ensureUniqueWireEdgeIDs(edges []canvasWireEdge) {
+	used := make(map[string]struct{})
+	for i := range edges {
+		id := strings.TrimSpace(edges[i].ID)
+		for {
+			if id != "" {
+				if _, dup := used[id]; !dup {
+					break
+				}
+			}
+			for n := 0; ; n++ {
+				cand := fmt.Sprintf("edge-%d", n)
+				if _, taken := used[cand]; !taken {
+					id = cand
+					break
+				}
+			}
+		}
+		used[id] = struct{}{}
+		edges[i].ID = id
+	}
+}
+
 // mergeCanvasPreserveFromBase overlays the last saved canvas onto freshly analyzed canvas JSON:
 // - keeps x/y (and node records) from base when node ids match;
 // - restores edge id/label from base when from→to matches;
@@ -167,6 +302,8 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 		return analyzedJSON, nil
 	}
 
+	alias := buildBaseNodeAliasToAnalyzed(analyzed, base)
+
 	baseByNodeID := make(map[string]canvasWireNode, len(base.Nodes))
 	for _, n := range base.Nodes {
 		id := strings.TrimSpace(n.ID)
@@ -174,11 +311,17 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 			baseByNodeID[id] = n
 		}
 	}
-	baseEdgeByPair := make(map[string]canvasWireEdge, len(base.Edges))
+	baseEdgeByPair := make(map[string]canvasWireEdge, len(base.Edges)*2)
 	for _, e := range base.Edges {
-		k := edgePairKey(e.From, e.To)
-		if _, ok := baseEdgeByPair[k]; !ok {
-			baseEdgeByPair[k] = e
+		fr := resolveWireEndpoint(e.From, alias)
+		tr := resolveWireEndpoint(e.To, alias)
+		kRes := edgePairKey(fr, tr)
+		kRaw := edgePairKey(e.From, e.To)
+		if _, ok := baseEdgeByPair[kRaw]; !ok {
+			baseEdgeByPair[kRaw] = e
+		}
+		if _, ok := baseEdgeByPair[kRes]; !ok {
+			baseEdgeByPair[kRes] = e
 		}
 	}
 
@@ -194,7 +337,7 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 		}
 	}
 
-	nodeIDs := make(map[string]struct{}, len(analyzed.Nodes))
+	nodeIDs := make(map[string]struct{}, len(analyzed.Nodes)+len(base.Nodes))
 	for _, n := range analyzed.Nodes {
 		if id := strings.TrimSpace(n.ID); id != "" {
 			nodeIDs[id] = struct{}{}
@@ -205,19 +348,28 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 		if id == "" {
 			continue
 		}
+		if canon := alias[id]; canon != "" {
+			if _, ok := nodeIDs[canon]; ok {
+				continue
+			}
+		}
 		if _, ok := nodeIDs[id]; !ok {
 			analyzed.Nodes = append(analyzed.Nodes, bn)
 			nodeIDs[id] = struct{}{}
 		}
 	}
 
-	edgeSeen := make(map[string]struct{}, len(analyzed.Edges))
+	edgeSeen := make(map[string]struct{}, len(analyzed.Edges)+len(base.Edges))
 	for _, e := range analyzed.Edges {
-		edgeSeen[edgePairKey(e.From, e.To)] = struct{}{}
+		fr := resolveWireEndpoint(e.From, alias)
+		tr := resolveWireEndpoint(e.To, alias)
+		edgeSeen[edgePairKey(fr, tr)] = struct{}{}
 	}
 
 	for i := range analyzed.Edges {
-		k := edgePairKey(analyzed.Edges[i].From, analyzed.Edges[i].To)
+		fr := resolveWireEndpoint(analyzed.Edges[i].From, alias)
+		tr := resolveWireEndpoint(analyzed.Edges[i].To, alias)
+		k := edgePairKey(fr, tr)
 		if be, ok := baseEdgeByPair[k]; ok {
 			if strings.TrimSpace(be.ID) != "" {
 				analyzed.Edges[i].ID = be.ID
@@ -229,21 +381,28 @@ func mergeCanvasPreserveFromBase(analyzedJSON, baseJSON []byte) ([]byte, error) 
 	}
 
 	for _, be := range base.Edges {
-		k := edgePairKey(be.From, be.To)
+		fromR := resolveWireEndpoint(be.From, alias)
+		toR := resolveWireEndpoint(be.To, alias)
+		k := edgePairKey(fromR, toR)
 		if _, ok := edgeSeen[k]; ok {
 			continue
 		}
-		fromID := strings.TrimSpace(be.From)
-		toID := strings.TrimSpace(be.To)
-		if _, ok := nodeIDs[fromID]; !ok {
+		if _, ok := nodeIDs[fromR]; !ok {
 			continue
 		}
-		if _, ok := nodeIDs[toID]; !ok {
+		if _, ok := nodeIDs[toR]; !ok {
 			continue
 		}
-		analyzed.Edges = append(analyzed.Edges, be)
+		newBe := be
+		newBe.From = fromR
+		newBe.To = toR
+		newBe.ID = allocateUniqueWireEdgeID(analyzed.Edges)
+		analyzed.Edges = append(analyzed.Edges, newBe)
 		edgeSeen[k] = struct{}{}
 	}
+
+	dedupeWireEdgesByEndpointPair(&analyzed)
+	ensureUniqueWireEdgeIDs(analyzed.Edges)
 
 	return json.Marshal(analyzed)
 }

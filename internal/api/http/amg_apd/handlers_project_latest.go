@@ -60,7 +60,8 @@ func (h *Handlers) GetLatestForProject(c *gin.Context) {
 		detectionsJSON, _ := json.Marshal(res.Detections)
 		if diagramID != "" {
 			// Update existing diagram row in place so we don't create a new version.
-			if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(diagramID, userID, projectPublicID, graphJSON, detectionsJSON, dotContent, yamlContent); err != nil {
+			// YAML analyzed here is the same blob we read for this row; preserve canvas merge for editor layout.
+			if err := h.versionRepo.UpdateDiagramVersionAnalysisByID(diagramID, userID, projectPublicID, graphJSON, detectionsJSON, dotContent, yamlContent, true); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update version analysis", "details": err.Error()})
 				return
 			}

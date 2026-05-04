@@ -564,9 +564,12 @@ func (r *Repo) UpdateAnalysisByID(id, userID, projectPublicID string, graphJSON,
 // optionally yaml_content for the given diagram_versions row (any source).
 // Pass yamlContent when the row should store the same YAML that was analyzed (e.g. update-version-analysis);
 // empty string leaves yaml_content unchanged.
+// preserveCanvasMerge: when true and the row already has diagram_json, merge the new analysis canvas
+// into the existing diagram (layout / extra nodes). When false, replace diagram_json from analysis only
+// (avoids mixing a different YAML’s graph onto a historic snapshot if version_id and YAML were mismatched).
 // Version 1 keeps its existing source (e.g. canvas_json from the main canvas); version 2+
 // are marked source = 'amg_apd' when analysis is written from the AMG-APD flow.
-func (r *Repo) UpdateDiagramVersionAnalysisByID(id, userID, projectPublicID string, graphJSON, detectionsJSON []byte, dotContent, yamlContent string) error {
+func (r *Repo) UpdateDiagramVersionAnalysisByID(id, userID, projectPublicID string, graphJSON, detectionsJSON []byte, dotContent, yamlContent string, preserveCanvasMerge bool) error {
 	if userID == "" {
 		userID = DefaultUserID
 	}
@@ -578,15 +581,17 @@ func (r *Repo) UpdateDiagramVersionAnalysisByID(id, userID, projectPublicID stri
 		return err
 	}
 
-	var curDiagram sql.NullString
-	if err := r.db.QueryRow(`
+	if preserveCanvasMerge {
+		var curDiagram sql.NullString
+		if err := r.db.QueryRow(`
 		SELECT coalesce(diagram_json::text, '')
 		FROM diagram_versions
 		WHERE id = $1 AND user_firebase_uid = $2 AND project_public_id = $3
 	`, id, userID, projectPublicID).Scan(&curDiagram); err == nil && curDiagram.Valid && strings.TrimSpace(curDiagram.String) != "" {
-		diagramJSON, err = mergeCanvasPreserveFromBase(diagramJSON, []byte(curDiagram.String))
-		if err != nil {
-			return err
+			diagramJSON, err = mergeCanvasPreserveFromBase(diagramJSON, []byte(curDiagram.String))
+			if err != nil {
+				return err
+			}
 		}
 	}
 
