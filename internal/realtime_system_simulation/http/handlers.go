@@ -1201,6 +1201,34 @@ func selectFinalConfigForCandidates(
 	return nil
 }
 
+// requestedSimulationNodesFromAnalysisSuggestions loads analysis-suggestions request.simulation.nodes
+// for this run (user-entered sizing). Missing rows or parse failures yield 0.
+func requestedSimulationNodesFromAnalysisSuggestions(ctx context.Context, db *sql.DB, userID, runID string) int {
+	if db == nil || userID == "" || runID == "" {
+		return 0
+	}
+	var raw []byte
+	err := db.QueryRowContext(ctx,
+		`SELECT request FROM request_responses WHERE user_id = $1 AND run_id IS NOT DISTINCT FROM $2 ORDER BY created_at DESC LIMIT 1`,
+		userID, runID,
+	).Scan(&raw)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("analysis-suggestions request lookup for run_id=%s: %v", runID, err)
+		}
+		return 0
+	}
+	var envelope struct {
+		Simulation struct {
+			Nodes int `json:"nodes"`
+		} `json:"simulation"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return 0
+	}
+	return envelope.Simulation.Nodes
+}
+
 // simulationNodesFromCandidates sets simulation.nodes from candidate specs: prefer the best
 // candidate's host list, then the first candidate with a valid hosts array, otherwise 0.
 func simulationNodesFromCandidates(records []*simrepo.CandidateRecord, bestCandidateID string) int {
@@ -1353,11 +1381,16 @@ func (h *Handler) GetRunCandidates(c *gin.Context) {
 		}
 	}
 
+	simPayload := gin.H{"nodes": nodes}
+	if rn := requestedSimulationNodesFromAnalysisSuggestions(c.Request.Context(), h.db, userID, runID); rn > 0 {
+		simPayload["requested_nodes"] = rn
+	}
+
 	resp := gin.H{
 		"user_id":           run.UserID,
 		"project_id":        run.ProjectPublicID,
 		"run_id":            run.RunID,
-		"simulation":        gin.H{"nodes": nodes},
+		"simulation":        simPayload,
 		"best_candidate_id": bestCandidateID,
 		"candidates":        outCandidates,
 	}

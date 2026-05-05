@@ -61,7 +61,17 @@ type DesignInput struct {
 }
 
 type SimulationInput struct {
-	Nodes int `json:"nodes"`
+	Nodes          int `json:"nodes"`
+	CandidateNodes int `json:"candidate_nodes,omitempty"`
+}
+
+// EffectiveClusterNodes returns host count for evaluated scenarios (costing, normalization).
+// When candidate_nodes is set it reflects the persisted simulation/candidate topology; otherwise nodes is used.
+func (s SimulationInput) EffectiveClusterNodes() int {
+	if s.CandidateNodes > 0 {
+		return s.CandidateNodes
+	}
+	return s.Nodes
 }
 
 type CandidateScore struct {
@@ -224,20 +234,44 @@ func (e *Engine) EvaluateAndStore(ctx context.Context, userID, projectID, runID 
 	return out, path, nil
 }
 
-func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID, projectID, runID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
-	effectiveDesign := design
+type persistedRequestEnvelope struct {
+	Design     DesignInput     `json:"design"`
+	Simulation SimulationInput `json:"simulation"`
+	Candidates []Candidate     `json:"candidates"`
+}
 
-	reqObj := struct {
-		Design     DesignInput     `json:"design"`
-		Simulation SimulationInput `json:"simulation"`
-		Candidates []Candidate     `json:"candidates"`
-	}{
-		Design:     effectiveDesign,
-		Simulation: simulation,
+// mergePersistedRequestEnvelope preserves request.simulation.nodes (user-entered sizing) once stored (> 0),
+// copies evaluated topology node count into simulation.candidate_nodes, and aligns design with stored rows when applicable.
+func mergePersistedRequestEnvelope(storedJSON []byte, incomingDesign DesignInput, incomingSim SimulationInput, candidates []Candidate) persistedRequestEnvelope {
+	out := persistedRequestEnvelope{
+		Design:     incomingDesign,
+		Simulation: incomingSim,
 		Candidates: candidates,
 	}
+	out.Simulation.CandidateNodes = incomingSim.Nodes
 
-	reqJSON, err := json.Marshal(reqObj)
+	var stored struct {
+		Design     DesignInput     `json:"design"`
+		Simulation SimulationInput `json:"simulation"`
+	}
+	if len(storedJSON) == 0 || json.Unmarshal(storedJSON, &stored) != nil {
+		return out
+	}
+	if stored.Simulation.Nodes <= 0 {
+		return out
+	}
+	out.Design = stored.Design
+	out.Simulation.Nodes = stored.Simulation.Nodes
+	out.Simulation.CandidateNodes = incomingSim.Nodes
+	return out
+}
+
+func saveRequestResponseToDB(ctx context.Context, db *sql.DB, userID, projectID, runID string, design DesignInput, simulation SimulationInput, candidates []Candidate, response []CandidateScore, best CandidateScore) (string, error) {
+	buildEnvelope := func(storedJSON []byte) persistedRequestEnvelope {
+		return mergePersistedRequestEnvelope(storedJSON, design, simulation, candidates)
+	}
+
+	reqJSON, err := json.Marshal(buildEnvelope(nil))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request JSON: %v", err)
 	}
@@ -276,6 +310,15 @@ LIMIT 1;
 		}
 
 		if err == nil {
+			var existingReqJSON []byte
+			if err := db.QueryRowContext(ctx, `SELECT request FROM request_responses WHERE id = $1`, existingID).Scan(&existingReqJSON); err != nil {
+				return "", fmt.Errorf("db load existing request failed: %v", err)
+			}
+			env := buildEnvelope(existingReqJSON)
+			reqJSON, err = json.Marshal(env)
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal request JSON: %v", err)
+			}
 			const updateRunSQL = `
 UPDATE request_responses
 SET request = $1::jsonb,
@@ -310,13 +353,10 @@ LIMIT 1;
 		}
 
 		if err == nil {
-			var storedReq struct {
-				Design DesignInput `json:"design"`
-			}
-			if err := json.Unmarshal(existingReqJSON, &storedReq); err == nil {
-				effectiveDesign = storedReq.Design
-				reqObj.Design = effectiveDesign
-				reqJSON, _ = json.Marshal(reqObj)
+			env := buildEnvelope(existingReqJSON)
+			reqJSON, err = json.Marshal(env)
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal request JSON: %v", err)
 			}
 			const insertRunSQL = `
 INSERT INTO request_responses (user_id, project_id, run_id, request, response, best_candidate, created_at)
@@ -345,13 +385,10 @@ LIMIT 1;
 	}
 
 	if err == nil {
-		var storedReq struct {
-			Design DesignInput `json:"design"`
-		}
-		if err := json.Unmarshal(anyReqJSON, &storedReq); err == nil {
-			effectiveDesign = storedReq.Design
-			reqObj.Design = effectiveDesign
-			reqJSON, _ = json.Marshal(reqObj)
+		env := buildEnvelope(anyReqJSON)
+		reqJSON, err = json.Marshal(env)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal request JSON: %v", err)
 		}
 	}
 

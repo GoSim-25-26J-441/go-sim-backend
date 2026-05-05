@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"net/http"
@@ -19,6 +20,13 @@ import (
 	simrepo "github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/repository"
 	"github.com/GoSim-25-26J-441/go-sim-backend/internal/realtime_system_simulation/service"
 )
+
+// mockExpectNoAnalysisSuggestionsRequest stubs analysis-suggestions request_responses lookup from GET .../candidates.
+func mockExpectNoAnalysisSuggestionsRequest(mock sqlmock.Sqlmock, userID, runID string) {
+	mock.ExpectQuery(`SELECT request FROM request_responses WHERE user_id = \$1 AND run_id IS NOT DISTINCT FROM \$2 ORDER BY created_at DESC LIMIT 1`).
+		WithArgs(userID, runID).
+		WillReturnError(sql.ErrNoRows)
+}
 
 // fakeObjectStorage is a simple in-memory implementation of ObjectStorage for tests.
 type fakeObjectStorage struct {
@@ -89,6 +97,8 @@ func TestHandler_GetRunCandidates_Unified(t *testing.T) {
 	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
+
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 
 	yamlContent := `
 hosts:
@@ -233,6 +243,8 @@ func TestHandler_GetRunCandidates_SimulationNodesUsesBestCandidateHosts(t *testi
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Best, []byte(`{}`)))
 
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
+
 	h := &Handler{
 		simService: simSvc,
 		db:         db,
@@ -258,6 +270,97 @@ func TestHandler_GetRunCandidates_SimulationNodesUsesBestCandidateHosts(t *testi
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, 3, resp.Simulation.Nodes)
 	assert.Equal(t, "cand-4", resp.BestCandidateID)
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestHandler_GetRunCandidates_IncludesRequestedNodesWhenStored exposes additive simulation.requested_nodes from analysis-suggestions while keeping simulation.nodes as candidate host count.
+func TestHandler_GetRunCandidates_IncludesRequestedNodesWhenStored(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runID := "run-req-nodes"
+	userID := "user-req-nodes"
+	s3Best := "simulation/run-req-nodes/best.yaml"
+	specThreeHosts := []byte(`{"hosts":[{"id":"h1"},{"id":"h2"},{"id":"h3"}]}`)
+	specEmpty := []byte(`{}`)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	run := &domain.SimulationRun{
+		RunID:           runID,
+		UserID:          userID,
+		ProjectPublicID: "proj-req-nodes",
+		Status:          domain.StatusCompleted,
+		EngineRunID:     "engine-req-nodes",
+	}
+	runData, err := json.Marshal(run)
+	require.NoError(t, err)
+	require.NoError(t, rdb.Set(context.Background(), "sim:run:"+runID, runData, 0).Err())
+
+	runRepo := simrepo.NewRunRepository(rdb)
+	simSvc := service.NewSimulationService(runRepo)
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	rows := sqlmock.NewRows([]string{
+		"id", "user_id", "project_public_id", "run_id", "candidate_id",
+		"spec", "metrics", "sim_workload", "source", "s3_path",
+	})
+	for i := range 5 {
+		cid := []string{"cand-0", "cand-1", "cand-2", "cand-3", "cand-4"}[i]
+		spec := specEmpty
+		path := ""
+		if i == 4 {
+			spec = specThreeHosts
+			path = s3Best
+		}
+		rows.AddRow(
+			"uuid-"+cid, userID, "proj-req-nodes", runID, cid,
+			spec, []byte("{}"), []byte("{}"), "export", path,
+		)
+	}
+	mock.ExpectQuery(`SELECT id, user_id, project_public_id, run_id, candidate_id`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(rows)
+
+	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
+		WithArgs(driver.Value(runID)).
+		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Best, []byte(`{}`)))
+
+	storedReq := []byte(`{"design":{"preferred_vcpu":4},"simulation":{"nodes":42},"candidates":[]}`)
+	mock.ExpectQuery(`SELECT request FROM request_responses WHERE user_id = \$1 AND run_id IS NOT DISTINCT FROM \$2 ORDER BY created_at DESC LIMIT 1`).
+		WithArgs(userID, runID).
+		WillReturnRows(sqlmock.NewRows([]string{"request"}).AddRow(storedReq))
+
+	h := &Handler{
+		simService: simSvc,
+		db:         db,
+		s3Client:   &fakeObjectStorage{objects: map[string][]byte{}},
+	}
+
+	router := gin.New()
+	router.GET("/runs/:id/candidates", h.GetRunCandidates)
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/candidates", nil)
+	req.Header.Set("X-User-Id", userID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp struct {
+		Simulation struct {
+			Nodes           int `json:"nodes"`
+			RequestedNodes int `json:"requested_nodes"`
+		} `json:"simulation"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 3, resp.Simulation.Nodes)
+	assert.Equal(t, 42, resp.Simulation.RequestedNodes)
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -311,6 +414,8 @@ func TestHandler_GetRunCandidates_SimulationNodesZeroWithoutHosts(t *testing.T) 
 	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(nil, []byte(`{}`)))
+
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 
 	h := &Handler{
 		simService: simSvc,
@@ -426,6 +531,8 @@ func TestHandler_GetRunCandidates_OnlineUsesFinalConfig(t *testing.T) {
 	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
+
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 
 	h := &Handler{
 		simService:   simSvc,
@@ -563,6 +670,8 @@ func TestHandler_GetRunCandidates_OnlineWithSelfResultRunIDsUsesFinalConfig(t *t
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
 
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
+
 	h := &Handler{
 		simService:   simSvc,
 		engineClient: NewSimulationEngineClient(engine.URL),
@@ -689,6 +798,7 @@ func TestHandler_GetRunCandidates_OnlineFallsBackToOptimizationHistory(t *testin
 	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 	h := &Handler{simService: simSvc, engineClient: NewSimulationEngineClient(engine.URL), db: db}
 	router := gin.New()
 	router.GET("/runs/:id/candidates", h.GetRunCandidates)
@@ -736,6 +846,7 @@ func TestHandler_GetRunCandidates_OnlineFallsBackToScenarioWhenNoFinalConfig(t *
 	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 	h := &Handler{
 		simService:   simSvc,
 		engineClient: NewSimulationEngineClient(engine.URL),
@@ -792,6 +903,7 @@ func TestHandler_GetRunCandidates_BatchStillUsesScenarioArtifact(t *testing.T) {
 	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{"hosts":[{"id":"ignored-in-batch","cpu_cores":99}]}`)))
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 	h := &Handler{
 		simService:   simSvc,
 		engineClient: NewSimulationEngineClient(engine.URL),
@@ -849,6 +961,7 @@ func TestHandler_GetRunCandidates_OnlineUsesCallbackPersistedFinalConfigFirst(t 
 	mock.ExpectQuery(`SELECT best_candidate_s3_path, final_config FROM simulation_summaries WHERE run_id = \$1`).
 		WithArgs(driver.Value(runID)).
 		WillReturnRows(sqlmock.NewRows([]string{"best_candidate_s3_path", "final_config"}).AddRow(s3Key, []byte(`{}`)))
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 	h := &Handler{
 		simService: simSvc,
 		db:         db,
@@ -913,6 +1026,8 @@ func TestHandler_GetRunCandidates_OnlineUsesPersistedSummaryFinalConfigWhenExpor
 			"services":[{"id":"checkout","replicas":3,"kind":"api","model":"m/m/1","role":"worker","scaling":{"min":1,"max":6}}],
 			"workload":[{"pattern_key":"browse","rate_rps":44}]
 		}`)))
+
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 
 	h := &Handler{
 		simService:   simSvc,
@@ -995,6 +1110,8 @@ func TestHandler_GetRunCandidates_UsesPersistedFinalConfigForLegacyNonBatchRun(t
 			"services":[{"id":"checkout","replicas":4,"kind":"api","model":"m/m/1","role":"worker","scaling":{"min":1,"max":8}}],
 			"workload":[{"pattern_key":"browse","rate_rps":44}]
 		}`)))
+
+	mockExpectNoAnalysisSuggestionsRequest(mock, userID, runID)
 
 	h := &Handler{
 		simService:   simSvc,

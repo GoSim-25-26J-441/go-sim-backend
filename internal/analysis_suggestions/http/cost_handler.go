@@ -304,21 +304,17 @@ func (h *CostHandler) GetRegionsForRequest(c *gin.Context) {
 	}
 
 	var req struct {
-		Design struct {
-			PreferredVCPU     int     `json:"preferred_vcpu"`
-			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
-		} `json:"design"`
-		Simulation struct {
-			Nodes int `json:"nodes"`
-		} `json:"simulation"`
+		Design     rules.DesignInput     `json:"design"`
+		Simulation rules.SimulationInput `json:"simulation"`
 	}
 	if err := json.Unmarshal(reqJSON, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
 		return
 	}
+	clusterNodes := req.Simulation.EffectiveClusterNodes()
 	bestCS = normalizeBestCandidatePerNode(
 		bestCS,
-		req.Simulation.Nodes,
+		clusterNodes,
 		req.Design.PreferredVCPU,
 		req.Design.PreferredMemoryGB,
 	)
@@ -370,22 +366,17 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 	}
 
 	var req struct {
-		Design struct {
-			Budget            float64 `json:"budget"`
-			PreferredVCPU     int     `json:"preferred_vcpu"`
-			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
-		} `json:"design"`
-		Simulation struct {
-			Nodes int `json:"nodes"`
-		} `json:"simulation"`
+		Design     rules.DesignInput     `json:"design"`
+		Simulation rules.SimulationInput `json:"simulation"`
 	}
 	if err := json.Unmarshal(reqJSON, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
 		return
 	}
+	clusterNodes := req.Simulation.EffectiveClusterNodes()
 	bestCS = normalizeBestCandidatePerNode(
 		bestCS,
-		req.Simulation.Nodes,
+		clusterNodes,
 		req.Design.PreferredVCPU,
 		req.Design.PreferredMemoryGB,
 	)
@@ -394,7 +385,7 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 		ctx,
 		db,
 		bestCS,
-		req.Simulation.Nodes,
+		clusterNodes,
 		filterRegion,
 		req.Design.Budget,
 		filterProvider,
@@ -407,7 +398,7 @@ func (h *CostHandler) HandleCost(c *gin.Context) {
 	resp := CostResponse{
 		RequestID:        id,
 		BestCandidate:    bestCS,
-		NodeCount:        req.Simulation.Nodes,
+		NodeCount:        clusterNodes,
 		Budget:           req.Design.Budget,
 		ProviderClusters: clusterCosts,
 		StoredAt:         created.UTC().Format(time.RFC3339),
@@ -448,27 +439,22 @@ func (h *CostHandler) HandleGlobalRecommend(c *gin.Context) {
 	}
 
 	var req struct {
-		Design struct {
-			Budget            float64 `json:"budget"`
-			PreferredVCPU     int     `json:"preferred_vcpu"`
-			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
-		} `json:"design"`
-		Simulation struct {
-			Nodes int `json:"nodes"`
-		} `json:"simulation"`
+		Design     rules.DesignInput     `json:"design"`
+		Simulation rules.SimulationInput `json:"simulation"`
 	}
 	if err := json.Unmarshal(reqJSON, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
 		return
 	}
+	clusterNodes := req.Simulation.EffectiveClusterNodes()
 	bestCS = normalizeBestCandidatePerNode(
 		bestCS,
-		req.Simulation.Nodes,
+		clusterNodes,
 		req.Design.PreferredVCPU,
 		req.Design.PreferredMemoryGB,
 	)
 
-	rec, err := cc.BuildGlobalRecommendation(ctx, db, bestCS, req.Simulation.Nodes, req.Design.Budget)
+	rec, err := cc.BuildGlobalRecommendation(ctx, db, bestCS, clusterNodes, req.Design.Budget)
 	if err != nil {
 		log.Printf("global recommend failed for %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build global recommendation"})
@@ -478,7 +464,7 @@ func (h *CostHandler) HandleGlobalRecommend(c *gin.Context) {
 	resp := GlobalRecommendResponse{
 		RequestID:      id,
 		BestCandidate:  bestCS,
-		NodeCount:      req.Simulation.Nodes,
+		NodeCount:      clusterNodes,
 		Budget:         req.Design.Budget,
 		Recommendation: *rec,
 		StoredAt:       created.UTC().Format(time.RFC3339),
@@ -528,22 +514,17 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 	}
 
 	var req struct {
-		Design struct {
-			Budget            float64 `json:"budget"`
-			PreferredVCPU     int     `json:"preferred_vcpu"`
-			PreferredMemoryGB float64 `json:"preferred_memory_gb"`
-		} `json:"design"`
-		Simulation struct {
-			Nodes int `json:"nodes"`
-		} `json:"simulation"`
+		Design     rules.DesignInput     `json:"design"`
+		Simulation rules.SimulationInput `json:"simulation"`
 	}
 	if err := json.Unmarshal(reqJSON, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse request"})
 		return
 	}
+	clusterNodes := req.Simulation.EffectiveClusterNodes()
 	bestCS = normalizeBestCandidatePerNode(
 		bestCS,
-		req.Simulation.Nodes,
+		clusterNodes,
 		req.Design.PreferredVCPU,
 		req.Design.PreferredMemoryGB,
 	)
@@ -553,7 +534,7 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 		db,
 		provider,
 		bestCS,
-		req.Simulation.Nodes,
+		clusterNodes,
 		region,
 		req.Design.Budget,
 	)
@@ -568,7 +549,7 @@ func (h *CostHandler) HandleCostForProvider(c *gin.Context) {
 	resp := CostResponse{
 		RequestID:        id,
 		BestCandidate:    bestCS,
-		NodeCount:        req.Simulation.Nodes,
+		NodeCount:        clusterNodes,
 		Budget:           req.Design.Budget,
 		ProviderClusters: providerClusters,
 		StoredAt:         created.UTC().Format(time.RFC3339),
